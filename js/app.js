@@ -58,6 +58,10 @@ let krcHoldings = [];
 let tokenLoadErr = '';
 let lastTokenFetch = 0;
 let tokenBusy = false;
+let tokenPending = false;
+let seenTokens = false;
+let tokenStream = null;
+let tokenFastOff = 0;
 
 function haptic() { try { navigator.vibrate?.(12); } catch {} }
 
@@ -209,7 +213,8 @@ function renderHome() {
 
 function tokenDot(t) {
   const color = t.color || tokenColor(t.ticker);
-  const img = t.image ? `<img alt="" src="${esc(t.image)}">` : esc(String(t.ticker || '?').slice(0, 3));
+  const src = t.image || (t.native || t.ticker === 'KAS' ? 'assets/kas.svg' : '');
+  const img = src ? `<img alt="" src="${esc(src)}">` : esc(String(t.ticker || '?').slice(0, 3));
   return `<div class="dot" style="background:${esc(color)}22;color:${esc(color)}">${img}</div>`;
 }
 
@@ -430,10 +435,50 @@ function startLiveSync() {
   stopLiveSync();
   tickLive(true);
   liveTimer = setInterval(() => tickLive(false), liveFast ? 800 : 2000);
+  startKccWatch();
 }
 
 function stopLiveSync() {
   if (liveTimer) { clearInterval(liveTimer); liveTimer = null; }
+  stopKccWatch();
+}
+
+function startKccWatch() {
+  stopKccWatch();
+  if (!wallet?.address && !wallet?.pubKey) return;
+  try {
+    tokenStream = new EventSource('https://kascov.io/data/mainnet/stream');
+    tokenStream.onmessage = (ev) => {
+      const data = String(ev.data || '').toLowerCase();
+      const pk = String(wallet.pubKey || '').replace(/^0x/i, '').toLowerCase();
+      const addr = String(wallet.address || '').toLowerCase();
+      const hit = (pk && pk.length > 16 && data.includes(pk.slice(0, 24)))
+        || (addr && addr.length > 20 && data.includes(addr.slice(6, 22)));
+      if (!hit) return;
+      setLiveFast(true);
+      kickTokenRefresh();
+      clearTimeout(tokenFastOff);
+      tokenFastOff = setTimeout(() => setLiveFast(false), 25000);
+    };
+  } catch {}
+}
+
+function stopKccWatch() {
+  try { tokenStream?.close(); } catch {}
+  tokenStream = null;
+}
+
+function kickTokenRefresh() {
+  if (tokenBusy) { tokenPending = true; return; }
+  tokenBusy = true;
+  lastTokenFetch = Date.now();
+  refreshTokenHoldings().finally(() => {
+    tokenBusy = false;
+    if (tokenPending) {
+      tokenPending = false;
+      kickTokenRefresh();
+    }
+  });
 }
 
 async function tickLive(full) {
@@ -487,11 +532,7 @@ async function tickLive(full) {
       refreshVaultBalances();
     }
     const now = Date.now();
-    if (!tokenBusy && (full || now - lastTokenFetch > 5000 || balChanged)) {
-      lastTokenFetch = now;
-      tokenBusy = true;
-      refreshTokenHoldings().finally(() => { tokenBusy = false; });
-    }
+    if (full || balChanged || now - lastTokenFetch > 2000) kickTokenRefresh();
     if (full || now - lastAutoSweep > 8000) {
       lastAutoSweep = now;
       maybeAutoUnlock();
@@ -507,6 +548,7 @@ async function refreshAll() {
 
 async function refreshTokenHoldings() {
   if (!wallet?.address) return;
+  const before = [...kccHoldings, ...krcHoldings];
   try {
     const [kcc, krc] = await Promise.allSettled([
       fetchKcc20Portfolio(wallet.address, wallet.pubKey),
@@ -518,6 +560,23 @@ async function refreshTokenHoldings() {
   } catch (e) {
     tokenLoadErr = errText(e);
   }
+  if (seenTokens) {
+    const after = [...kccHoldings, ...krcHoldings];
+    for (const t of after) {
+      const prev = before.find(x => (t.tokenId && x.tokenId === t.tokenId) || (x.protocol === t.protocol && x.ticker === t.ticker));
+      const nextAmt = Number(t.balance || 0);
+      const prevAmt = prev ? Number(prev.balance || 0) : 0;
+      if (nextAmt > prevAmt) {
+        const d = nextAmt - prevAmt;
+        toast(`Received ${formatTokenUnits(d, t.decimals)} ${t.ticker}`);
+        haptic();
+        setLiveFast(true);
+        clearTimeout(tokenFastOff);
+        tokenFastOff = setTimeout(() => setLiveFast(false), 25000);
+      }
+    }
+  }
+  seenTokens = true;
   if (currentTab === 'home') renderHome();
   if (currentTab === 'tokens') renderTokens();
 }

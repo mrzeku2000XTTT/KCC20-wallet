@@ -276,6 +276,15 @@ img { display: block; max-width: 100%; }
   overflow: hidden; flex-shrink: 0;
 }
 .dot img { width: 100%; height: 100%; object-fit: cover; }
+.token-row[data-ticker="KAS"] .dot,
+.token-row[data-token-key="native:KAS"] .dot {
+  background: #0b2a26;
+  padding: 4px;
+}
+.token-row[data-ticker="KAS"] .dot img,
+.token-row[data-token-key="native:KAS"] .dot img {
+  object-fit: contain;
+}
 
 .utxo-bar {
   width: 100%;

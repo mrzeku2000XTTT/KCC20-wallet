@@ -6,6 +6,7 @@ export const NATIVE_KAS = {
   decimals: 8,
   native: true,
   color: '#49eacb',
+  image: 'assets/kas.svg',
   note: 'Native L1 coin'
 };
 

@@ -347,7 +347,6 @@ function renderVault() {
     sweepAllVaults().catch(err => toast(errText(err)));
   };
 }
-}
 
 function sompiOf(v) {
   const n = Number(v);

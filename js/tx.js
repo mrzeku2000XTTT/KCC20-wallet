@@ -1190,33 +1190,54 @@ export async function sendKcc20({ wallet, dest, token, amountHuman, utxos, onSta
   }
 
   const cid = new k.Hash(tokenCovid);
-  const tokenIn = {
-    previousOutpoint: { transactionId: piece.transactionId, index: piece.index },
+  function spkOf(v) {
+    if (!v) return tokenSpk;
+    if (v instanceof k.ScriptPublicKey) return v;
+    if (typeof v === 'string') return new k.ScriptPublicKey(0, v);
+    if (v && (typeof v.script === 'string' || v.script instanceof Uint8Array)) {
+      return new k.ScriptPublicKey(Number(v.version || 0), v.script);
+    }
+    return v;
+  }
+  function inputFromUtxo({ txid, index, amount, scriptPublicKey, address, blockDaaScore, isCoinbase, signatureScript, computeBudget }) {
+    const id = String(txid);
+    const idx = Number(index);
+    const spk = spkOf(scriptPublicKey);
+    const utxo = {
+      address: address || undefined,
+      outpoint: { transactionId: id, index: idx },
+      amount: BigInt(amount),
+      scriptPublicKey: { version: Number(spk.version || 0), script: hexish(spk.script) },
+      blockDaaScore: BigInt(blockDaaScore || 0),
+      isCoinbase: !!isCoinbase
+    };
+    return new k.TransactionInput({
+      previousOutpoint: new k.TransactionOutpoint(new k.Hash(id), idx),
+      signatureScript: signatureScript || '',
+      sequence: 0n,
+      sigOpCount: 0,
+      computeBudget: Number(computeBudget || 10),
+      utxo
+    });
+  }
+  const tokenIn = inputFromUtxo({
+    txid: piece.transactionId,
+    index: piece.index,
+    amount: piece.value,
+    scriptPublicKey: tokenSpk,
+    address: String(k.addressFromScriptPublicKey(tokenSpk, 'mainnet') || ''),
     signatureScript: sigScript,
-    sequence: 0n,
-    sigOpCount: 0,
-    computeBudget: 100,
-    utxo: {
-      address: String(k.addressFromScriptPublicKey(tokenSpk, 'mainnet') || ''),
-      amount: piece.value,
-      scriptPublicKey: { version: 0, script: hexish(tokenSpk.script || piece.spk) },
-      blockDaaScore: 0n,
-      isCoinbase: false
-    }
-  };
-  const kasIns = picked.map(e => ({
-    previousOutpoint: e.outpoint,
-    signatureScript: '',
-    sequence: 0n,
-    sigOpCount: 0,
-    computeBudget: 10,
-    utxo: {
-      address: wallet.address,
-      amount: e.amount,
-      scriptPublicKey: e.scriptPublicKey,
-      blockDaaScore: e.blockDaaScore || 0n,
-      isCoinbase: !!e.isCoinbase
-    }
+    computeBudget: 100
+  });
+  const kasIns = picked.map(e => inputFromUtxo({
+    txid: e.outpoint.transactionId,
+    index: e.outpoint.index,
+    amount: e.amount,
+    scriptPublicKey: e.scriptPublicKey,
+    address: wallet.address,
+    blockDaaScore: e.blockDaaScore,
+    isCoinbase: e.isCoinbase,
+    computeBudget: 10
   }));
   const covOutputs = tokenOuts.map(o => new k.TransactionOutput(o.value, o.spk, new k.CovenantBinding(0, cid)));
   const inSum = piece.value + feeSum;

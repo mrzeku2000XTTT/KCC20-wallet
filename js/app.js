@@ -56,6 +56,8 @@ const autoSweepTried = new Set();
 let kccHoldings = [];
 let krcHoldings = [];
 let tokenLoadErr = '';
+let lastTokenFetch = 0;
+let tokenBusy = false;
 
 function haptic() { try { navigator.vibrate?.(12); } catch {} }
 
@@ -268,7 +270,7 @@ function renderTokens() {
   if (kcc) {
     kcc.innerHTML = kccHoldings.length
       ? kccHoldings.map(t => tokenRow(t)).join('')
-      : `<div class="empty">${tokenLoadErr || 'No KCC20 on this address yet. KRON and other covenant tokens show here from kcc20.info.'}</div>`;
+      : `<div class="empty">${tokenLoadErr || (lastTokenFetch ? 'No KCC20 on this address yet. Import the same key as KasWare to see KRON / KKDAG here automatically.' : 'Loading KCC20…')}</div>`;
   }
   const krc = $('token-krc20');
   if (krc) {
@@ -447,6 +449,7 @@ async function tickLive(full) {
       nextBal = Number(data.balance ?? data ?? 0);
     }
     if (uRes.ok) utxos = await uRes.json() || [];
+    const balChanged = seenBalance != null && nextBal !== seenBalance;
     if (seenBalance != null && nextBal > seenBalance) {
       const delta = nextBal - seenBalance;
       toast(`Received ${formatAmount(delta)} KAS`);
@@ -482,9 +485,13 @@ async function tickLive(full) {
         }
       } catch {}
       refreshVaultBalances();
-      refreshTokenHoldings();
     }
     const now = Date.now();
+    if (!tokenBusy && (full || now - lastTokenFetch > 5000 || balChanged)) {
+      lastTokenFetch = now;
+      tokenBusy = true;
+      refreshTokenHoldings().finally(() => { tokenBusy = false; });
+    }
     if (full || now - lastAutoSweep > 8000) {
       lastAutoSweep = now;
       maybeAutoUnlock();
@@ -502,15 +509,12 @@ async function refreshTokenHoldings() {
   if (!wallet?.address) return;
   try {
     const [kcc, krc] = await Promise.allSettled([
-      fetchKcc20Portfolio(wallet.address),
+      fetchKcc20Portfolio(wallet.address, wallet.pubKey),
       fetchKrc20Portfolio(wallet.address)
     ]);
-    kccHoldings = kcc.status === 'fulfilled' ? kcc.value : [];
-    krcHoldings = krc.status === 'fulfilled' ? krc.value : [];
-    const fails = [];
-    if (kcc.status === 'rejected') fails.push('KCC20');
-    if (krc.status === 'rejected') fails.push('KRC-20');
-    tokenLoadErr = fails.length ? `Could not load ${fails.join(' / ')} right now.` : '';
+    if (kcc.status === 'fulfilled') kccHoldings = kcc.value;
+    if (krc.status === 'fulfilled') krcHoldings = krc.value;
+    tokenLoadErr = kcc.status === 'rejected' ? 'KCC20 indexer unreachable — retrying…' : '';
   } catch (e) {
     tokenLoadErr = errText(e);
   }
@@ -530,7 +534,7 @@ function openTokenSheet(token) {
   const amt = formatTokenUnits(token.balance, token.decimals);
   const link = token.protocol === 'krc20'
     ? `https://kas.fyi/krc20-${encodeURIComponent(token.ticker)}`
-    : (token.tokenId ? `https://kcc20.info/tokens/${encodeURIComponent(token.tokenId)}` : 'https://kcc20.info/');
+    : (token.tokenId ? `https://kascov.io/#/mainnet/token/${encodeURIComponent(token.tokenId)}` : 'https://kascov.io/#/tokens');
   openSheet(token.ticker, `
     ${token.image ? `<div style="display:flex;justify-content:center;padding:8px 0 14px;"><img src="${esc(token.image)}" alt="" style="width:56px;height:56px;border-radius:16px;object-fit:cover;"></div>` : ''}
     <div class="kv"><span class="k">Balance</span><span class="v">${esc(amt)} ${esc(token.ticker)}</span></div>
@@ -538,7 +542,7 @@ function openTokenSheet(token) {
     <div class="kv"><span class="k">Standard</span><span class="v">${esc(proto)}${token.standard ? ' · ' + esc(token.standard) : ''}</span></div>
     ${token.cells ? `<div class="kv"><span class="k">Cells</span><span class="v">${esc(token.cells)}</span></div>` : ''}
     ${token.tokenId && token.protocol === 'kcc20' ? `<div class="kv"><span class="k">Token ID</span><span class="v">${esc(token.tokenId)}</span></div>` : ''}
-    <p class="muted" style="text-align:left;padding-top:8px;">Balances come from ${token.protocol === 'krc20' ? 'Kasplex (same indexer KasWare uses)' : 'kcc20.info (Kron / covenant tokens)'}.</p>
+    <p class="muted" style="text-align:left;padding-top:8px;">Live from kascov.io (KRON / KCC20, CORS open). Same holdings KasWare shows for this address.</p>
     <p class="muted"><a href="${esc(link)}" target="_blank" rel="noopener" style="color:var(--gold-2)">Open explorer</a></p>
   `, { confirm: 'Done', cancel: false });
 }

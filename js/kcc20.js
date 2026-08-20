@@ -153,6 +153,7 @@ export function formatTokenUnits(raw, decimals = 0) {
 export function tokenColor(ticker) {
   const t = String(ticker || '').toUpperCase();
   if (t === 'KRON' || t === 'KRONS') return '#d4b07a';
+  if (t === 'KKDAG' || t === 'KNGHT') return '#7aa2f7';
   if (t === 'NACHO') return '#e8a54b';
   if (t === 'KAS') return '#49eacb';
   let h = 0;
@@ -162,6 +163,7 @@ export function tokenColor(ticker) {
 }
 
 const KCC20_API = 'https://kcc20.info';
+const KASCOV_API = 'https://kascov.io';
 const KASPLEX_API = 'https://api.kasplex.org/v1/krc20';
 
 function asList(v) {
@@ -172,29 +174,61 @@ function asList(v) {
   return [];
 }
 
-export async function fetchKcc20Portfolio(address) {
-  if (!address) return [];
-  const url = `${KCC20_API}/v1/addresses/${address}/analysis?activity_limit=1&counterparty_limit=1`;
-  const res = await fetch(url);
-  if (res.status === 404) return [];
-  if (!res.ok) throw new Error('KCC20 indexer failed');
-  const data = await res.json();
-  return asList(data.portfolio || data).filter(p => Number(p.balance) > 0).map(p => {
-    const ticker = String(p.ticker || p.fallback_name || 'TOKEN').toUpperCase();
-    const imageApi = p.image || (p.image_api ? (String(p.image_api).startsWith('http') ? p.image_api : KCC20_API + p.image_api) : '');
-    return {
-      protocol: 'kcc20',
-      tokenId: p.token_id || '',
-      ticker,
-      name: p.display_name || p.name || ticker,
-      decimals: Number(p.decimals || 0),
-      balance: String(p.balance || '0'),
-      cells: Number(p.cells || 0),
-      image: imageApi,
-      standard: p.standard || 'kcc20',
-      priceKas: p.price_kas != null ? Number(p.price_kas) : null
-    };
-  });
+function mapKccRow(p) {
+  const ticker = String(p.listed_ticker || p.ticker || p.fallback_name || p.name || 'TOKEN').toUpperCase();
+  const image = p.listed_image || p.image
+    || (p.image_api ? (String(p.image_api).startsWith('http') ? p.image_api : KCC20_API + p.image_api) : '');
+  return {
+    protocol: 'kcc20',
+    tokenId: p.token_id || p.tokenId || '',
+    ticker,
+    name: p.listed_name || p.display_name || p.name || ticker,
+    decimals: Number(p.listed_decimals ?? p.decimals ?? 0),
+    balance: String(p.balance || '0'),
+    cells: Number(p.cells || 0),
+    image,
+    standard: p.standard || 'kcc20',
+    priceKas: p.price_kas != null ? Number(p.price_kas) : null
+  };
+}
+
+async function fetchJson(url) {
+  const res = await fetch(url, { cache: 'no-store' });
+  if (res.status === 404) return null;
+  if (!res.ok) throw new Error('Indexer HTTP ' + res.status);
+  return res.json();
+}
+
+/** kascov.io is CORS-open (what KasWare-class wallets use for KRON / KCC20). kcc20.info is not. */
+export async function fetchKcc20Portfolio(address, pubKey) {
+  const keys = [];
+  if (address) keys.push(address);
+  const pk = String(pubKey || '').replace(/^0x/i, '');
+  if (pk && pk.length >= 64) keys.push(pk);
+
+  let lastErr = null;
+  for (const key of keys) {
+    try {
+      const data = await fetchJson(`${KASCOV_API}/data/mainnet/addr/${key}.json`);
+      if (data && Array.isArray(data.token_holdings)) {
+        return data.token_holdings.filter(p => Number(p.balance) > 0).map(mapKccRow);
+      }
+    } catch (e) {
+      lastErr = e;
+    }
+  }
+
+  if (address) {
+    try {
+      const data = await fetchJson(`${KCC20_API}/v1/addresses/${address}/analysis?activity_limit=1&counterparty_limit=1`);
+      if (data) return asList(data.portfolio || data).filter(p => Number(p.balance) > 0).map(mapKccRow);
+    } catch (e) {
+      lastErr = e;
+    }
+  }
+
+  if (lastErr) throw lastErr;
+  return [];
 }
 
 export async function fetchKrc20Portfolio(address) {

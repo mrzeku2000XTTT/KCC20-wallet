@@ -206,6 +206,7 @@ export function tokenColor(ticker) {
   if (t === 'KRON' || t === 'KRONS') return '#d4b07a';
   if (t === 'KKDAG' || t === 'KNGHT') return '#7aa2f7';
   if (t === 'NACHO') return '#e8a54b';
+  if (t === 'KASPI') return '#49eacb';
   if (t === 'KAS') return '#49eacb';
   let h = 0;
   for (const c of t) h = (h * 33 + c.charCodeAt(0)) >>> 0;
@@ -225,10 +226,33 @@ function asList(v) {
   return [];
 }
 
+export function kcc20Identicon(tick) {
+  const t = String(tick || '?').toUpperCase();
+  let h = 0;
+  for (const c of t) h = (h * 33 + c.charCodeAt(0)) >>> 0;
+  const c1 = tokenColor(t);
+  const c2 = ['#49eacb', '#d4b07a', '#f3e2bf', '#7aa2f7', '#70c7ba'][h % 5];
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 36 36"><rect width="36" height="36" rx="18" fill="#101214"/><g transform="rotate(${h % 360} 18 18)"><circle cx="18" cy="12" r="7.2" fill="${c1}"/><circle cx="11.5" cy="22.5" r="6.2" fill="${c2}" opacity=".88"/><circle cx="24.5" cy="22.5" r="6.2" fill="${c1}" opacity=".7"/></g></svg>`;
+  return 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(svg);
+}
+
+function firstHttp(...vals) {
+  for (const v of vals) {
+    const s = String(v || '').trim();
+    if (/^https?:\/\//i.test(s)) return s;
+    if (s.startsWith('/') && s.length > 1) return KCC20_API + s;
+  }
+  return '';
+}
+
 function mapKccRow(p) {
   const ticker = String(p.listed_ticker || p.ticker || p.fallback_name || p.name || 'TOKEN').toUpperCase();
-  const image = p.listed_image || p.image
-    || (p.image_api ? (String(p.image_api).startsWith('http') ? p.image_api : KCC20_API + p.image_api) : '');
+  const listing = p.listing || p.listed || {};
+  const image = firstHttp(
+    p.listed_image, p.claimed_image, p.image, p.logoURI, p.logo, p.icon, p.image_url,
+    listing.image, listing.logoURI, listing.logo,
+    p.image_api
+  );
   return {
     protocol: 'kcc20',
     tokenId: p.token_id || p.tokenId || '',

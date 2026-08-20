@@ -1,30 +1,30 @@
 import {
   loadCryptoLibs, generatePrivateKey, createKeypairFromHex,
   isValidKaspaAddress, shortAddr, hexToBytes, privKeyToHex, derivePublicKey, kaspaAddressFromPubkey, bytesToHex
-} from './crypto.js?v=64';
+} from './crypto.js?v=65';
 import {
   NATIVE_KAS, VAULT_PRODUCTS, loadWatchlist, addToken, removeToken,
   loadVaults, saveVault, updateVault, formatAmount, formatTokenUnits, tokenColor,
   fetchKcc20Portfolio, fetchKrc20Portfolio, fetchKcc20PortfolioMany, fetchKrc20PortfolioMany,
-  krc20Logo, toTokenRaw, setVaultOwner
-} from './kcc20.js?v=64';
-import { parseIntent, describeIntent, askFor, parseDurationField, interpretVaultChat, normalizeChat } from './intent.js?v=64';
-import { payloadFromAddress } from './script.js?v=64';
-import { explainTransaction, scorpionAnswer } from './scorpion.js?v=64';
+  krc20Logo, toTokenRaw, setVaultOwner, kcc20Identicon
+} from './kcc20.js?v=65';
+import { parseIntent, describeIntent, askFor, parseDurationField, interpretVaultChat, normalizeChat } from './intent.js?v=65';
+import { payloadFromAddress } from './script.js?v=65';
+import { explainTransaction, scorpionAnswer } from './scorpion.js?v=65';
 import {
   sendKas, fetchAddressUtxos, fetchAddressBalance, loadKaspaSdk,
   buildTimelockCovenant, buildEscrowCovenant, buildMultisigCovenant, currentDaa,
   pingPublicNode, sweepVault, toRpcTransaction, p2shSpendScript, planKasPayment, storageMassOk,
   compoundUtxos, sendKrc20, sendKcc20, loadKrc20Pending, lockKcc20Timelock, sweepKcc20Capsule,
   fetchOwnedUtxos
-} from './tx.js?v=64';
-import { kronMarkets, quoteKronTrade, executeKronTrade, formatKasSompi, lookupKronTick, tradeCostLines } from './kronTrade.js?v=64';
+} from './tx.js?v=65';
+import { kronMarkets, quoteKronTrade, executeKronTrade, formatKasSompi, lookupKronTick, tradeCostLines, attachKronLogos } from './kronTrade.js?v=65';
 import {
   migrateReceiveBook, ownedAddresses, deriveFreshReceiveAddress, ensureFreshReceive,
   markAddressUsed, currentReceive
-} from './receive.js?v=64';
+} from './receive.js?v=65';
 
-export const BUILD = '64';
+export const BUILD = '65';
 
 function errText(e) {
   if (e == null) return 'Unknown error';
@@ -431,7 +431,7 @@ async function refreshAllWalletSnaps({ tokens = false } = {}) {
             fetchKcc20Portfolio(w.address, w.pubKey),
             fetchKrc20Portfolio(w.address)
           ]);
-          const nextKcc = kcc.status === 'fulfilled' ? slimTokens(kcc.value) : (prev.kcc || []);
+          const nextKcc = kcc.status === 'fulfilled' ? slimTokens(await attachKronLogos(kcc.value)) : (prev.kcc || []);
           const nextKrc = krc.status === 'fulfilled' ? slimTokens(krc.value) : (prev.krc || []);
           if (prev.kcc) detectHoldingCredits(name, w.address, prev.kcc, nextKcc, 'kcc20');
           if (prev.krc) detectHoldingCredits(name, w.address, prev.krc, nextKrc, 'krc20');
@@ -950,12 +950,20 @@ function logout() {
 function kas() { return balanceSompi / 1e8; }
 function usd(n) { return (n * (price || 0)).toLocaleString(undefined, { style: 'currency', currency: 'USD' }); }
 
+function paintIfChanged(el, html) {
+  if (!el) return;
+  if (el.dataset.paint === html) return;
+  el.dataset.paint = html;
+  el.innerHTML = html;
+}
+
 function renderHome() {
   if (!wallet) return;
   if ($('live-pill')) $('live-pill').textContent = 'Live · ' + BUILD;
-  $('card-bal').innerHTML = `${formatAmount(balanceSompi)}<small>KAS</small>`;
-  $('card-usd').textContent = price ? `≈ ${usd(kas())}` : 'Fetching price…';
-  $('card-addr').textContent = shortAddr(wallet.address, 12, 8);
+  const balHtml = `${formatAmount(balanceSompi)}<small>KAS</small>`;
+  if ($('card-bal') && $('card-bal').innerHTML !== balHtml) $('card-bal').innerHTML = balHtml;
+  if ($('card-usd')) $('card-usd').textContent = price ? `≈ ${usd(kas())}` : 'Fetching price…';
+  if ($('card-addr')) $('card-addr').textContent = shortAddr(wallet.address, 12, 8);
   if ($('card-wallet')) $('card-wallet').textContent = `${wallet.name || 'Wallet'} ▾`;
   const navW = $('nav-wallet')?.querySelector('b');
   if (navW) navW.textContent = wallet.name || 'Wallet';
@@ -973,7 +981,7 @@ function renderHomeWallets() {
   const box = $('home-wallets');
   if (!box || !wallet) return;
   const list = loadWalletList();
-  box.innerHTML = list.map(w => {
+  paintIfChanged(box, list.map(w => {
     const active = w.id === wallet.id;
     const kasTxt = walletKasLabel(w, active);
     const sendBtn = !active
@@ -982,7 +990,7 @@ function renderHomeWallets() {
     return `
       <div class="w-chip${active ? ' on' : ''}">
         <button class="w-chip-main" type="button" data-switch-wallet="${esc(w.id)}">
-          <img class="w-kas" src="assets/kas.svg" alt="">
+          <span class="w-kas" aria-hidden="true"></span>
           <span>
             <b>${esc(w.name || 'Wallet')}</b>
             <em>${esc(kasTxt)} KAS</em>
@@ -990,7 +998,7 @@ function renderHomeWallets() {
         </button>
         ${sendBtn}
       </div>`;
-  }).join('') + `<button class="w-chip add" type="button" data-add-wallet="1" aria-label="Add wallet">＋</button>`;
+  }).join('') + `<button class="w-chip add" type="button" data-add-wallet="1" aria-label="Add wallet">＋</button>`);
 }
 
 function otherWallets() {
@@ -1020,7 +1028,7 @@ function openMoveToOwned() {
     const kasTxt = sompi == null ? '…' : formatAmount(sompi) + ' KAS';
     return `
       <button class="row token-row" type="button" data-send-to="${esc(w.id)}">
-        <img class="w-kas" src="assets/kas.svg" alt="" style="width:28px;height:28px;border-radius:8px;">
+        <span class="w-kas" aria-hidden="true" style="width:28px;height:28px;"></span>
         <div style="flex:1;min-width:0">
           <div class="title">${esc(w.name || 'Wallet')}</div>
           <div class="sub">${esc(shortAddr(w.address, 12, 8))}</div>
@@ -1095,11 +1103,12 @@ function openWalletSwitcher() {
 function tokenDot(t) {
   const color = t.color || tokenColor(t.ticker);
   const fb = esc(String(t.ticker || '?').slice(0, 3));
-  const src = t.image || (t.native || t.ticker === 'KAS' ? 'assets/kas.svg' : (t.protocol === 'krc20' ? krc20Logo(t.ticker) : ''));
-  const img = src
-    ? `<img alt="" src="${esc(src)}" data-tick="${esc(t.ticker || '')}" data-fb="${fb}">`
-    : fb;
-  return `<div class="dot" style="background:${esc(color)}22;color:${esc(color)}">${img}</div>`;
+  if (t.native || t.ticker === 'KAS') {
+    return `<div class="dot kas-dot" aria-hidden="true"></div>`;
+  }
+  const src = t.image
+    || (t.protocol === 'krc20' ? krc20Logo(t.ticker) : kcc20Identicon(t.ticker));
+  return `<div class="dot" style="background:${esc(color)}22;color:${esc(color)}"><img alt="" src="${esc(src)}" data-tick="${esc(t.ticker || '')}" data-proto="${esc(t.protocol || '')}" data-fb="${fb}" referrerpolicy="no-referrer" decoding="async"></div>`;
 }
 
 function tokenRow(t, extra = '') {
@@ -1144,7 +1153,11 @@ function renderHoldings() {
     </button>`;
   });
   const rows = [kasRow, ...kccRows, ...krcRows, ...lockRows];
-  $('holdings').innerHTML = rows.join('');
+  const key = `${balanceSompi}|${kccHoldings.map(t => `${t.ticker}:${t.balance}:${t.image || ''}`).join(',')}|${krcHoldings.map(t => `${t.ticker}:${t.balance}`).join(',')}|${locked.map(v => v.address + ':' + (v.fundedSompi || 0)).join(',')}`;
+  const box = $('holdings');
+  if (box?.dataset.key === key) return;
+  if (box) box.dataset.key = key;
+  paintIfChanged(box, rows.join(''));
   const n = Array.isArray(utxos) ? utxos.length : 0;
   if ($('utxo-count')) $('utxo-count').textContent = n === 1 ? '1 UTXO' : `${n} UTXOs`;
 }
@@ -1743,7 +1756,9 @@ function mergeFreshHoldings(local, remote) {
     if (!key) continue;
     const r = map.get(key);
     try {
-      if (!r || BigInt(t.balance || '0') > BigInt(r.balance || '0')) map.set(key, r ? { ...r, ...t } : t);
+      if (!r || BigInt(t.balance || '0') > BigInt(r.balance || '0')) {
+        map.set(key, r ? { ...r, ...t, image: t.image || r.image } : t);
+      }
     } catch {
       if (!r) map.set(key, t);
     }
@@ -1854,7 +1869,7 @@ async function tickLive(full) {
         if (pRes.ok) {
           const data = await pRes.json();
           price = Number(data.price ?? data ?? 0);
-          if (currentTab === 'home') renderHome();
+          if ($('card-usd')) $('card-usd').textContent = price ? `≈ ${usd(kas())}` : 'Fetching price…';
         }
         if (tRes.ok) {
           const txs = await tRes.json();
@@ -1896,7 +1911,10 @@ async function refreshTokenHoldings() {
       owned.length > 1 ? fetchKrc20PortfolioMany(owned) : fetchKrc20Portfolio(addr)
     ]);
     if (!wallet || wallet.address !== addr) return;
-    if (kcc.status === 'fulfilled') kccHoldings = mergeFreshHoldings(kccHoldings, kcc.value);
+    if (kcc.status === 'fulfilled') {
+      const withLogos = await attachKronLogos(kcc.value);
+      kccHoldings = mergeFreshHoldings(kccHoldings, withLogos);
+    }
     if (krc.status === 'fulfilled') krcHoldings = mergeFreshHoldings(krcHoldings, krc.value);
     tokenLoadErr = kcc.status === 'rejected' ? 'KCC20 indexer unreachable — retrying…' : '';
   } catch (e) {
@@ -1988,10 +2006,10 @@ function openTokenSheet(token) {
   const link = token.protocol === 'krc20'
     ? explorerAddr(wallet?.address || '')
     : (token.tokenId ? `https://kascov.io/#/mainnet/token/${encodeURIComponent(token.tokenId)}` : 'https://kascov.io/#/tokens');
-  const logoSrc = token.image || (token.native ? 'assets/kas.svg' : (token.protocol === 'krc20' ? krc20Logo(token.ticker) : ''));
+  const logoSrc = token.image || (token.native ? 'assets/kas.svg' : (token.protocol === 'krc20' ? krc20Logo(token.ticker) : kcc20Identicon(token.ticker)));
   const assetKey = `${token.protocol}:${token.ticker}`;
   openSheet(token.ticker, `
-    ${logoSrc ? `<div style="display:flex;justify-content:center;padding:8px 0 14px;"><img src="${esc(logoSrc)}" alt="" data-tick="${esc(token.ticker || '')}" data-fb="${esc((token.ticker || '?').slice(0, 3))}" style="width:56px;height:56px;border-radius:16px;object-fit:cover;"></div>` : ''}
+    ${logoSrc ? `<div style="display:flex;justify-content:center;padding:8px 0 14px;"><img src="${esc(logoSrc)}" alt="" data-tick="${esc(token.ticker || '')}" data-proto="${esc(token.protocol || '')}" data-fb="${esc((token.ticker || '?').slice(0, 3))}" referrerpolicy="no-referrer" decoding="async" style="width:56px;height:56px;border-radius:16px;object-fit:cover;"></div>` : ''}
     <div class="kv"><span class="k">Balance</span><span class="v">${esc(amt)} ${esc(token.ticker)}</span></div>
     <div class="kv"><span class="k">Sendable max</span><span class="v">${esc(maxSend)} ${esc(token.ticker)}</span></div>
     <div class="kv"><span class="k">Name</span><span class="v">${esc(token.name)}</span></div>
@@ -2034,7 +2052,7 @@ async function renderKronMarkets() {
       const px = m.price ? Number(m.price).toPrecision(4) + ' KAS' : (m.graduated ? 'Pool' : 'Curve');
       return `
         <button class="row token-row" type="button" data-trade-tick="${esc(m.tick)}">
-          <div class="dot" style="background:rgba(212,176,122,.16);color:var(--gold-2)">${m.logo ? `<img alt="" src="${esc(m.logo)}" data-tick="${esc(m.tick)}" data-fb="${esc(m.tick.slice(0, 3))}">` : esc(m.tick.slice(0, 3))}</div>
+          <div class="dot" style="background:rgba(212,176,122,.16);color:var(--gold-2)">${m.logo ? `<img alt="" src="${esc(m.logo)}" data-tick="${esc(m.tick)}" data-proto="kcc20" data-fb="${esc(m.tick.slice(0, 3))}" referrerpolicy="no-referrer" decoding="async">` : `<img alt="" src="${esc(kcc20Identicon(m.tick))}" data-tick="${esc(m.tick)}" data-proto="kcc20">`}</div>
           <div>
             <div class="title">${esc(m.tick)}</div>
             <div class="sub">${esc(m.graduated ? 'Pool' : 'Curve')} · ${esc(m.name)}</div>
@@ -3588,12 +3606,16 @@ async function init() {
     const img = ev.target;
     if (!img || img.tagName !== 'IMG' || !img.dataset.tick) return;
     const tick = String(img.dataset.tick || '');
+    const proto = String(img.dataset.proto || '');
     const step = Number(img.dataset.step || 0);
     const t = tick.toLowerCase();
-    const next = [
-      `https://krc20data.s3.amazonaws.com/verified/${t}.png`,
-      `https://krc20data.s3.amazonaws.com/verified/${tick}-logo.png`
-    ];
+    const next = proto === 'kcc20'
+      ? [kcc20Identicon(tick)]
+      : [
+          `https://krc20data.s3.amazonaws.com/verified/${t}.png`,
+          `https://krc20data.s3.amazonaws.com/verified/${tick}-logo.png`,
+          kcc20Identicon(tick)
+        ];
     if (step < next.length) {
       img.dataset.step = String(step + 1);
       img.src = next[step];
@@ -3615,8 +3637,20 @@ async function init() {
     toast('UI failed to bind — hard refresh. ' + errText(e));
   }
   const video = document.getElementById('bg-video');
-  video?.play?.().catch(() => {});
-  video?.addEventListener('playing', () => document.querySelector('.bg-poster')?.classList.add('hidden'));
+  const mobileBg = window.matchMedia('(max-width: 520px), (pointer: coarse)').matches;
+  if (mobileBg) {
+    try { video?.pause(); } catch {}
+    if (video) {
+      video.querySelectorAll('source').forEach(s => s.remove());
+      video.removeAttribute('src');
+      try { video.load(); } catch {}
+      video.remove();
+    }
+    document.querySelector('.bg-poster')?.classList.remove('hidden');
+  } else {
+    video?.play?.().catch(() => {});
+    video?.addEventListener('playing', () => document.querySelector('.bg-poster')?.classList.add('hidden'));
+  }
   const saved = loadStoredWallet();
   if (saved?.address && saved?.privKey) {
     wallet = migratePinOnto(saved);

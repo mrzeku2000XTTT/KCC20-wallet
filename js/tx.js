@@ -1,5 +1,5 @@
 /* Official rusty-kaspa WASM: P2SH covenants + signed send/fund. */
-import { hexToBytes, kaspaAddressFromScriptHash } from './crypto.js?v=64';
+import { hexToBytes, kaspaAddressFromScriptHash } from './crypto.js?v=65';
 
 const API = 'https://api.kaspa.org';
 

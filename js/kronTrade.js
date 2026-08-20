@@ -1,7 +1,7 @@
 /* KRON DEX trades via @kronsdk/kron-sdk (v0.17.2). Quotes + builders from the SDK;
    templates from the CORS-open token descriptor; live heads from idx.kron.technology. */
 import * as kron from '../vendor/kron-sdk/index.js';
-import { loadKaspaSdk, connectPublicNode, fetchAddressUtxos } from './tx.js?v=64';
+import { loadKaspaSdk, connectPublicNode, fetchAddressUtxos } from './tx.js?v=65';
 
 const IDX = 'https://idx.kron.technology/v1/kcc20';
 const REG = 'https://api.kron.technology';
@@ -90,6 +90,21 @@ export async function kronMarkets() {
 export function findKronEntry(tick) {
   const t = String(tick || '').toUpperCase();
   return (listCache?.tokens || []).find(e => String(e.symbol).toUpperCase() === t) || null;
+}
+
+export function kronLogoFor(tick) {
+  const e = findKronEntry(tick);
+  return e?.logoURI ? String(e.logoURI) : '';
+}
+
+export async function attachKronLogos(holdings) {
+  try { await kronTokenlist(); } catch { return holdings || []; }
+  return (holdings || []).map(t => {
+    const kron = kronLogoFor(t.ticker);
+    if (kron && (!t.image || !/^https?:\/\//i.test(String(t.image)))) return { ...t, image: kron };
+    if (t.image) return t;
+    return kron ? { ...t, image: kron } : t;
+  });
 }
 
 export async function lookupKronTick(tick) {

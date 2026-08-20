@@ -1035,18 +1035,25 @@ function concatU8(parts) {
 
 function parseKcc20Redeem(hex) {
   const script = hexToU8(hex);
-  if (script.length < 46 || script[0] !== 32 || script[33] !== 1 || script[35] !== 8 || script[44] !== 1) {
+  const hits = [];
+  for (let s = 0; s + 46 <= script.length; s++) {
+    if (script[s] === 32 && script[s + 33] === 1 && script[s + 34] <= 3 && script[s + 35] === 8 && script[s + 44] === 1 && script[s + 45] <= 1) {
+      hits.push(s);
+    }
+  }
+  if (hits.length !== 1) {
     throw new Error('KCC20 cell redeem is not the KRON state layout (owner/type/amount/isMinter)');
   }
+  const n = hits[0];
   let amount = 0n;
-  for (let i = 0; i < 8; i++) amount |= BigInt(script[36 + i]) << BigInt(8 * i);
+  for (let i = 0; i < 8; i++) amount |= BigInt(script[n + 36 + i]) << BigInt(8 * i);
   return {
     script,
-    stateStart: 0,
-    ownerIdentifier: script.slice(1, 33),
-    identifierType: script[34],
+    stateStart: n,
+    ownerIdentifier: script.slice(n + 1, n + 33),
+    identifierType: script[n + 34],
     amount,
-    isMinter: script[45] === 1
+    isMinter: script[n + 45] === 1
   };
 }
 
@@ -1068,14 +1075,15 @@ function presenceState(owner32, amount) {
   return { ownerIdentifier: owner32, identifierType: 3, amount: BigInt(amount), isMinter: false };
 }
 
-function transferSigScript(k, redeemBytes, nextStates, authByte = 1) {
+function transferSigScript(k, redeemBytes, nextStates, witnesses) {
+  const w = Array.isArray(witnesses) ? witnesses : [Number(witnesses ?? 1)];
   const sb = new k.ScriptBuilder({ flags: { covenantsEnabled: true } });
   sb.addData(concatU8(nextStates.map(s => s.ownerIdentifier)));
   sb.addData(concatU8(nextStates.map(s => Uint8Array.of(s.identifierType))));
   sb.addData(concatU8(nextStates.map(s => int8LE(s.amount))));
   sb.addData(concatU8(nextStates.map(s => Uint8Array.of(s.isMinter ? 1 : 0))));
   sb.addData(new Uint8Array(0));
-  sb.addData(Uint8Array.of(authByte & 255));
+  sb.addData(Uint8Array.from(w, x => x & 255));
   sb.addData(redeemBytes);
   return sb.drain();
 }
@@ -1164,28 +1172,43 @@ export async function sendKcc20({ wallet, dest, token, amountHuman, utxos, onSta
   pieces.sort((a, b) => (a.tokenAmount < b.tokenAmount ? 1 : -1));
   const totalTok = pieces.reduce((a, p) => a + p.tokenAmount, 0n);
   if (totalTok < sendAmt) throw new Error(`You only hold ${totalTok} ${tick}`);
-  const piece = pieces.find(p => p.tokenAmount >= sendAmt);
-  if (!piece) {
-    throw new Error(`Largest piece is ${pieces[0].tokenAmount} ${tick}. Send that much or less (KasWare/KRON send one cell at a time).`);
+  const maxIns = Math.max(1, Math.min(4, Number(meta?.maxIns || 4)));
+  let selected = pieces.filter(p => p.tokenAmount >= sendAmt).slice(0, 1);
+  if (!selected.length) {
+    selected = [];
+    let covered = 0n;
+    for (const p of pieces) {
+      selected.push(p);
+      covered += p.tokenAmount;
+      if (covered >= sendAmt) break;
+      if (selected.length >= maxIns) break;
+    }
+    const have = selected.reduce((a, p) => a + p.tokenAmount, 0n);
+    if (have < sendAmt) {
+      throw new Error(`${tick} is split across ${pieces.length} cells. This send needs ${sendAmt} but the largest ${selected.length} cells only hold ${have}. Send ${have} now, then the rest.`);
+    }
   }
+  onStatus?.(`Sending ${sendAmt} ${tick} from ${selected.length} cell${selected.length === 1 ? '' : 's'}…`);
 
-  const changeTok = piece.tokenAmount - sendAmt;
-  const tpl = { script: piece.redeem.script, stateStart: 0 };
+  const inTok = selected.reduce((a, p) => a + p.tokenAmount, 0n);
+  const changeTok = inTok - sendAmt;
+  const tpl = { script: selected[0].redeem.script, stateStart: selected[0].redeem.stateStart || 0 };
+  const ownerId = selected[0].redeem.ownerIdentifier;
   const next = [presenceState(destPk, sendAmt)];
-  if (changeTok > 0n) next.push(presenceState(piece.redeem.ownerIdentifier, changeTok));
-  const currentRedeem = piece.redeem.script;
-  const tokenSpk = k.payToScriptHashScript(currentRedeem);
-  const sigScript = transferSigScript(k, currentRedeem, next, 1);
+  if (changeTok > 0n) next.push(presenceState(ownerId, changeTok));
+  const presenceIdx = selected.length;
+  const witnesses = selected.map(() => presenceIdx);
+  const inCellKas = selected.reduce((a, p) => a + p.value, 0n);
   const nTok = next.length;
   let tokenKas;
-  if (nTok === 1) tokenKas = [piece.value];
+  if (nTok === 1) tokenKas = [inCellKas >= MIN_CELL_KAS ? inCellKas : MIN_CELL_KAS];
   else {
-    const a = piece.value * 3n / 5n;
-    const b = piece.value - a;
+    const a = inCellKas * 3n / 5n;
+    const b = inCellKas - a;
     tokenKas = a >= MIN_CELL_KAS && b >= MIN_CELL_KAS ? [a, b] : [MIN_CELL_KAS, MIN_CELL_KAS];
   }
   let tokenOutSum = tokenKas.reduce((a, v) => a + v, 0n);
-  const extraForCells = tokenOutSum > piece.value ? tokenOutSum - piece.value : 0n;
+  const extraForCells = tokenOutSum > inCellKas ? tokenOutSum - inCellKas : 0n;
   const feeGuess = 500_000n;
   const walletNeed = extraForCells + feeGuess + 200_000n;
 
@@ -1204,8 +1227,8 @@ export async function sendKcc20({ wallet, dest, token, amountHuman, utxos, onSta
   if (!picked.length) throw kasNeedError(walletNeed);
   if (feeSum < walletNeed) throw kasNeedError(walletNeed - feeSum);
 
-  const inAmts = [piece.value, ...picked.map(e => e.amount)];
-  let kasChange = piece.value + feeSum - tokenOutSum - feeGuess;
+  const inAmts = [...selected.map(p => p.value), ...picked.map(e => e.amount)];
+  let kasChange = inCellKas + feeSum - tokenOutSum - feeGuess;
   if (kasChange < 200_000n) kasChange = 0n;
   const outAmts = kasChange > 0n ? [...tokenKas, kasChange] : tokenKas;
   if (!storageMassOk(k, inAmts, outAmts)) {
@@ -1218,7 +1241,6 @@ export async function sendKcc20({ wallet, dest, token, amountHuman, utxos, onSta
 
   const cid = new k.Hash(tokenCovid);
   function spkOf(v) {
-    if (!v) return tokenSpk;
     if (v instanceof k.ScriptPublicKey) return v;
     if (typeof v === 'string') return new k.ScriptPublicKey(0, v);
     if (v && (typeof v.script === 'string' || v.script instanceof Uint8Array)) {
@@ -1247,15 +1269,20 @@ export async function sendKcc20({ wallet, dest, token, amountHuman, utxos, onSta
       utxo
     });
   }
-  const tokenIn = inputFromUtxo({
-    txid: piece.transactionId,
-    index: piece.index,
-    amount: piece.value,
-    scriptPublicKey: tokenSpk,
-    address: String(k.addressFromScriptPublicKey(tokenSpk, 'mainnet') || ''),
-    signatureScript: sigScript,
-    computeBudget: 100
+  const tokenIns = selected.map(p => {
+    const redeem = p.redeem.script;
+    const spk = k.payToScriptHashScript(redeem);
+    return inputFromUtxo({
+      txid: p.transactionId,
+      index: p.index,
+      amount: p.value,
+      scriptPublicKey: spk,
+      address: String(k.addressFromScriptPublicKey(spk, 'mainnet') || ''),
+      signatureScript: transferSigScript(k, redeem, next, witnesses),
+      computeBudget: 100
+    });
   });
+  const tokenScripts = tokenIns.map(inp => hexish(inp.signatureScript));
   const kasIns = picked.map(e => inputFromUtxo({
     txid: e.outpoint.transactionId,
     index: e.outpoint.index,
@@ -1267,7 +1294,7 @@ export async function sendKcc20({ wallet, dest, token, amountHuman, utxos, onSta
     computeBudget: 10
   }));
   const covOutputs = tokenOuts.map(o => new k.TransactionOutput(o.value, o.spk, new k.CovenantBinding(0, cid)));
-  const inSum = piece.value + feeSum;
+  const inSum = inCellKas + feeSum;
   const changeSpk = k.payToAddressScript(wallet.address);
   const outputs = kasChange > 0n
     ? [...covOutputs, new k.TransactionOutput(kasChange, changeSpk)]
@@ -1275,7 +1302,7 @@ export async function sendKcc20({ wallet, dest, token, amountHuman, utxos, onSta
 
   const tx = new k.Transaction({
     version: 1,
-    inputs: [tokenIn, ...kasIns],
+    inputs: [...tokenIns, ...kasIns],
     outputs,
     lockTime: 0n,
     gas: 0n,
@@ -1283,16 +1310,23 @@ export async function sendKcc20({ wallet, dest, token, amountHuman, utxos, onSta
     subnetworkId: NATIVE_SUBNET
   });
   prepInputs(tx, { sigOpCount: 0, computeBudget: 10 });
-  tx.inputs[0].computeBudget = 100;
-  tx.inputs[0].signatureScript = sigScript;
+  const tokenN = tokenIns.length;
+  for (let i = 0; i < tokenN; i++) {
+    tx.inputs[i].computeBudget = 100;
+    tx.inputs[i].signatureScript = tokenScripts[i];
+  }
   try { k.updateTransactionMass('mainnet', tx); } catch {}
 
-  const scripts = [hexish(sigScript)];
-  for (let i = 1; i < tx.inputs.length; i++) {
-    const sig = k.createInputSignature(tx, i, priv, k.SighashType.All);
-    tx.inputs[i].signatureScript = hexish(sig);
-    scripts.push(hexish(sig));
+  function signKasInputs() {
+    const scripts = tokenScripts.slice();
+    for (let i = tokenN; i < tx.inputs.length; i++) {
+      const sig = k.createInputSignature(tx, i, priv, k.SighashType.All);
+      tx.inputs[i].signatureScript = hexish(sig);
+      scripts.push(hexish(sig));
+    }
+    return scripts;
   }
+  const scripts = signKasInputs();
   onStatus?.('Broadcasting KCC20 send…');
   let txId;
   try {
@@ -1312,12 +1346,7 @@ export async function sendKcc20({ wallet, dest, token, amountHuman, utxos, onSta
     const extra = need - paid + 50_000n;
     if (kasChange <= extra) throw e;
     tx.outputs[last].value = BigInt(tx.outputs[last].value) - extra;
-    const scripts2 = [hexish(sigScript)];
-    for (let i = 1; i < tx.inputs.length; i++) {
-      const sig = k.createInputSignature(tx, i, priv, k.SighashType.All);
-      tx.inputs[i].signatureScript = hexish(sig);
-      scripts2.push(hexish(sig));
-    }
+    const scripts2 = signKasInputs();
     txId = await submitSignedRpc(k, rpc, url, tx, {
       sigOpCount: 0,
       computeBudget: 100,

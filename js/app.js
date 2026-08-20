@@ -92,6 +92,7 @@ let tokenPending = false;
 let seenTokens = false;
 let tokenStream = null;
 let tokenFastOff = 0;
+let hushTokenToastsUntil = 0;
 let walletSnap = {};
 let lastAllSnap = 0;
 let lastAllTokenSnap = 0;
@@ -1282,6 +1283,31 @@ function setLiveFast(on) {
   liveTimer = setInterval(() => tickLive(false), liveFast ? 1500 : 3000);
 }
 
+function applyLocalTokenDelta(ticker, protocol, deltaRaw) {
+  const tick = String(ticker || '').toUpperCase();
+  const list = protocol === 'krc20' ? krcHoldings : kccHoldings;
+  const t = list.find(x => String(x.ticker || '').toUpperCase() === tick);
+  if (!t) return;
+  try {
+    const next = BigInt(t.balance || '0') + BigInt(deltaRaw);
+    t.balance = (next < 0n ? 0n : next).toString();
+  } catch { return; }
+  rememberActiveSnap();
+  renderHome();
+  if (currentTab === 'tokens') renderTokens();
+  if (currentTab === 'you') renderProfile();
+}
+
+function afterTx() {
+  hushTokenToastsUntil = Date.now() + 25000;
+  setLiveFast(true);
+  clearTimeout(tokenFastOff);
+  tokenFastOff = setTimeout(() => setLiveFast(false), 45000);
+  tickLive(true);
+  kickTokenRefresh();
+  refreshAllWalletSnaps({ tokens: true }).catch(() => {});
+}
+
 function startLiveSync() {
   stopLiveSync();
   tickLive(true);
@@ -1343,7 +1369,7 @@ async function tickLive(full) {
     seenBalance = nextBal;
     balanceSompi = nextBal;
     rememberActiveSnap();
-    if (full || balChanged) {
+    if (full || balChanged || liveFast) {
       if (currentTab === 'home' || currentTab === 'tokens') renderHome();
       if (currentTab === 'tokens') renderTokens();
       if (currentTab === 'you') renderProfile();
@@ -1372,7 +1398,7 @@ async function tickLive(full) {
       refreshVaultBalances();
     }
     const now = Date.now();
-    if (full || balChanged || now - lastTokenFetch > 8000) kickTokenRefresh();
+    if (full || balChanged || liveFast || now - lastTokenFetch > 8000) kickTokenRefresh();
     if (full || now - lastAutoSweep > 8000) {
       lastAutoSweep = now;
       maybeAutoUnlock();
@@ -1406,7 +1432,7 @@ async function refreshTokenHoldings() {
   } catch (e) {
     tokenLoadErr = errText(e);
   }
-  if (seenTokens) {
+  if (seenTokens && Date.now() > hushTokenToastsUntil) {
     const after = [...kccHoldings, ...krcHoldings];
     for (const t of after) {
       const prev = before.find(x => (t.tokenId && x.tokenId === t.tokenId) || (x.protocol === t.protocol && x.ticker === t.ticker));
@@ -1639,8 +1665,7 @@ async function runTrade({ tick, side, amount }) {
       utxos: utxosNow,
       onStatus: (m) => { toast(m); setSheetStatus(m); }
     });
-    setLiveFast(true);
-    setTimeout(() => setLiveFast(false), 30000);
+    afterTx();
     openSheet('Swap sent', `
       <div class="kv"><span class="k">Market</span><span class="v">${esc(tick)}</span></div>
       <div class="kv"><span class="k">Side</span><span class="v">${esc(side)}</span></div>
@@ -1674,8 +1699,7 @@ async function runCompound() {
     const available = await fetchAddressUtxos(wallet.address);
     setSheetStatus(`Merging ${available.length} UTXOs…`);
     const result = await compoundUtxos({ wallet, utxos: available });
-    setLiveFast(true);
-    setTimeout(() => setLiveFast(false), 25000);
+    afterTx();
     openSheet('Compounded', `
       <div class="kv"><span class="k">Merged</span><span class="v">${esc(result.inputs)} → 1 UTXO</span></div>
       <div class="kv"><span class="k">Held</span><span class="v">${esc(formatKas(result.amountKas))} KAS</span></div>
@@ -1725,8 +1749,7 @@ async function maybeAutoUnlock() {
         const result = await sweepVault({ wallet, vault: v, utxos: utxosV });
         updateVault(v.address, { status: 'swept', unlockTxId: result.txId, fundedSompi: 0 });
         toast(`Returned ${result.amountKas} KAS from time capsule`);
-        setLiveFast(true);
-        setTimeout(() => setLiveFast(false), 25000);
+        afterTx();
         if (currentTab === 'vault') renderVault();
       } catch (e) {
         autoSweepTried.delete(v.address);
@@ -1810,7 +1833,7 @@ function sendHintFor(a) {
   if (a.protocol === 'krc20') {
     return `${a.ticker} · ${proto}. Available ${assetAvail(a)}. Kasplex commit-reveal parks ~0.1 KAS, then returns it minus the fee.`;
   }
-  return `${a.ticker} · ${proto}. Available ${assetAvail(a)}. Sends a KRON cell to a kaspa:q… key. Keep a bit of native KAS here so the new cell passes storage mass.`;
+  return `${a.ticker} · ${proto}. Available ${assetAvail(a)}. Sends any amount you hold — cells combine automatically. Keep a bit of native KAS here so the new cell passes storage mass.`;
 }
 
 function paintSendAsset(a) {
@@ -1937,7 +1960,7 @@ async function prepareSend(prefill) {
   const proto = asset.protocol === 'krc20' ? 'KRC-20' : 'KCC20';
   const extra = asset.protocol === 'krc20'
     ? 'Kasplex commit-reveal: ~0.1 KAS is parked in a P2SH then returned minus Toccata fees. Recipient can be any kaspa: wallet.'
-    : 'KCC20 cell send (KRON / KasWare): one piece to a kaspa:q key address. A small KAS UTXO from this wallet authorizes it.';
+    : 'KCC20 send (KRON / KasWare): spends as many cells as needed (up to 4) to a kaspa:q key. A small KAS UTXO from this wallet authorizes it.';
   openSheet('Review send', `
     <div class="kv"><span class="k">Asset</span><span class="v">${esc(asset.ticker)} · ${esc(proto)}</span></div>
     <div class="kv"><span class="k">To</span><span class="v">${esc(shortAddr(dest, 14, 8))}</span></div>
@@ -1957,8 +1980,7 @@ async function broadcastSend(dest, amount) {
     const availableUtxos = await fetchAddressUtxos(wallet.address);
     if (!availableUtxos.length) { toast('No UTXOs yet — receive KAS first'); return; }
     const result = await sendKas({ wallet, dest, amountKas: amount, utxos: availableUtxos });
-    setLiveFast(true);
-    setTimeout(() => setLiveFast(false), 25000);
+    afterTx();
     closeSheet();
     toast('Sent');
     openSheet('Sent', `
@@ -1985,8 +2007,8 @@ async function broadcastTokenSend(dest, asset, human, raw) {
     } else {
       result = await sendKcc20({ wallet, dest, token: asset, amountHuman: human, utxos: availableUtxos, onStatus });
     }
-    setLiveFast(true);
-    setTimeout(() => setLiveFast(false), 30000);
+    applyLocalTokenDelta(asset.ticker, asset.protocol, '-' + String(raw));
+    afterTx();
     const id = result.revealId || result.txId;
     openSheet('Sent ' + asset.ticker, `
       <div class="kv"><span class="k">Asset</span><span class="v">${esc(asset.ticker)}</span></div>
@@ -2220,8 +2242,7 @@ async function fundVault(vault) {
     fundFeeKas: result.feeKas || 0,
     params: { ...(vault.params || {}), amountKas: result.amountKas || amt }
   });
-  setLiveFast(true);
-  setTimeout(() => setLiveFast(false), 25000);
+  afterTx();
   const lockedKas = Number(result.amountKas || amt);
   const feeKas = Number(result.feeKas || 0);
   openSheet('Covenant funded', `
@@ -2284,8 +2305,7 @@ async function unlockVault(vault) {
   setSheetStatus('Signing P2SH redeem (CLTV + CHECKSIG)…');
   const result = await sweepVault({ wallet, vault, utxos: utxosV });
   updateVault(vault.address, { status: 'swept', unlockTxId: result.txId, fundedSompi: 0 });
-  setLiveFast(true);
-  setTimeout(() => setLiveFast(false), 25000);
+  afterTx();
   openSheet('Swept', `
     <div class="kv"><span class="k">Returned</span><span class="v">${esc(formatKas(result.amountKas))} KAS</span></div>
     <div class="kv"><span class="k">Sweep fee</span><span class="v">${Number(result.feeKas || 0).toFixed(6)} KAS</span></div>

@@ -1,5 +1,5 @@
 /* Official rusty-kaspa WASM: P2SH covenants + signed send/fund. */
-import { hexToBytes, kaspaAddressFromScriptHash } from './crypto.js';
+import { hexToBytes, kaspaAddressFromScriptHash } from './crypto.js?v=57';
 
 const API = 'https://api.kaspa.org';
 
@@ -2019,7 +2019,7 @@ export async function sweepKcc20Capsule({ wallet, vault, utxos, onStatus }) {
       scripts
     });
   } catch (e) {
-    if (isMassError(e)) throw kasNeedError(50_000_000n);
+    if (isMassError(e)) throw massSplitError();
     const need = requiredFeeFromError(e);
     if (!need) throw e;
     const paid = inSum - [...tx.outputs].reduce((a, o) => a + BigInt(o.value), 0n);

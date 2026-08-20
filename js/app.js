@@ -1,22 +1,24 @@
 import {
   loadCryptoLibs, generatePrivateKey, createKeypairFromHex,
   isValidKaspaAddress, shortAddr, hexToBytes, privKeyToHex, derivePublicKey, kaspaAddressFromPubkey, bytesToHex
-} from './crypto.js';
+} from './crypto.js?v=57';
 import {
   NATIVE_KAS, VAULT_PRODUCTS, loadWatchlist, addToken, removeToken,
   loadVaults, saveVault, updateVault, formatAmount, formatTokenUnits, tokenColor,
   fetchKcc20Portfolio, fetchKrc20Portfolio, krc20Logo, toTokenRaw, setVaultOwner
-} from './kcc20.js';
-import { parseIntent, describeIntent, askFor, parseDurationField } from './intent.js';
-import { payloadFromAddress } from './script.js';
-import { explainTransaction, scorpionAnswer } from './scorpion.js';
+} from './kcc20.js?v=57';
+import { parseIntent, describeIntent, askFor, parseDurationField } from './intent.js?v=57';
+import { payloadFromAddress } from './script.js?v=57';
+import { explainTransaction, scorpionAnswer } from './scorpion.js?v=57';
 import {
   sendKas, fetchAddressUtxos, fetchAddressBalance, loadKaspaSdk,
   buildTimelockCovenant, buildEscrowCovenant, buildMultisigCovenant, currentDaa,
   pingPublicNode, sweepVault, toRpcTransaction, p2shSpendScript, planKasPayment, storageMassOk,
   compoundUtxos, sendKrc20, sendKcc20, loadKrc20Pending, lockKcc20Timelock, sweepKcc20Capsule
-} from './tx.js';
-import { kronMarkets, quoteKronTrade, executeKronTrade, formatKasSompi, lookupKronTick, tradeCostLines } from './kronTrade.js';
+} from './tx.js?v=57';
+import { kronMarkets, quoteKronTrade, executeKronTrade, formatKasSompi, lookupKronTick, tradeCostLines } from './kronTrade.js?v=57';
+
+export const BUILD = '57';
 
 function errText(e) {
   if (e == null) return 'Unknown error';
@@ -881,6 +883,7 @@ function usd(n) { return (n * (price || 0)).toLocaleString(undefined, { style: '
 
 function renderHome() {
   if (!wallet) return;
+  if ($('live-pill')) $('live-pill').textContent = 'Live · ' + BUILD;
   $('card-bal').innerHTML = `${formatAmount(balanceSompi)}<small>KAS</small>`;
   $('card-usd').textContent = price ? `≈ ${usd(kas())}` : 'Fetching price…';
   $('card-addr').textContent = shortAddr(wallet.address, 12, 8);

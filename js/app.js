@@ -2326,6 +2326,13 @@ async function executeKcc20Freeze(params) {
     if (errText(e) === 'cancelled') { closeSheet(); return; }
     setSheetStatus(errText(e), true);
     toast(errText(e));
+    const b = $('sheet-ok');
+    if (b) {
+      b.disabled = false;
+      delete b.dataset.busy;
+      b.textContent = 'Close';
+      b.onclick = () => closeSheet();
+    }
   }
 }
 

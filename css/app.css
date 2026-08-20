@@ -219,6 +219,64 @@ img { display: block; max-width: 100%; }
 .card-chip::before { left: 8px; top: 4px; bottom: 4px; width: 1px; }
 .card-chip::after { top: 13px; left: 4px; right: 4px; height: 1px; }
 .card-mark { font-size: 12px; font-weight: 700; letter-spacing: 1.6px; color: var(--gold-2); text-transform: uppercase; }
+.card-wallet {
+  position: relative; z-index: 2;
+  max-width: 72%;
+  font-size: 12px; font-weight: 700; letter-spacing: 0.2px;
+  color: var(--gold-2);
+  background: rgba(0,0,0,0.28);
+  border: 0.5px solid rgba(243,226,191,0.32);
+  border-radius: 999px;
+  padding: 6px 12px;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.card-wallet:active { opacity: 0.8; }
+.nav-wallet {
+  font: inherit; color: inherit; letter-spacing: inherit;
+  display: inline-flex; align-items: center; gap: 4px;
+  max-width: 190px; overflow: hidden;
+}
+.nav-wallet b {
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 650;
+}
+.nav-wallet span { font-size: 11px; color: var(--gold-2); flex-shrink: 0; }
+.wallet-switch {
+  display: flex; gap: 8px; overflow-x: auto;
+  margin: 0 0 14px; padding: 2px 0 6px;
+  -webkit-overflow-scrolling: touch; scrollbar-width: none;
+}
+.wallet-switch::-webkit-scrollbar { display: none; }
+.w-chip {
+  flex-shrink: 0;
+  display: flex; flex-direction: column; align-items: flex-start; gap: 2px;
+  padding: 10px 14px; min-width: 118px;
+  border-radius: 14px;
+  background: var(--glass-2);
+  border: 0.5px solid var(--hairline);
+  color: var(--label); text-align: left;
+}
+.w-chip.on {
+  border-color: var(--gold);
+  background: rgba(212,176,122,0.16);
+}
+.w-chip b { font-size: 13px; font-weight: 650; max-width: 140px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.w-chip em { font-style: normal; font-size: 11px; color: var(--label-2); font-variant-numeric: tabular-nums; }
+.w-chip.add {
+  align-items: center; justify-content: center;
+  min-width: 48px; padding: 10px 12px;
+  color: var(--gold-2); font-size: 20px; font-weight: 600;
+}
+.pk-mask {
+  width: 100%; padding: 14px 16px; border-radius: 14px;
+  background: rgba(0,0,0,0.35);
+  border: 0.5px solid var(--hairline);
+  font-size: 13px; letter-spacing: 2px;
+  color: var(--label-2); word-break: break-all;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+.pk-mask.shown {
+  letter-spacing: 0; color: var(--gold-2); font-size: 13px;
+}
 .card-label { margin-top: 28px; font-size: 12px; color: rgba(255,255,255,0.5); letter-spacing: 1.4px; text-transform: uppercase; position: relative; z-index: 1; display:flex; align-items:center; gap:8px; }
 .live-pill {
   display:inline-flex; align-items:center; gap:5px;

@@ -171,7 +171,12 @@ function showPage(id) {
   currentTab = id;
   document.querySelectorAll('.tab').forEach(t => t.classList.toggle('active', t.dataset.tab === id));
   const titles = { home: 'KCC20', tokens: 'Tokens', vault: 'Vault', activity: 'Activity', you: 'Profile' };
-  $('nav-title').textContent = titles[id] || 'KCC20';
+  if (id === 'home' && wallet) {
+    $('nav-title').innerHTML = `<button type="button" class="nav-wallet" id="nav-wallet"><b>${esc(wallet.name || 'Wallet')}</b><span>▾</span></button>`;
+    $('nav-wallet')?.addEventListener('click', openWalletSwitcher);
+  } else {
+    $('nav-title').textContent = titles[id] || 'KCC20';
+  }
   $('nav-left').innerHTML = '';
   if (id === 'home') {
     $('nav-right').innerHTML = `
@@ -340,6 +345,7 @@ async function refreshAllWalletSnaps({ tokens = false } = {}) {
     }));
     persistSnaps();
     if (currentTab === 'you') renderProfile();
+    if (currentTab === 'home') renderHomeWallets();
   } finally {
     snapBusy = false;
   }
@@ -720,10 +726,30 @@ async function createWallet() {
       createdAt: Date.now()
     };
     await activateWallet(w, { toastMsg: list.length ? 'New wallet added' : 'Wallet created' });
+    const pk = w.privKey;
     openSheet('Your new wallet', `
-      <p class="muted" style="text-align:left;padding:0 0 12px;">This is the only copy of this wallet’s private key. Store it offline. You can add more wallets from the You tab.</p>
-      <div class="glass mono" style="padding:14px;word-break:break-all;color:var(--gold-2);font-size:13px;">${esc(w.privKey)}</div>
+      <p class="muted" style="text-align:left;padding:0 0 12px;">This is the only copy of this wallet’s private key. It stays hidden until you reveal it. Store it offline — anyone with the key can spend.</p>
+      <div class="field"><label>Private key</label>
+        <div class="pk-mask" id="new-pk-view">••••••••••••••••••••••••••••••••</div>
+      </div>
+      <div class="btn-row" style="margin-bottom:8px;">
+        <button class="btn btn-glass" id="reveal-new-pk" type="button">Reveal</button>
+        <button class="btn btn-glass" id="copy-new-pk" type="button">Copy</button>
+      </div>
     `, { confirm: 'I saved it', cancel: false });
+    let shown = false;
+    $('reveal-new-pk').onclick = () => {
+      shown = !shown;
+      const el = $('new-pk-view');
+      if (!el) return;
+      el.textContent = shown ? pk : '••••••••••••••••••••••••••••••••';
+      el.classList.toggle('shown', shown);
+      $('reveal-new-pk').textContent = shown ? 'Hide' : 'Reveal';
+    };
+    $('copy-new-pk').onclick = async () => {
+      await navigator.clipboard.writeText(pk);
+      toast('Key copied');
+    };
   } catch (e) {
     toast(e.message);
   }
@@ -766,10 +792,87 @@ function kas() { return balanceSompi / 1e8; }
 function usd(n) { return (n * (price || 0)).toLocaleString(undefined, { style: 'currency', currency: 'USD' }); }
 
 function renderHome() {
+  if (!wallet) return;
   $('card-bal').innerHTML = `${formatAmount(balanceSompi)}<small>KAS</small>`;
   $('card-usd').textContent = price ? `≈ ${usd(kas())}` : 'Fetching price…';
   $('card-addr').textContent = shortAddr(wallet.address, 12, 8);
+  if ($('card-wallet')) $('card-wallet').textContent = `${wallet.name || 'Wallet'} ▾`;
+  const navW = $('nav-wallet')?.querySelector('b');
+  if (navW) navW.textContent = wallet.name || 'Wallet';
+  renderHomeWallets();
   renderHoldings();
+}
+
+function walletKasLabel(w, active) {
+  const sompi = active ? balanceSompi : walletSnap[w.address]?.sompi;
+  if (sompi == null) return '…';
+  return formatAmount(sompi);
+}
+
+function renderHomeWallets() {
+  const box = $('home-wallets');
+  if (!box || !wallet) return;
+  const list = loadWalletList();
+  box.innerHTML = list.map(w => {
+    const active = w.id === wallet.id;
+    return `
+      <button class="w-chip${active ? ' on' : ''}" type="button" data-switch-wallet="${esc(w.id)}">
+        <b>${esc(w.name || 'Wallet')}</b>
+        <em>${esc(walletKasLabel(w, active))} KAS</em>
+      </button>`;
+  }).join('') + `<button class="w-chip add" type="button" data-add-wallet="1" aria-label="Add wallet">＋</button>`;
+}
+
+function switchToWallet(id) {
+  const w = loadWalletList().find(x => x.id === id);
+  if (!w || w.id === wallet?.id) return;
+  activateWallet(w, { toastMsg: 'Sending from ' + (w.name || 'wallet') }).catch(err => toast(errText(err)));
+}
+
+function openWalletSwitcher() {
+  haptic();
+  const list = loadWalletList();
+  const rows = list.map(w => {
+    const active = w.id === wallet?.id;
+    const snap = walletSnap[w.address] || {};
+    const sompi = active ? balanceSompi : snap.sompi;
+    const kcc = active ? kccHoldings : (snap.kcc || []);
+    const krc = active ? krcHoldings : (snap.krc || []);
+    const tokens = [...kcc, ...krc];
+    const bits = tokens.slice(0, 2).map(t => `${formatTokenUnits(t.balance, t.decimals)} ${t.ticker}`);
+    const more = tokens.length > 2 ? ` +${tokens.length - 2}` : '';
+    const kasTxt = sompi == null ? '…' : `${formatAmount(sompi)} KAS`;
+    const tokTxt = bits.length ? bits.join(' · ') + more : 'Native KAS';
+    return `
+      <button class="row wallet-row" type="button" data-switch-wallet="${esc(w.id)}">
+        <div class="glyph" style="background:${active ? 'rgba(48,209,88,.16)' : 'rgba(255,255,255,.08)'};color:${active ? 'var(--green)' : 'var(--label-2)'}">${active ? '●' : '○'}</div>
+        <div style="min-width:0;flex:1">
+          <div class="title">${esc(w.name || 'Wallet')}</div>
+          <div class="sub">${esc(shortAddr(w.address, 12, 8))}</div>
+        </div>
+        <div class="amt">
+          <b>${esc(kasTxt)}</b>
+          <em>${esc(tokTxt)}</em>
+        </div>
+        <span class="chev">${active ? 'Now' : 'Use'}</span>
+      </button>`;
+  }).join('');
+  openSheet('Wallets', `
+    <p class="muted" style="text-align:left;padding:0 0 10px;">Pick a wallet to send, receive, and vault from. Balances stay live.</p>
+    <div class="glass list" id="switch-list">${rows || '<div class="empty">No wallets</div>'}</div>
+    <div class="btn-row">
+      <button class="btn btn-gold" id="switch-new" type="button">New wallet</button>
+      <button class="btn btn-glass" id="switch-import" type="button">Import</button>
+    </div>
+  `, { confirm: 'Done', cancel: false });
+  $('switch-list')?.addEventListener('click', e => {
+    const btn = e.target.closest('[data-switch-wallet]');
+    if (!btn?.dataset.switchWallet) return;
+    closeSheet();
+    switchToWallet(btn.dataset.switchWallet);
+  });
+  $('switch-new').onclick = () => { closeSheet(); createWallet(); };
+  $('switch-import').onclick = () => { closeSheet(); openImportAnother(); };
 }
 
 function tokenDot(t) {
@@ -2105,6 +2208,12 @@ function bind() {
   click('btn-send', openSend);
   click('btn-receive', openReceive);
   click('btn-copy-addr', async () => { await navigator.clipboard.writeText(wallet.address); toast('Copied'); });
+  click('card-wallet', openWalletSwitcher);
+  $('home-wallets')?.addEventListener('click', e => {
+    if (e.target.closest('[data-add-wallet]')) { openWalletSwitcher(); return; }
+    const btn = e.target.closest('[data-switch-wallet]');
+    if (btn?.dataset.switchWallet) switchToWallet(btn.dataset.switchWallet);
+  });
   click('btn-refresh', () => { haptic(); refreshAll(); toast('Refreshing'); });
   $('btn-compound')?.addEventListener('click', openCompound);
   click('btn-vault-short', () => showPage('vault'));
@@ -2179,10 +2288,7 @@ function bind() {
   click('profile-import-wallet', openImportAnother);
   $('wallet-list')?.addEventListener('click', e => {
     const btn = e.target.closest('[data-switch-wallet]');
-    if (!btn?.dataset.switchWallet) return;
-    const w = loadWalletList().find(x => x.id === btn.dataset.switchWallet);
-    if (!w || w.id === wallet?.id) return;
-    activateWallet(w, { toastMsg: 'Switched wallet' }).catch(err => toast(errText(err)));
+    if (btn?.dataset.switchWallet) switchToWallet(btn.dataset.switchWallet);
   });
   click('scorpion-send', () => sendScorpion().catch(err => toast(errText(err))));
   $('scorpion-input')?.addEventListener('keydown', e => {

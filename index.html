@@ -12,7 +12,7 @@
   <link rel="icon" href="assets/icon.png">
   <title>KCC20 Wallet</title>
   <meta http-equiv="Cache-Control" content="no-store, no-cache, must-revalidate">
-  <link rel="stylesheet" href="css/app.css?v=43">
+  <link rel="stylesheet" href="css/app.css?v=44">
 </head>
 <body>
   <img class="bg-poster" src="assets/bg.jpg" alt="">
@@ -66,7 +66,7 @@
           <div class="metal-card">
             <div class="card-top">
               <div class="card-chip"></div>
-              <div class="card-mark">KCC20</div>
+              <button class="card-wallet" id="card-wallet" type="button">Wallet ▾</button>
             </div>
             <div class="card-label">Total balance <span class="live-pill" id="live-pill">Live</span></div>
             <div class="card-bal" id="card-bal">0.00<small>KAS</small></div>
@@ -76,6 +76,7 @@
               <button id="btn-copy-addr" style="color:var(--gold-2);font-weight:600;">Copy</button>
             </div>
           </div>
+          <div class="wallet-switch" id="home-wallets"></div>
           <div class="actions">
             <button class="action" id="btn-send"><div class="orb"><svg viewBox="0 0 24 24" fill="none" stroke="var(--gold-2)" stroke-width="1.8"><path d="M12 19V5M5 12l7-7 7 7"/></svg></div><span>Send</span></button>
             <button class="action" id="btn-receive"><div class="orb"><svg viewBox="0 0 24 24" fill="none" stroke="var(--gold-2)" stroke-width="1.8"><path d="M12 5v14M5 12l7 7 7-7"/></svg></div><span>Receive</span></button>
@@ -306,7 +307,7 @@
     })();
   </script>
   <script type="module">
-    import('./js/app.js?v=43').catch(function (err) {
+    import('./js/app.js?v=44').catch(function (err) {
       console.error(err);
       var phone = document.getElementById('phone');
       var d = document.createElement('div');

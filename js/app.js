@@ -35,6 +35,14 @@ function isKcc20Vault(v) {
   return v?.type === 'kcc20lock' || v?.asset === 'kcc20';
 }
 
+function isVaultHistory(v) {
+  if (!v) return false;
+  if (v.status === 'swept') return true;
+  const tok = isKcc20Vault(v) ? Number(v.tokenAmount || 0) : 0;
+  if (v.status === 'unfunded' || v.status === 'funding' || v.status === 'locked') return false;
+  return Number(v.fundedSompi || 0) <= 0 && tok <= 0;
+}
+
 function vaultTokenLabel(v) {
   if (!isKcc20Vault(v) || !v.tick) return '';
   return formatTokenUnits(v.tokenAmount || 0, v.decimals) + ' ' + v.tick;
@@ -984,7 +992,7 @@ function tokenRow(t, extra = '') {
 function renderHoldings() {
   const kccRows = kccHoldings.map(t => tokenRow(t));
   const krcRows = krcHoldings.map(t => tokenRow(t));
-  const locked = loadVaults().filter(v => v.address && Number(v.fundedSompi) > 0);
+  const locked = loadVaults().filter(v => v.address && Number(v.fundedSompi) > 0 && !isVaultHistory(v));
   const lockRows = locked.map(v => {
     const sec = remainingLockSec(v.unlockDaa);
     const lockedNow = sec == null || sec > 0;
@@ -1058,28 +1066,44 @@ function setVaultTab(tab) {
   $('vault-mine-wrap')?.classList.toggle('hidden', tab !== 'mine');
 }
 
+let showVaultHistory = false;
+
+function setVaultHistory(on) {
+  showVaultHistory = !!on;
+  document.querySelectorAll('#vault-hist-seg button').forEach(b => {
+    b.classList.toggle('on', (b.dataset.vhist === 'history') === showVaultHistory);
+  });
+  renderVault();
+}
+
 function renderVault() {
-  const mine = loadVaults();
+  const all = loadVaults();
+  const history = all.filter(isVaultHistory);
+  const live = all.filter(v => !isVaultHistory(v));
+  const mine = showVaultHistory ? history : live;
   $('vault-products').innerHTML = VAULT_PRODUCTS.map(p => `
     <button class="glass product" data-product="${esc(p.id)}" title="${esc(p.blurb)}">
       <div class="glyph">${esc(p.tag)}</div>
       <h4>${esc(p.name)}</h4>
     </button>
   `).join('');
+  const empty = showVaultHistory
+    ? 'No swept vaults yet. Finished capsules land here.'
+    : 'No active vaults. Create a time capsule, or open History for swept ones.';
   $('vault-mine').innerHTML = mine.length
     ? mine.map(v => `
-      <div class="row token-row vault-card">
-        <div class="dot" style="background:rgba(212,176,122,.18);color:var(--gold-2)">⏱</div>
+      <div class="row token-row vault-card${showVaultHistory ? ' history' : ''}">
+        <div class="dot" style="background:rgba(212,176,122,.18);color:var(--gold-2)">${showVaultHistory ? '✓' : '⏱'}</div>
         <div style="min-width:0;flex:1">
           <div class="title">${esc(v.name || v.type)}</div>
-          <div class="sub">${vaultStatusLine(v)}</div>
+          <div class="sub">${showVaultHistory ? 'Swept · ' + esc(v.tick || v.type || '') : vaultStatusLine(v)}</div>
         </div>
         <div class="vault-card-actions">
           <button class="nav-btn ghost" data-vault="${esc(v.address || '')}">Info</button>
-          <button class="nav-btn" data-sweep="${esc(v.address || '')}">Sweep</button>
+          ${showVaultHistory ? '' : `<button class="nav-btn" data-sweep="${esc(v.address || '')}">Sweep</button>`}
         </div>
       </div>`).join('')
-    : `<div class="empty vault-empty">No vaults yet. Create a time capsule, then Sweep lives on the card.</div>`;
+    : `<div class="empty vault-empty">${empty}</div>`;
   if ($('sweep-all')) $('sweep-all').onclick = (e) => {
     e.stopPropagation();
     sweepAllVaults().catch(err => toast(errText(err)));
@@ -2703,6 +2727,12 @@ function bind() {
   $('vault-seg')?.addEventListener('click', e => {
     const btn = e.target.closest('[data-vtab]');
     if (btn?.dataset.vtab) { haptic(); setVaultTab(btn.dataset.vtab); }
+  });
+  $('vault-hist-seg')?.addEventListener('click', e => {
+    const btn = e.target.closest('[data-vhist]');
+    if (!btn?.dataset.vhist) return;
+    haptic();
+    setVaultHistory(btn.dataset.vhist === 'history');
   });
   click('btn-add-token', openAddToken);
   click('chat-send', sendChat);

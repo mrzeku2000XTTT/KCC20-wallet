@@ -12,7 +12,7 @@
   <link rel="icon" href="assets/icon.png">
   <title>KCC20 Wallet</title>
   <meta http-equiv="Cache-Control" content="no-store, no-cache, must-revalidate">
-  <link rel="stylesheet" href="css/app.css?v=52">
+  <link rel="stylesheet" href="css/app.css?v=53">
 </head>
 <body>
   <img class="bg-poster" src="assets/bg.jpg" alt="">
@@ -135,6 +135,10 @@
             <div class="vault-grid" id="vault-products"></div>
           </div>
           <div id="vault-mine-wrap" class="hidden">
+            <div class="seg" id="vault-hist-seg">
+              <button class="on" data-vhist="live" type="button">Active</button>
+              <button data-vhist="history" type="button">History</button>
+            </div>
             <div class="glass list" id="vault-mine"></div>
             <div class="glass vault-sweep">
               <button class="btn btn-gold" id="btn-sweep-now" type="button">Sweep unlocked</button>
@@ -344,7 +348,7 @@
     })();
   </script>
   <script type="module">
-    import('./js/app.js?v=52').catch(function (err) {
+    import('./js/app.js?v=53').catch(function (err) {
       console.error(err);
       var phone = document.getElementById('phone');
       var d = document.createElement('div');

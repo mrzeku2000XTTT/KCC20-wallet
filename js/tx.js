@@ -1376,6 +1376,38 @@ export async function sendKcc20({ wallet, dest, token, amountHuman, utxos, onSta
 }
 
 const WITNESS_KAS = 20_000_000n; // 0.2 KAS co-present CLTV UTXO — SCRIPT_HASH witness + sweep fee
+const CHANGE_CELL_KAS = 8_000_000n; // 0.08 — must not match witness or the frozen cell (KIP-9)
+
+function layoutFreezeKas(k, inAmts, inCellKas, nTok, feeGuess) {
+  const inSum = inAmts.reduce((a, b) => a + b, 0n);
+  const lockedKeep = inCellKas >= MIN_CELL_KAS ? inCellKas : MIN_CELL_KAS;
+  const lockedOpts = nTok === 1
+    ? [lockedKeep, lockedKeep + 5_000_000n]
+    : [lockedKeep, lockedKeep + 5_000_000n, 50_000_000n];
+  const changeOpts = nTok > 1
+    ? [CHANGE_CELL_KAS, 12_000_000n, 7_000_000n, 15_000_000n, 6_000_000n, MIN_CELL_KAS]
+    : [0n];
+  const witnessOpts = [WITNESS_KAS, 21_000_000n, 25_000_000n, 18_000_000n, 30_000_000n, 15_000_000n];
+  const dust = 200_000n;
+  for (const locked of lockedOpts) {
+    for (const ch of changeOpts) {
+      for (const wit of witnessOpts) {
+        if (nTok > 1 && (ch === locked || ch === wit || locked === wit)) continue;
+        const tokenKas = nTok > 1 ? [locked, ch] : [locked];
+        if (tokenKas.some(v => v < MIN_CELL_KAS)) continue;
+        const tokenOutSum = tokenKas.reduce((a, b) => a + b, 0n);
+        const leftover = inSum - tokenOutSum - wit - feeGuess;
+        if (leftover < 0n) continue;
+        const kasChange = leftover >= dust ? leftover : 0n;
+        const outs = kasChange > 0n ? [...tokenKas, wit, kasChange] : [...tokenKas, wit];
+        if (storageMassOk(k, inAmts, outs)) {
+          return { tokenKas, witness: wit, kasChange, tokenOutSum };
+        }
+      }
+    }
+  }
+  return null;
+}
 
 function scriptHashState(hash32, amount) {
   return { ownerIdentifier: hash32, identifierType: 1, amount: BigInt(amount), isMinter: false };
@@ -1550,17 +1582,10 @@ export async function lockKcc20Timelock({ wallet, tick, amountHuman, decimals, m
   const witnesses = selected.map(() => presenceIdx);
   const inCellKas = selected.reduce((a, p) => a + p.value, 0n);
   const nTok = next.length;
-  let tokenKas;
-  if (nTok === 1) tokenKas = [inCellKas >= MIN_CELL_KAS ? inCellKas : MIN_CELL_KAS];
-  else {
-    const a = inCellKas * 3n / 5n;
-    const b = inCellKas - a;
-    tokenKas = a >= MIN_CELL_KAS && b >= MIN_CELL_KAS ? [a, b] : [MIN_CELL_KAS, MIN_CELL_KAS];
-  }
-  let tokenOutSum = tokenKas.reduce((a, v) => a + v, 0n);
-  const extraForCells = tokenOutSum > inCellKas ? tokenOutSum - inCellKas : 0n;
   const feeGuess = 500_000n;
-  const walletNeed = extraForCells + WITNESS_KAS + feeGuess + 200_000n;
+  // Frozen cell keeps its own KAS (cancels in KIP-9). Token change + witness
+  // must be distinct sizes so we do not even-split a UTXO (the fake "need 0.50 KAS" error).
+  const walletNeed = (nTok > 1 ? CHANGE_CELL_KAS : 0n) + WITNESS_KAS + feeGuess + 200_000n;
 
   onStatus?.('Connecting to Kaspa…');
   const { rpc, url } = await connectPublicNode();
@@ -1576,11 +1601,20 @@ export async function lockKcc20Timelock({ wallet, tick, amountHuman, decimals, m
   }
   if (!picked.length || feeSum < walletNeed) throw kasNeedError(walletNeed - feeSum);
 
-  let kasChange = inCellKas + feeSum - tokenOutSum - WITNESS_KAS - feeGuess;
-  if (kasChange < 200_000n) kasChange = 0n;
-  const outAmts = kasChange > 0n ? [...tokenKas, WITNESS_KAS, kasChange] : [...tokenKas, WITNESS_KAS];
   const inAmts = [...selected.map(p => p.value), ...picked.map(e => e.amount)];
-  if (!storageMassOk(k, inAmts, outAmts)) throw kasNeedError(50_000_000n);
+  let layout = layoutFreezeKas(k, inAmts, inCellKas, nTok, feeGuess);
+  if (!layout) {
+    const locked = inCellKas >= MIN_CELL_KAS ? inCellKas : MIN_CELL_KAS;
+    const tokenKas = nTok > 1 ? [locked, CHANGE_CELL_KAS] : [locked];
+    const tokenOutSum = tokenKas.reduce((a, b) => a + b, 0n);
+    let kasChange = inCellKas + feeSum - tokenOutSum - WITNESS_KAS - feeGuess;
+    if (kasChange < 200_000n) kasChange = 0n;
+    layout = { tokenKas, witness: WITNESS_KAS, kasChange, tokenOutSum };
+  }
+  const tokenKas = layout.tokenKas;
+  const witnessKas = layout.witness;
+  const kasChange = layout.kasChange;
+  const tokenOutSum = layout.tokenOutSum;
 
   const lockedRedeem = materializeKcc20Script(tpl, next[0]);
   const tokenScriptAddress = String(k.addressFromScriptPublicKey(k.payToScriptHashScript(lockedRedeem), 'mainnet') || '');
@@ -1616,7 +1650,7 @@ export async function lockKcc20Timelock({ wallet, tick, amountHuman, decimals, m
   const covOutputs = tokenOuts.map(o =>
     new k.TransactionOutput(o.value, o.spk, new k.CovenantBinding(0, new k.Hash(loaded.tokenCovid)))
   );
-  const p2shOut = new k.TransactionOutput(WITNESS_KAS, k.payToAddressScript(capsule.address));
+  const p2shOut = new k.TransactionOutput(witnessKas, k.payToAddressScript(capsule.address));
   const changeSpk = k.payToAddressScript(wallet.address);
   const outputs = kasChange > 0n
     ? [...covOutputs, p2shOut, new k.TransactionOutput(kasChange, changeSpk)]
@@ -1660,7 +1694,12 @@ export async function lockKcc20Timelock({ wallet, tick, amountHuman, decimals, m
       scripts
     });
   } catch (e) {
-    if (isMassError(e)) throw kasNeedError(50_000_000n);
+    if (isMassError(e)) {
+      throw new Error(
+        'Kaspa storage mass rejected this freeze split — not a missing-KAS problem (this wallet has funds). ' +
+        'Try a slightly different token amount so the cell does not split into two similar KAS outputs.'
+      );
+    }
     const need = requiredFeeFromError(e);
     if (!need) throw e;
     const paid = inSum - [...tx.outputs].reduce((a, o) => a + BigInt(o.value), 0n);
@@ -1685,7 +1724,7 @@ export async function lockKcc20Timelock({ wallet, tick, amountHuman, decimals, m
     tokenAmount: sendAmt.toString(),
     decimals: dec,
     feeKas: Number(paidFee) / 1e8,
-    witnessKas: Number(WITNESS_KAS) / 1e8,
+    witnessKas: Number(witnessKas) / 1e8,
     node: url,
     vault: {
       type: 'kcc20lock',
@@ -1703,10 +1742,10 @@ export async function lockKcc20Timelock({ wallet, tick, amountHuman, decimals, m
       tokenOutpoint: { transactionId: txId, index: 0 },
       lockTxId: txId,
       status: 'locked',
-      fundedSompi: Number(WITNESS_KAS),
+      fundedSompi: Number(witnessKas),
       fundFeeKas: Number(paidFee) / 1e8,
       params: {
-        amountKas: Number(WITNESS_KAS) / 1e8,
+        amountKas: Number(witnessKas) / 1e8,
         amountToken: Number(amountHuman),
         tick: ticker,
         duration: `${minutes} minutes`,

@@ -552,6 +552,8 @@ img { display: block; max-width: 100%; }
 .vault-card-actions { display: flex; flex-direction: column; align-items: flex-end; gap: 2px; flex-shrink: 0; }
 .vault-card-actions .nav-btn { min-width: 0; height: 28px; font-size: 13px; padding: 0 4px; }
 .vault-empty { padding: 16px 12px !important; font-size: 13px; }
+.vault-card.history { opacity: 0.55; }
+.vault-card.history .title { text-decoration: none; }
 .bubble {
   max-width: 84%; padding: 12px 14px; border-radius: 18px; font-size: 15px; line-height: 1.4;
 }

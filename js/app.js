@@ -1019,7 +1019,7 @@ function sendHintFor(a) {
   if (a.protocol === 'krc20') {
     return `${a.ticker} · ${proto}. Available ${assetAvail(a)}. Kasplex commit-reveal parks ~0.1 KAS, then returns it minus the fee.`;
   }
-  return `${a.ticker} · ${proto}. Available ${assetAvail(a)}. Covenant cell on kascov / KRON.`;
+  return `${a.ticker} · ${proto}. Available ${assetAvail(a)}. Sends a KRON cell to a kaspa:q… key (same path as KasWare). Need a little native KAS in this wallet to authorize.`;
 }
 
 function paintSendAsset(a) {
@@ -1133,7 +1133,7 @@ async function prepareSend(prefill) {
   const proto = asset.protocol === 'krc20' ? 'KRC-20' : 'KCC20';
   const extra = asset.protocol === 'krc20'
     ? 'Kasplex commit-reveal: ~0.1 KAS is parked in a P2SH then returned minus Toccata fees. Recipient can be any kaspa: wallet.'
-    : 'KCC20 cells (KRON / KasKnight). If this ticker is also on Kasplex we send that path; otherwise we need the published covenant descriptor.';
+    : 'KCC20 cell send (KRON / KasWare): one piece to a kaspa:q key address. A small KAS UTXO from this wallet authorizes it.';
   openSheet('Review send', `
     <div class="kv"><span class="k">Asset</span><span class="v">${esc(asset.ticker)} · ${esc(proto)}</span></div>
     <div class="kv"><span class="k">To</span><span class="v">${esc(shortAddr(dest, 14, 8))}</span></div>

@@ -992,6 +992,110 @@ async function revealKrc20({ k, wallet, priv, script, p2shAddr, revealUtxos }) {
   return txId;
 }
 
+const KRON_IDX = 'https://idx.kron.technology';
+const TOKEN_DUST = 1000n;
+const P2PK_RE = /^20([0-9a-f]{64})ac$/i;
+const NATIVE_SUBNET = '0000000000000000000000000000000000000000';
+
+function hexToU8(hex) {
+  const h = String(hex || '').replace(/^0x/i, '');
+  const out = new Uint8Array(h.length / 2);
+  for (let i = 0; i < out.length; i++) out[i] = parseInt(h.slice(i * 2, i * 2 + 2), 16);
+  return out;
+}
+
+function u8ToHex(u8) {
+  return Array.from(u8, b => b.toString(16).padStart(2, '0')).join('');
+}
+
+function int8LE(n) {
+  const t = new Uint8Array(8);
+  let v = BigInt.asUintN(64, BigInt(n));
+  for (let i = 0; i < 8; i++) { t[i] = Number(v & 0xffn); v >>= 8n; }
+  return t;
+}
+
+function concatU8(parts) {
+  const n = parts.reduce((a, p) => a + p.length, 0);
+  const out = new Uint8Array(n);
+  let o = 0;
+  for (const p of parts) { out.set(p, o); o += p.length; }
+  return out;
+}
+
+function parseKcc20Redeem(hex) {
+  const script = hexToU8(hex);
+  if (script.length < 46 || script[0] !== 32 || script[33] !== 1 || script[35] !== 8 || script[44] !== 1) {
+    throw new Error('KCC20 cell redeem is not the KRON state layout (owner/type/amount/isMinter)');
+  }
+  let amount = 0n;
+  for (let i = 0; i < 8; i++) amount |= BigInt(script[36 + i]) << BigInt(8 * i);
+  return {
+    script,
+    stateStart: 0,
+    ownerIdentifier: script.slice(1, 33),
+    identifierType: script[34],
+    amount,
+    isMinter: script[45] === 1
+  };
+}
+
+function materializeKcc20Script(tpl, state) {
+  const s = tpl.script.slice();
+  const n = tpl.stateStart || 0;
+  s[n] = 32;
+  s.set(state.ownerIdentifier, n + 1);
+  s[n + 33] = 1;
+  s[n + 34] = state.identifierType;
+  s[n + 35] = 8;
+  s.set(int8LE(state.amount), n + 36);
+  s[n + 44] = 1;
+  s[n + 45] = state.isMinter ? 1 : 0;
+  return s;
+}
+
+function presenceState(owner32, amount) {
+  return { ownerIdentifier: owner32, identifierType: 3, amount: BigInt(amount), isMinter: false };
+}
+
+function transferSigScript(k, redeemBytes, nextStates, authByte = 1) {
+  const sb = new k.ScriptBuilder({ flags: { covenantsEnabled: true } });
+  sb.addData(concatU8(nextStates.map(s => s.ownerIdentifier)));
+  sb.addData(concatU8(nextStates.map(s => Uint8Array.of(s.identifierType))));
+  sb.addData(concatU8(nextStates.map(s => int8LE(s.amount))));
+  sb.addData(concatU8(nextStates.map(s => Uint8Array.of(s.isMinter ? 1 : 0))));
+  sb.addData(new Uint8Array(0));
+  sb.addData(Uint8Array.of(authByte & 255));
+  sb.addData(redeemBytes);
+  return sb.drain();
+}
+
+function destXOnly(k, dest) {
+  const n = String(dest || '').trim();
+  if (!k.Address.validate(n)) throw new Error('Not a valid Kaspa address');
+  let spk;
+  try { spk = String(k.payToAddressScript(n).script || ''); }
+  catch { throw new Error('Not a valid Kaspa address'); }
+  const m = P2PK_RE.exec(spk);
+  if (!m) throw new Error('KCC20 can only go to a standard kaspa:q… key address (same as KasWare / KRON)');
+  return hexToU8(m[1]);
+}
+
+async function kronJson(path) {
+  const res = await fetch(KRON_IDX + path, { cache: 'no-store' });
+  if (!res.ok) throw new Error('KRON indexer HTTP ' + res.status);
+  return res.json();
+}
+
+async function cellKasValue(txid, index) {
+  const res = await fetch(`${API}/transactions/${txid}`);
+  if (!res.ok) throw new Error('Could not load cell UTXO');
+  const tx = await res.json();
+  const o = (tx.outputs || [])[index];
+  if (!o) throw new Error('Cell output missing');
+  return BigInt(o.amount);
+}
+
 export async function sendKcc20({ wallet, dest, token, amountHuman, utxos, onStatus }) {
   const tick = String(token?.ticker || '').toUpperCase();
   if (!tick) throw new Error('Missing KCC20 ticker');
@@ -1010,11 +1114,180 @@ export async function sendKcc20({ wallet, dest, token, amountHuman, utxos, onSta
       }
     }
   } catch {}
-  throw new Error(
-    `${tick} is a KCC20 covenant token (KRON / KasKnight cells), not a Kasplex inscription. ` +
-    `This wallet sends KRC-20 (Pacman, NACHO, …) to any kaspa: address. ` +
-    `KCC20 cell transfers need the published SilverScript descriptor — we show the balance from kascov, and will send cells once that template is public.`
-  );
+
+  const k = await loadKaspaSdk();
+  const sendAmt = BigInt(toRawLocal(amountHuman, token.decimals ?? 0));
+  if (sendAmt <= 0n) throw new Error('Enter an amount greater than 0');
+  const destPk = destXOnly(k, dest);
+  const priv = new k.PrivateKey(wallet.privKey);
+  const selfPk = hexToU8(priv.toPublicKey().toXOnlyPublicKey().toString());
+  if (selfPk.length !== 32) throw new Error('Wallet public key is not a 32-byte x-only key');
+  if (u8ToHex(destPk) === u8ToHex(selfPk)) throw new Error('That is this wallet’s own address');
+
+  onStatus?.('Loading KRON KCC20 cells…');
+  const info = await kronJson(`/v1/kcc20/token/${encodeURIComponent(tick)}`);
+  const meta = Array.isArray(info?.result) ? info.result[0] : info?.result;
+  const tokenCovid = String(meta?.covenantId || token.tokenId || '').replace(/^0x/i, '').toLowerCase();
+  if (!/^[0-9a-f]{64}$/.test(tokenCovid)) throw new Error('KRON did not return a covenant id for ' + tick);
+
+  const rawCells = await kronJson(`/v1/kcc20/token/${encodeURIComponent(tick)}/address/${encodeURIComponent(wallet.address)}/utxos`);
+  const cells = Array.isArray(rawCells?.result) ? rawCells.result : [];
+  if (!cells.length) throw new Error('No ' + tick + ' cells on this address (KRON indexer)');
+
+  const pieces = [];
+  for (const c of cells) {
+    const txid = c.outpoint?.transactionId;
+    const index = Number(c.outpoint?.index ?? 0);
+    const redeem = c.redeemScriptHex || c.redeem;
+    if (!txid || !redeem) continue;
+    const parsed = parseKcc20Redeem(redeem);
+    const kasValue = await cellKasValue(txid, index);
+    pieces.push({
+      transactionId: txid,
+      index,
+      tokenAmount: BigInt(c.amount ?? parsed.amount),
+      value: kasValue,
+      redeem: parsed,
+      spk: c.scriptPublicKey
+    });
+  }
+  pieces.sort((a, b) => (a.tokenAmount < b.tokenAmount ? 1 : -1));
+  const totalTok = pieces.reduce((a, p) => a + p.tokenAmount, 0n);
+  if (totalTok < sendAmt) throw new Error(`You only hold ${totalTok} ${tick}`);
+  const piece = pieces.find(p => p.tokenAmount >= sendAmt);
+  if (!piece) {
+    throw new Error(`Largest piece is ${pieces[0].tokenAmount} ${tick}. Send that much or less (KasWare/KRON send one cell at a time).`);
+  }
+
+  const changeTok = piece.tokenAmount - sendAmt;
+  const tpl = { script: piece.redeem.script, stateStart: 0 };
+  const next = [presenceState(destPk, sendAmt)];
+  if (changeTok > 0n) next.push(presenceState(piece.redeem.ownerIdentifier, changeTok));
+  const currentRedeem = piece.redeem.script;
+  const tokenSpk = k.payToScriptHashScript(currentRedeem);
+  const sigScript = transferSigScript(k, currentRedeem, next, 1);
+  const tokenOuts = next.map(st => ({
+    value: TOKEN_DUST,
+    spk: k.payToScriptHashScript(materializeKcc20Script(tpl, st))
+  }));
+  const tokenOutSum = tokenOuts.reduce((a, o) => a + o.value, 0n);
+
+  onStatus?.('Connecting to Kaspa…');
+  const { rpc, url } = await connectPublicNode();
+  const feeNeed = 1_000_000n;
+  const walletUtxos = utxos && utxos.length ? utxos : await fetchAddressUtxos(wallet.address);
+  const feeEntries = restUtxosToEntries(walletUtxos, wallet.address)
+    .sort((a, b) => (a.amount < b.amount ? 1 : -1));
+  const picked = [];
+  let feeSum = 0n;
+  for (const e of feeEntries) {
+    picked.push(e);
+    feeSum += e.amount;
+    if (feeSum >= feeNeed) break;
+  }
+  if (!picked.length || feeSum < 200_000n) {
+    throw new Error('Need a little native KAS in this wallet to authorize the KCC20 send (KasWare spends a KAS UTXO alongside the cell).');
+  }
+
+  const cid = new k.Hash(tokenCovid);
+  const tokenIn = {
+    previousOutpoint: { transactionId: piece.transactionId, index: piece.index },
+    signatureScript: sigScript,
+    sequence: 0n,
+    sigOpCount: 0,
+    computeBudget: 100,
+    utxo: {
+      address: String(k.addressFromScriptPublicKey(tokenSpk, 'mainnet') || ''),
+      amount: piece.value,
+      scriptPublicKey: { version: 0, script: hexish(tokenSpk.script || piece.spk) },
+      blockDaaScore: 0n,
+      isCoinbase: false
+    }
+  };
+  const kasIns = picked.map(e => ({
+    previousOutpoint: e.outpoint,
+    signatureScript: '',
+    sequence: 0n,
+    sigOpCount: 0,
+    computeBudget: 10,
+    utxo: {
+      address: wallet.address,
+      amount: e.amount,
+      scriptPublicKey: e.scriptPublicKey,
+      blockDaaScore: e.blockDaaScore || 0n,
+      isCoinbase: !!e.isCoinbase
+    }
+  }));
+  const covOutputs = tokenOuts.map(o => new k.TransactionOutput(o.value, o.spk, new k.CovenantBinding(0, cid)));
+  const inSum = piece.value + feeSum;
+  const feeGuess = 500_000n;
+  let kasChange = inSum - tokenOutSum - feeGuess;
+  if (kasChange < 0n) throw new Error('Not enough KAS to cover the send fee');
+  if (kasChange > 0n && kasChange < 200_000n) kasChange = 0n;
+  const changeSpk = k.payToAddressScript(wallet.address);
+  const outputs = kasChange > 0n
+    ? [...covOutputs, new k.TransactionOutput(kasChange, changeSpk)]
+    : covOutputs;
+
+  const tx = new k.Transaction({
+    version: 1,
+    inputs: [tokenIn, ...kasIns],
+    outputs,
+    lockTime: 0n,
+    gas: 0n,
+    payload: '',
+    subnetworkId: NATIVE_SUBNET
+  });
+  prepInputs(tx, { sigOpCount: 0, computeBudget: 10 });
+  tx.inputs[0].computeBudget = 100;
+  tx.inputs[0].signatureScript = sigScript;
+  try { k.updateTransactionMass('mainnet', tx); } catch {}
+
+  const scripts = [hexish(sigScript)];
+  for (let i = 1; i < tx.inputs.length; i++) {
+    const sig = k.createInputSignature(tx, i, priv, k.SighashType.All);
+    tx.inputs[i].signatureScript = hexish(sig);
+    scripts.push(hexish(sig));
+  }
+  onStatus?.('Broadcasting KCC20 send…');
+  let txId;
+  try {
+    txId = await submitSignedRpc(k, rpc, url, tx, {
+      sigOpCount: 0,
+      computeBudget: 100,
+      lockTime: 0,
+      scripts
+    });
+  } catch (e) {
+    const need = requiredFeeFromError(e);
+    if (!need) throw e;
+    const paid = inSum - [...tx.outputs].reduce((a, o) => a + BigInt(o.value), 0n);
+    if (need <= paid) throw e;
+    const last = tx.outputs.length - 1;
+    const extra = need - paid + 50_000n;
+    if (kasChange <= extra) throw e;
+    tx.outputs[last].value = BigInt(tx.outputs[last].value) - extra;
+    const scripts2 = [hexish(sigScript)];
+    for (let i = 1; i < tx.inputs.length; i++) {
+      const sig = k.createInputSignature(tx, i, priv, k.SighashType.All);
+      tx.inputs[i].signatureScript = hexish(sig);
+      scripts2.push(hexish(sig));
+    }
+    txId = await submitSignedRpc(k, rpc, url, tx, {
+      sigOpCount: 0,
+      computeBudget: 100,
+      lockTime: 0,
+      scripts: scripts2
+    });
+  }
+  return {
+    txId,
+    revealId: txId,
+    tick,
+    amt: sendAmt.toString(),
+    dest,
+    change: changeTok.toString()
+  };
 }
 
 function toRawLocal(human, decimals) {

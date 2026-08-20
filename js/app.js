@@ -1005,6 +1005,59 @@ function findSendAsset(key) {
   return sendAssets().find(a => a.key === key) || sendAssets()[0];
 }
 
+function assetAvail(a) {
+  if (!a) return '0';
+  if (a.native || a.protocol === 'kas') return formatAmount(a.balance);
+  return formatTokenUnits(a.balance, a.decimals);
+}
+
+function sendHintFor(a) {
+  if (!a || a.native || a.protocol === 'kas') {
+    return `Available ${assetAvail(a)} KAS. Send to any kaspa:q or kaspa:p address. Fee ~0.004–0.007 KAS.`;
+  }
+  const proto = a.protocol === 'krc20' ? 'KRC-20' : 'KCC20';
+  if (a.protocol === 'krc20') {
+    return `${a.ticker} · ${proto}. Available ${assetAvail(a)}. Kasplex commit-reveal parks ~0.1 KAS, then returns it minus the fee.`;
+  }
+  return `${a.ticker} · ${proto}. Available ${assetAvail(a)}. Covenant cell on kascov / KRON.`;
+}
+
+function paintSendAsset(a) {
+  if (!a) return;
+  const hidden = $('send-asset');
+  if (hidden) hidden.value = a.key;
+  const tick = $('send-asset-tick');
+  const proto = $('send-asset-proto');
+  const bal = $('send-asset-bal');
+  const hint = $('send-hint');
+  if (tick) tick.textContent = a.ticker || 'KAS';
+  if (proto) proto.textContent = a.native || a.protocol === 'kas' ? 'Native KAS' : (a.protocol === 'krc20' ? 'KRC-20' : 'KCC20');
+  if (bal) bal.textContent = assetAvail(a);
+  if (hint) hint.textContent = sendHintFor(a);
+  document.querySelectorAll('#send-asset-list [data-asset-key]').forEach(el => {
+    el.classList.toggle('on', el.dataset.assetKey === a.key);
+  });
+}
+
+function bindSendAssetPicker() {
+  const btn = $('send-asset-btn');
+  const list = $('send-asset-list');
+  if (!btn || !list) return;
+  btn.onclick = (e) => {
+    e.preventDefault();
+    list.classList.toggle('hidden');
+    btn.classList.toggle('open', !list.classList.contains('hidden'));
+  };
+  list.onclick = (e) => {
+    const row = e.target.closest('[data-asset-key]');
+    if (!row) return;
+    const a = findSendAsset(row.dataset.assetKey);
+    paintSendAsset(a);
+    list.classList.add('hidden');
+    btn.classList.remove('open');
+  };
+}
+
 function openSend(prefill) {
   haptic();
   const dest0 = prefill?.destination || '';
@@ -1013,18 +1066,35 @@ function openSend(prefill) {
     ? `${prefill.token.protocol}:${prefill.token.ticker}`
     : 'kas');
   const assets = sendAssets();
-  const opts = assets.map(a => {
-    const avail = a.native ? formatAmount(a.balance) : formatTokenUnits(a.balance, a.decimals);
-    return `<option value="${esc(a.key)}" ${a.key === prefKey ? 'selected' : ''}>${esc(a.ticker)} · ${esc(avail)}</option>`;
+  const chosen = findSendAsset(prefKey);
+  const rows = assets.map(a => {
+    const proto = a.native || a.protocol === 'kas' ? 'Native' : (a.protocol === 'krc20' ? 'KRC-20' : 'KCC20');
+    const on = a.key === chosen.key ? ' on' : '';
+    return `
+      <button class="asset-opt${on}" type="button" data-asset-key="${esc(a.key)}">
+        <span class="asset-opt-tick">${esc(a.ticker)}</span>
+        <span class="asset-opt-proto">${esc(proto)}</span>
+        <span class="asset-opt-bal">${esc(assetAvail(a))}</span>
+      </button>`;
   }).join('');
   openSheet('Send', `
     <div class="field"><label>Asset</label>
-      <select id="send-asset">${opts}</select>
+      <input type="hidden" id="send-asset" value="${esc(chosen.key)}">
+      <button class="asset-pick" id="send-asset-btn" type="button">
+        <span>
+          <b id="send-asset-tick">${esc(chosen.ticker)}</b>
+          <small id="send-asset-proto">${esc(chosen.native || chosen.protocol === 'kas' ? 'Native KAS' : (chosen.protocol === 'krc20' ? 'KRC-20' : 'KCC20'))}</small>
+        </span>
+        <span class="asset-pick-bal" id="send-asset-bal">${esc(assetAvail(chosen))}</span>
+        <span class="chev">›</span>
+      </button>
+      <div class="asset-pick-list hidden" id="send-asset-list">${rows}</div>
     </div>
     <div class="field"><label>To</label><input id="send-dest" placeholder="kaspa:q… or kaspa:p…" value="${esc(dest0)}" spellcheck="false" autocomplete="off"></div>
     <div class="field"><label>Amount</label><input id="send-amount" type="text" inputmode="decimal" placeholder="0.00" value="${esc(amt0)}"></div>
-    <p class="muted" style="text-align:left;padding:0 0 8px;" id="send-hint">KAS goes to any kaspa address. KRC-20 (Pacman…) uses Kasplex commit-reveal (~0.1 KAS parked then returned minus fee). KCC20 (KasKnight) shows here from kascov.</p>
+    <p class="muted send-hint" id="send-hint">${esc(sendHintFor(chosen))}</p>
   `, { confirm: 'Review', gold: true, onConfirm: () => prepareSend() });
+  bindSendAssetPicker();
 }
 
 function readSendForm() {

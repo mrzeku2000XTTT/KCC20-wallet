@@ -342,8 +342,19 @@ img { display: block; max-width: 100%; }
   background: rgba(0,0,0,0.35);
   border: 0.5px solid var(--hairline);
   font-size: 17px; outline: none;
+  color: var(--label);
+  -webkit-text-fill-color: var(--label);
 }
 .field input:focus, .field textarea:focus { border-color: var(--gold); }
+.field select {
+  color: var(--label);
+  -webkit-text-fill-color: var(--label);
+  background: rgba(0,0,0,0.55);
+}
+.field select option {
+  color: #111;
+  background: #fff;
+}
 .field textarea { min-height: 88px; font-size: 15px; resize: vertical; }
 
 .notice {
@@ -510,12 +521,46 @@ img { display: block; max-width: 100%; }
   border-radius: 999px; padding: 4px 10px; margin-bottom: 8px;
 }
 button.tx { width: 100%; text-align: left; color: inherit; }
-.field select {
-  width: 100%; padding: 14px 16px; border-radius: 14px;
-  background: rgba(0,0,0,0.35);
+
+.asset-pick {
+  width: 100%;
+  display: flex; align-items: center; gap: 10px;
+  padding: 12px 14px; border-radius: 14px;
+  background: rgba(0,0,0,0.45);
   border: 0.5px solid var(--hairline);
-  font-size: 17px; outline: none; appearance: none;
+  color: var(--label); text-align: left;
 }
+.asset-pick.open { border-color: var(--gold); }
+.asset-pick b {
+  display: block; font-size: 17px; font-weight: 650; color: var(--gold-2);
+}
+.asset-pick small {
+  display: block; font-size: 12px; color: var(--label-2); margin-top: 2px; font-weight: 500;
+}
+.asset-pick-bal {
+  margin-left: auto; font-size: 16px; font-weight: 650;
+  font-variant-numeric: tabular-nums; color: var(--label);
+}
+.asset-pick .chev { color: var(--label-2); transform: rotate(90deg); }
+.asset-pick.open .chev { transform: rotate(-90deg); }
+.asset-pick-list {
+  margin-top: 8px; border-radius: 14px; overflow: hidden;
+  border: 0.5px solid var(--hairline);
+  background: rgba(18,18,20,0.92);
+  max-height: 220px; overflow-y: auto;
+}
+.asset-opt {
+  width: 100%; display: flex; align-items: center; gap: 10px;
+  padding: 12px 14px; text-align: left; color: var(--label);
+  border-bottom: 0.5px solid var(--hairline);
+  background: transparent;
+}
+.asset-opt:last-child { border-bottom: 0; }
+.asset-opt.on { background: rgba(212,176,122,0.12); }
+.asset-opt-tick { font-size: 16px; font-weight: 650; color: var(--gold-2); min-width: 72px; }
+.asset-opt-proto { font-size: 12px; color: var(--label-2); flex: 1; }
+.asset-opt-bal { font-size: 15px; font-weight: 600; font-variant-numeric: tabular-nums; }
+.send-hint { text-align: left; padding: 0 0 8px; }
 
 @media (prefers-reduced-motion: reduce) {
   .bg-video { display: none; }

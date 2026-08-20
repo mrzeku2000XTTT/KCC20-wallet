@@ -1,20 +1,20 @@
 import {
   loadCryptoLibs, generatePrivateKey, createKeypairFromHex,
   isValidKaspaAddress, shortAddr, hexToBytes, privKeyToHex, derivePublicKey, kaspaAddressFromPubkey, bytesToHex
-} from './crypto.js?v=32';
+} from './crypto.js';
 import {
   NATIVE_KAS, VAULT_PRODUCTS, loadWatchlist, addToken, removeToken,
   loadVaults, saveVault, updateVault, formatAmount, formatTokenUnits, tokenColor,
   fetchKcc20Portfolio, fetchKrc20Portfolio, krc20Logo
-} from './kcc20.js?v=32';
-import { parseIntent, describeIntent, askFor, parseDurationField } from './intent.js?v=32';
-import { payloadFromAddress } from './script.js?v=32';
+} from './kcc20.js';
+import { parseIntent, describeIntent, askFor, parseDurationField } from './intent.js';
+import { payloadFromAddress } from './script.js';
 import {
   sendKas, fetchAddressUtxos, fetchAddressBalance, loadKaspaSdk,
   buildTimelockCovenant, buildEscrowCovenant, buildMultisigCovenant, currentDaa,
   pingPublicNode, sweepVault, toRpcTransaction, p2shSpendScript, planKasPayment, storageMassOk,
   compoundUtxos
-} from './tx.js?v=32';
+} from './tx.js';
 
 function errText(e) {
   if (e == null) return 'Unknown error';
@@ -216,7 +216,7 @@ function tokenDot(t) {
   const fb = esc(String(t.ticker || '?').slice(0, 3));
   const src = t.image || (t.native || t.ticker === 'KAS' ? 'assets/kas.svg' : (t.protocol === 'krc20' ? krc20Logo(t.ticker) : ''));
   const img = src
-    ? `<img alt="" src="${esc(src)}" data-tick="${esc(t.ticker || '')}" onerror="window.__krcLogo&&window.__krcLogo(this)">`
+    ? `<img alt="" src="${esc(src)}" data-tick="${esc(t.ticker || '')}" data-fb="${fb}">`
     : fb;
   return `<div class="dot" style="background:${esc(color)}22;color:${esc(color)}">${img}</div>`;
 }
@@ -432,15 +432,21 @@ function renderActivity(txs = []) {
 }
 
 function setLiveFast(on) {
-  liveFast = !!on;
-  startLiveSync();
+  const next = !!on;
+  if (next === liveFast && liveTimer) return;
+  liveFast = next;
+  if (!liveTimer) {
+    startLiveSync();
+    return;
+  }
+  clearInterval(liveTimer);
+  liveTimer = setInterval(() => tickLive(false), liveFast ? 1500 : 3000);
 }
 
 function startLiveSync() {
   stopLiveSync();
   tickLive(true);
-  liveTimer = setInterval(() => tickLive(false), liveFast ? 800 : 2000);
-  startKccWatch();
+  liveTimer = setInterval(() => tickLive(false), liveFast ? 1500 : 3000);
 }
 
 function stopLiveSync() {
@@ -448,25 +454,7 @@ function stopLiveSync() {
   stopKccWatch();
 }
 
-function startKccWatch() {
-  stopKccWatch();
-  if (!wallet?.address && !wallet?.pubKey) return;
-  try {
-    tokenStream = new EventSource('https://kascov.io/data/mainnet/stream');
-    tokenStream.onmessage = (ev) => {
-      const data = String(ev.data || '').toLowerCase();
-      const pk = String(wallet.pubKey || '').replace(/^0x/i, '').toLowerCase();
-      const addr = String(wallet.address || '').toLowerCase();
-      const hit = (pk && pk.length > 16 && data.includes(pk.slice(0, 24)))
-        || (addr && addr.length > 20 && data.includes(addr.slice(6, 22)));
-      if (!hit) return;
-      setLiveFast(true);
-      kickTokenRefresh();
-      clearTimeout(tokenFastOff);
-      tokenFastOff = setTimeout(() => setLiveFast(false), 25000);
-    };
-  } catch {}
-}
+function startKccWatch() {}
 
 function stopKccWatch() {
   try { tokenStream?.close(); } catch {}
@@ -513,8 +501,10 @@ async function tickLive(full) {
     }
     seenBalance = nextBal;
     balanceSompi = nextBal;
-    if (currentTab === 'home' || currentTab === 'tokens') renderHome();
-    if (currentTab === 'tokens') renderTokens();
+    if (full || balChanged) {
+      if (currentTab === 'home' || currentTab === 'tokens') renderHome();
+      if (currentTab === 'tokens') renderTokens();
+    }
     const recvBal = $('recv-balance');
     if (recvBal) recvBal.textContent = `${formatAmount(balanceSompi)} KAS`;
     if (full) {
@@ -537,7 +527,7 @@ async function tickLive(full) {
       refreshVaultBalances();
     }
     const now = Date.now();
-    if (full || balChanged || now - lastTokenFetch > 2000) kickTokenRefresh();
+    if (full || balChanged || now - lastTokenFetch > 8000) kickTokenRefresh();
     if (full || now - lastAutoSweep > 8000) {
       lastAutoSweep = now;
       maybeAutoUnlock();
@@ -599,8 +589,9 @@ function openTokenSheet(token) {
   const link = token.protocol === 'krc20'
     ? `https://kas.fyi/krc20-${encodeURIComponent(token.ticker)}`
     : (token.tokenId ? `https://kascov.io/#/mainnet/token/${encodeURIComponent(token.tokenId)}` : 'https://kascov.io/#/tokens');
+  const logoSrc = token.image || (token.native ? 'assets/kas.svg' : (token.protocol === 'krc20' ? krc20Logo(token.ticker) : ''));
   openSheet(token.ticker, `
-    ${token.image || token.protocol === 'krc20' || token.native ? `<div style="display:flex;justify-content:center;padding:8px 0 14px;"><img src="${esc(token.image || (token.native ? 'assets/kas.svg' : krc20Logo(token.ticker)))}" alt="" data-tick="${esc(token.ticker || '')}" onerror="window.__krcLogo&&window.__krcLogo(this)" style="width:56px;height:56px;border-radius:16px;object-fit:cover;"></div>` : ''}
+    ${logoSrc ? `<div style="display:flex;justify-content:center;padding:8px 0 14px;"><img src="${esc(logoSrc)}" alt="" data-tick="${esc(token.ticker || '')}" data-fb="${esc((token.ticker || '?').slice(0, 3))}" style="width:56px;height:56px;border-radius:16px;object-fit:cover;"></div>` : ''}
     <div class="kv"><span class="k">Balance</span><span class="v">${esc(amt)} ${esc(token.ticker)}</span></div>
     <div class="kv"><span class="k">Name</span><span class="v">${esc(token.name)}</span></div>
     <div class="kv"><span class="k">Standard</span><span class="v">${esc(proto)}${token.standard ? ' · ' + esc(token.standard) : ''}</span></div>
@@ -1294,8 +1285,9 @@ function bind() {
 }
 
 async function init() {
-  window.__krcLogo = (img) => {
-    if (!img) return;
+  document.addEventListener('error', (ev) => {
+    const img = ev.target;
+    if (!img || img.tagName !== 'IMG' || !img.dataset.tick) return;
     const tick = String(img.dataset.tick || '');
     const step = Number(img.dataset.step || 0);
     const t = tick.toLowerCase();
@@ -1308,11 +1300,11 @@ async function init() {
       img.src = next[step];
       return;
     }
-    const fb = (tick || '?').slice(0, 3);
     const parent = img.parentNode;
+    const fb = img.dataset.fb || tick.slice(0, 3) || '?';
     img.remove();
     if (parent && !parent.textContent.trim()) parent.append(fb);
-  };
+  }, true);
   window.__kcc = { parseIntent, isValidKaspaAddress, describeIntent, pingPublicNode, toRpcTransaction, p2shSpendScript, planKasPayment, storageMassOk };
   window.__kccLoad = loadKaspaSdk;
   setClock();

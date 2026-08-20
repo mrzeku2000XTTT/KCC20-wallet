@@ -766,6 +766,13 @@ button.tx { width: 100%; text-align: left; color: inherit; }
   text-transform: uppercase;
 }
 .max-btn:active { opacity: 0.8; }
+.avail-line {
+  display: block; width: 100%; text-align: left;
+  background: none; border: 0; padding: 2px 0 10px;
+  color: var(--label-2); font-size: 12px; line-height: 1.35;
+  cursor: pointer;
+}
+.avail-line b { color: var(--gold-2); font-weight: 650; font-variant-numeric: tabular-nums; }
 .qr-scan {
   margin: 0 0 14px;
   border-radius: 16px;

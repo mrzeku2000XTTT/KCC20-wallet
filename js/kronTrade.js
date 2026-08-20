@@ -1,7 +1,7 @@
 /* KRON DEX trades via @kronsdk/kron-sdk (v0.17.2). Quotes + builders from the SDK;
    templates from the CORS-open token descriptor; live heads from idx.kron.technology. */
 import * as kron from '../vendor/kron-sdk/index.js';
-import { loadKaspaSdk, connectPublicNode, fetchAddressUtxos } from './tx.js?v=63';
+import { loadKaspaSdk, connectPublicNode, fetchAddressUtxos } from './tx.js?v=64';
 
 const IDX = 'https://idx.kron.technology/v1/kcc20';
 const REG = 'https://api.kron.technology';
@@ -343,6 +343,24 @@ function sompiFromKas(human) {
   return n;
 }
 
+function tokenRawFromHuman(human, decimals) {
+  const d = Math.max(0, Number(decimals) || 0);
+  const t = String(human || '').trim().replace(',', '.');
+  if (!t) throw new Error('Enter an amount');
+  const [w, f = ''] = t.split('.');
+  if (!/^\d+$/.test(w || '0') || (f && !/^\d+$/.test(f))) throw new Error('Invalid amount');
+  if (d === 0) {
+    if (f.replace(/0+$/, '')) throw new Error('This token has no decimals');
+    const n = BigInt(w || '0');
+    if (n <= 0n) throw new Error('Amount must be > 0');
+    return n;
+  }
+  const frac = (f + '0'.repeat(d)).slice(0, d);
+  const n = BigInt(w || '0') * (10n ** BigInt(d)) + BigInt(frac || '0');
+  if (n <= 0n) throw new Error('Amount must be > 0');
+  return n;
+}
+
 export async function quoteKronTrade({ tick, side, amount }) {
   await kronTokenlist();
   const entry = findKronEntry(tick);
@@ -396,8 +414,7 @@ export async function quoteKronTrade({ tick, side, amount }) {
       raw: q
     });
   }
-  const tokenIn = BigInt(String(amount).trim());
-  if (tokenIn <= 0n) throw new Error('Enter a token amount');
+  const tokenIn = tokenRawFromHuman(amount, decimals);
   if (graduated) {
     const live = await poolHead(tick, entry.covenantId, entry.extensions.poolCovenantId);
     const q = kron.poolCpV3.quotePoolV3Sell(live.utxo.state, poolParams(entry), tokenIn);

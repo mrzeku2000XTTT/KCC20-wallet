@@ -1,30 +1,30 @@
 import {
   loadCryptoLibs, generatePrivateKey, createKeypairFromHex,
   isValidKaspaAddress, shortAddr, hexToBytes, privKeyToHex, derivePublicKey, kaspaAddressFromPubkey, bytesToHex
-} from './crypto.js?v=63';
+} from './crypto.js?v=64';
 import {
   NATIVE_KAS, VAULT_PRODUCTS, loadWatchlist, addToken, removeToken,
   loadVaults, saveVault, updateVault, formatAmount, formatTokenUnits, tokenColor,
   fetchKcc20Portfolio, fetchKrc20Portfolio, fetchKcc20PortfolioMany, fetchKrc20PortfolioMany,
   krc20Logo, toTokenRaw, setVaultOwner
-} from './kcc20.js?v=63';
-import { parseIntent, describeIntent, askFor, parseDurationField, interpretVaultChat, normalizeChat } from './intent.js?v=63';
-import { payloadFromAddress } from './script.js?v=63';
-import { explainTransaction, scorpionAnswer } from './scorpion.js?v=63';
+} from './kcc20.js?v=64';
+import { parseIntent, describeIntent, askFor, parseDurationField, interpretVaultChat, normalizeChat } from './intent.js?v=64';
+import { payloadFromAddress } from './script.js?v=64';
+import { explainTransaction, scorpionAnswer } from './scorpion.js?v=64';
 import {
   sendKas, fetchAddressUtxos, fetchAddressBalance, loadKaspaSdk,
   buildTimelockCovenant, buildEscrowCovenant, buildMultisigCovenant, currentDaa,
   pingPublicNode, sweepVault, toRpcTransaction, p2shSpendScript, planKasPayment, storageMassOk,
   compoundUtxos, sendKrc20, sendKcc20, loadKrc20Pending, lockKcc20Timelock, sweepKcc20Capsule,
   fetchOwnedUtxos
-} from './tx.js?v=63';
-import { kronMarkets, quoteKronTrade, executeKronTrade, formatKasSompi, lookupKronTick, tradeCostLines } from './kronTrade.js?v=63';
+} from './tx.js?v=64';
+import { kronMarkets, quoteKronTrade, executeKronTrade, formatKasSompi, lookupKronTick, tradeCostLines } from './kronTrade.js?v=64';
 import {
   migrateReceiveBook, ownedAddresses, deriveFreshReceiveAddress, ensureFreshReceive,
   markAddressUsed, currentReceive
-} from './receive.js?v=63';
+} from './receive.js?v=64';
 
-export const BUILD = '63';
+export const BUILD = '64';
 
 function errText(e) {
   if (e == null) return 'Unknown error';
@@ -1947,40 +1947,77 @@ function findToken(key) {
   return all.find(t => `${t.protocol}:${t.ticker}` === key);
 }
 
+function holdingForTick(tick) {
+  const t = String(tick || '').toUpperCase();
+  if (!t) return null;
+  if (t === 'KAS') return { native: true, protocol: 'kas', ticker: 'KAS', decimals: 8, balance: String(balanceSompi) };
+  return (kccHoldings || []).find(x => String(x.ticker || '').toUpperCase() === t)
+    || (krcHoldings || []).find(x => String(x.ticker || '').toUpperCase() === t)
+    || null;
+}
+
+function openKasSheet() {
+  haptic();
+  const kasAsset = { native: true, protocol: 'kas', ticker: 'KAS', decimals: 8, balance: String(balanceSompi) };
+  const maxSend = maxFillForAsset(kasAsset);
+  openSheet('Kaspa', `
+    <div style="display:flex;justify-content:center;padding:8px 0 14px;"><img src="assets/kas.svg" alt="" style="width:56px;height:56px;border-radius:16px;object-fit:cover;"></div>
+    <div class="kv"><span class="k">Balance</span><span class="v">${esc(formatAmount(balanceSompi))} KAS</span></div>
+    <div class="kv"><span class="k">Sendable max</span><span class="v">${esc(maxSend)} KAS</span></div>
+    <p class="muted" style="text-align:left;padding-top:8px;">Max leaves ~0.008 KAS for the network fee. Send any part of it, or tap Send max.</p>
+    <div class="btn-row" style="margin-top:10px;">
+      <button class="btn btn-gold" id="tk-recv" type="button">Receive</button>
+      <button class="btn btn-glass" id="tk-send" type="button">Send</button>
+    </div>
+  `, {
+    confirm: 'Send max',
+    gold: true,
+    cancelLabel: 'Close',
+    onConfirm: () => openSend({ assetKey: 'kas', amount: maxSend })
+  });
+  $('tk-recv')?.addEventListener('click', () => { closeSheet(); openReceive(); });
+  $('tk-send')?.addEventListener('click', () => { closeSheet(); openSend({ assetKey: 'kas' }); });
+}
+
 function openTokenSheet(token) {
   if (!token) { showPage('tokens'); return; }
   haptic();
   const proto = token.protocol === 'krc20' ? 'KRC-20' : 'KCC20';
   const amt = formatTokenUnits(token.balance, token.decimals);
+  const maxSend = maxFillForAsset(token);
   const link = token.protocol === 'krc20'
     ? explorerAddr(wallet?.address || '')
     : (token.tokenId ? `https://kascov.io/#/mainnet/token/${encodeURIComponent(token.tokenId)}` : 'https://kascov.io/#/tokens');
   const logoSrc = token.image || (token.native ? 'assets/kas.svg' : (token.protocol === 'krc20' ? krc20Logo(token.ticker) : ''));
+  const assetKey = `${token.protocol}:${token.ticker}`;
   openSheet(token.ticker, `
     ${logoSrc ? `<div style="display:flex;justify-content:center;padding:8px 0 14px;"><img src="${esc(logoSrc)}" alt="" data-tick="${esc(token.ticker || '')}" data-fb="${esc((token.ticker || '?').slice(0, 3))}" style="width:56px;height:56px;border-radius:16px;object-fit:cover;"></div>` : ''}
     <div class="kv"><span class="k">Balance</span><span class="v">${esc(amt)} ${esc(token.ticker)}</span></div>
+    <div class="kv"><span class="k">Sendable max</span><span class="v">${esc(maxSend)} ${esc(token.ticker)}</span></div>
     <div class="kv"><span class="k">Name</span><span class="v">${esc(token.name)}</span></div>
     <div class="kv"><span class="k">Standard</span><span class="v">${esc(proto)}${token.standard ? ' · ' + esc(token.standard) : ''}</span></div>
     ${token.cells ? `<div class="kv"><span class="k">Cells</span><span class="v">${esc(token.cells)}</span></div>` : ''}
     ${token.tokenId && token.protocol === 'kcc20' ? `<div class="kv"><span class="k">Token ID</span><span class="v">${esc(token.tokenId)}</span></div>` : ''}
-    <p class="muted" style="text-align:left;padding-top:8px;">Live from kascov.io (KRON / KCC20, CORS open). Same holdings KasWare shows for this address.</p>
+    <p class="muted" style="text-align:left;padding-top:8px;">${esc(proto)} in this wallet. Send max fills the full balance. Sell max is the same number on KRON.</p>
     <div class="btn-row" style="margin-top:10px;">
       <button class="btn btn-gold" id="tk-recv" type="button">Receive</button>
+      <button class="btn btn-glass" id="tk-send" type="button">Send</button>
       ${token.protocol === 'kcc20' ? `<button class="btn btn-glass" id="tk-buy" type="button">Buy</button>
-      <button class="btn btn-glass" id="tk-sell" type="button">Sell</button>
+      <button class="btn btn-glass" id="tk-sell" type="button">Sell max</button>
       <button class="btn btn-glass" id="tk-freeze" type="button">Freeze</button>` : ''}
     </div>
     <p class="muted"><a href="${esc(link)}" target="_blank" rel="noopener" style="color:var(--gold-2)">Open explorer</a></p>
   `, {
-    confirm: 'Send ' + token.ticker,
+    confirm: 'Send max',
     gold: true,
     cancelLabel: 'Close',
-    onConfirm: () => openSend({ token, assetKey: `${token.protocol}:${token.ticker}` })
+    onConfirm: () => openSend({ token, assetKey, amount: maxSend })
   });
   $('tk-recv')?.addEventListener('click', () => { closeSheet(); openReceive({ token }); });
+  $('tk-send')?.addEventListener('click', () => { closeSheet(); openSend({ token, assetKey }); });
   $('tk-buy')?.addEventListener('click', () => { closeSheet(); openTrade({ tick: token.ticker, side: 'buy' }); });
-  $('tk-sell')?.addEventListener('click', () => { closeSheet(); openTrade({ tick: token.ticker, side: 'sell' }); });
-  $('tk-freeze')?.addEventListener('click', () => { closeSheet(); openProduct('kcc20freeze', { tick: token.ticker }); });
+  $('tk-sell')?.addEventListener('click', () => { closeSheet(); openTrade({ tick: token.ticker, side: 'sell', amount: maxSend }); });
+  $('tk-freeze')?.addEventListener('click', () => { closeSheet(); openProduct('kcc20freeze', { tick: token.ticker, amountToken: maxSend }); });
 }
 
 async function renderKronMarkets() {
@@ -2034,6 +2071,7 @@ function openTrade(prefill = {}) {
     $('trade-go').onclick = () => reviewTrade();
   }
   syncTradeLabel();
+  if (side0 === 'sell' && !prefill.amount) fillTradeMax();
   lookupTradeTicker();
   loadKaspaSdk().catch(() => {});
   pingPublicNode().catch(() => {});
@@ -2070,6 +2108,23 @@ function syncTradeLabel() {
   const lab = $('trade-amt-label');
   if (lab) lab.textContent = side === 'sell' ? `Amount (${tick})` : 'Pay (KAS)';
   if ($('trade-go')) $('trade-go').textContent = side === 'sell' ? 'Review sell' : 'Review buy';
+  const avail = $('trade-avail');
+  const inp = $('trade-amount');
+  if (side === 'sell') {
+    const t = holdingForTick(tick);
+    const max = t ? maxFillForAsset(t) : '0';
+    if (avail) {
+      avail.textContent = t
+        ? `Available ${formatTokenUnits(t.balance, t.decimals)} ${tick} — Max sells all of it.`
+        : `No ${tick} in this wallet to sell.`;
+    }
+    if (inp && !inp.value) inp.placeholder = max === '0' ? '0' : max;
+  } else {
+    const kasAsset = { native: true, protocol: 'kas', ticker: 'KAS', decimals: 8, balance: String(balanceSompi) };
+    const max = maxFillForAsset(kasAsset);
+    if (avail) avail.textContent = `Available ${formatAmount(balanceSompi)} KAS — Max leaves ~1.5 KAS for the cell and fees.`;
+    if (inp && !inp.value) inp.placeholder = max;
+  }
 }
 
 async function quoteTradePreview() {
@@ -2388,6 +2443,7 @@ function fillSendMax() {
   const v = maxFillForAsset(a);
   if ($('send-amount')) $('send-amount').value = v;
   haptic();
+  if (v === '0') toast('No ' + (a?.ticker || 'asset') + ' to send');
 }
 
 function fillTradeMax() {
@@ -2395,9 +2451,8 @@ function fillTradeMax() {
   const tick = ($('trade-ticker')?.value || '').toUpperCase();
   let v = '0';
   if (side === 'sell') {
-    const t = (kccHoldings || []).find(x => String(x.ticker || '').toUpperCase() === tick)
-      || (krcHoldings || []).find(x => String(x.ticker || '').toUpperCase() === tick);
-    v = t ? humanFromRaw(t.balance, t.decimals) : '0';
+    const t = holdingForTick(tick);
+    v = t && !t.native ? maxFillForAsset(t) : '0';
     if (v === '0') toast('No ' + (tick || 'token') + ' to sell in this wallet');
   } else {
     const feePad = 150_000_000n;
@@ -2405,9 +2460,11 @@ function fillTradeMax() {
     try { sompi = BigInt(balanceSompi || 0); } catch { sompi = 0n; }
     const spend = sompi > feePad ? sompi - feePad : 0n;
     v = humanFromRaw(spend.toString(), 8);
+    if (v === '0') toast('Need more than 1.5 KAS to buy');
   }
   if ($('trade-amount')) $('trade-amount').value = v;
   haptic();
+  syncTradeLabel();
   quoteTradePreview();
 }
 
@@ -2430,10 +2487,12 @@ function paintSendAsset(a) {
   const proto = $('send-asset-proto');
   const bal = $('send-asset-bal');
   const hint = $('send-hint');
+  const avail = $('send-avail');
   if (tick) tick.textContent = a.ticker || 'KAS';
   if (proto) proto.textContent = a.native || a.protocol === 'kas' ? 'Native KAS' : (a.protocol === 'krc20' ? 'KRC-20' : 'KCC20');
   if (bal) bal.textContent = assetAvail(a);
   if (hint) hint.textContent = sendHintFor(a);
+  if (avail) avail.innerHTML = `Available <b>${esc(assetAvail(a))} ${esc(a.ticker || 'KAS')}</b> — tap Max to send all of it.`;
   document.querySelectorAll('#send-asset-list [data-asset-key]').forEach(el => {
     el.classList.toggle('on', el.dataset.assetKey === a.key);
   });
@@ -2453,6 +2512,7 @@ function bindSendAssetPicker() {
     if (!row) return;
     const a = findSendAsset(row.dataset.assetKey);
     paintSendAsset(a);
+    if ($('send-amount')) $('send-amount').value = '';
     list.classList.add('hidden');
     btn.classList.remove('open');
   };
@@ -2506,15 +2566,17 @@ function openSend(prefill) {
     </div>
     <div class="field"><label>Amount</label>
       <div class="dest-row">
-        <input id="send-amount" type="text" inputmode="decimal" placeholder="0.00" value="${esc(amt0)}">
+        <input id="send-amount" type="text" inputmode="decimal" placeholder="${esc(maxFillForAsset(chosen))}" value="${esc(amt0)}">
         <button class="max-btn" id="send-max" type="button">Max</button>
       </div>
     </div>
+    <p class="avail-line" id="send-avail">Available <b>${esc(assetAvail(chosen))} ${esc(chosen.ticker)}</b> — tap Max to send all of it.</p>
     <p class="muted send-hint" id="send-hint">${esc(sendHintFor(chosen))}</p>
   `, { confirm: 'Review', gold: true, onConfirm: () => prepareSend() });
   bindSendAssetPicker();
   bindSendQr();
   $('send-max')?.addEventListener('click', fillSendMax);
+  $('send-avail')?.addEventListener('click', fillSendMax);
 }
 
 function readSendForm() {
@@ -2809,20 +2871,57 @@ function openProduct(id, prefill) {
   if (p.type === 'kcc20lock') {
     const ticks = (kccHoldings || []).map(t => t.ticker).filter(Boolean);
     const preTick = String(prefill?.tick || ticks[0] || '').toUpperCase();
+    const held = holdingForTick(preTick);
+    const maxTok = held && !held.native ? maxFillForAsset(held) : '0';
     const tickField = ticks.length
       ? `<select id="ct-tick">${ticks.map(t => `<option value="${esc(t)}" ${t === preTick ? 'selected' : ''}>${esc(t)}</option>`).join('')}</select>`
       : `<input id="ct-tick" placeholder="KKDAG" autocapitalize="characters" value="${esc(preTick)}">`;
     const fields = `
       <div class="field"><label>KCC20 ticker</label>${tickField}</div>
-      <div class="field"><label>Amount (tokens)</label><input id="ct-token-amt" type="number" step="any" min="0" inputmode="decimal" placeholder="20"></div>
+      <div class="field"><label>Amount (tokens)</label>
+        <div class="dest-row">
+          <input id="ct-token-amt" type="text" inputmode="decimal" placeholder="${esc(maxTok)}" value="${esc(prefill?.amountToken || '')}">
+          <button class="max-btn" id="ct-token-max" type="button">Max</button>
+        </div>
+      </div>
+      <p class="avail-line" id="ct-token-avail">${held && !held.native ? `Available <b>${esc(formatTokenUnits(held.balance, held.decimals))} ${esc(preTick)}</b> — tap Max to freeze all of it.` : 'No KCC20 in this wallet.'}</p>
       <div class="field"><label>Duration</label><input id="ct-duration" placeholder="3 minutes or 30 days"></div>
     `;
     openSheet(p.name, `<p class="muted" style="text-align:left;padding:0 0 12px;">${esc(p.blurb)} Uses ~0.2 KAS witness dust plus the network fee. Tokens stay in a SCRIPT_HASH cell until Sweep.</p>${fields}`, {
       confirm: 'Freeze with PIN', gold: true, onConfirm: () => buildCovenant(p, readProductForm(p.type))
     });
+    const syncFreezeAvail = () => {
+      const tick = ($('ct-tick')?.value || '').toUpperCase();
+      const t = holdingForTick(tick);
+      const max = t && !t.native ? maxFillForAsset(t) : '0';
+      const line = $('ct-token-avail');
+      const inp = $('ct-token-amt');
+      if (line) {
+        line.innerHTML = t && !t.native
+          ? `Available <b>${esc(formatTokenUnits(t.balance, t.decimals))} ${esc(tick)}</b> — tap Max to freeze all of it.`
+          : `No ${esc(tick) || 'KCC20'} in this wallet.`;
+      }
+      if (inp) inp.placeholder = max;
+    };
+    $('ct-token-max')?.addEventListener('click', () => {
+      const tick = ($('ct-tick')?.value || '').toUpperCase();
+      const t = holdingForTick(tick);
+      const v = t && !t.native ? maxFillForAsset(t) : '0';
+      if ($('ct-token-amt')) $('ct-token-amt').value = v;
+      if (v === '0') toast('No ' + (tick || 'token') + ' to freeze');
+      haptic();
+    });
+    $('ct-tick')?.addEventListener('change', syncFreezeAvail);
     return;
   }
-  let fields = `<div class="field"><label>Amount (KAS)</label><input id="ct-amount" type="number" step="0.0001" min="0" inputmode="decimal" placeholder="0.15"></div>`;
+  const kasMax = maxFillForAsset({ native: true, protocol: 'kas', ticker: 'KAS', decimals: 8, balance: String(balanceSompi) });
+  let fields = `<div class="field"><label>Amount (KAS)</label>
+      <div class="dest-row">
+        <input id="ct-amount" type="text" inputmode="decimal" placeholder="${esc(kasMax)}" value="${esc(prefill?.amountKas || '')}">
+        <button class="max-btn" id="ct-kas-max" type="button">Max</button>
+      </div>
+    </div>
+    <p class="avail-line">Available <b>${esc(formatAmount(balanceSompi))} KAS</b> — tap Max to lock all spendable KAS.</p>`;
   if (p.type === 'timelock') {
     fields += `<div class="field"><label>Duration</label><input id="ct-duration" placeholder="3 minutes or 30 days"></div>`;
   } else if (p.type === 'escrow') {
@@ -2832,6 +2931,11 @@ function openProduct(id, prefill) {
   }
   openSheet(p.name, `<p class="muted" style="text-align:left;padding:0 0 12px;">${esc(p.blurb)}</p>${fields}`, {
     confirm: 'Build vault', gold: true, onConfirm: () => buildCovenant(p, readProductForm(p.type))
+  });
+  $('ct-kas-max')?.addEventListener('click', () => {
+    if ($('ct-amount')) $('ct-amount').value = kasMax;
+    if (kasMax === '0') toast('Need KAS in this wallet');
+    haptic();
   });
 }
 
@@ -3293,12 +3397,15 @@ function bind() {
     openTrade._t = setTimeout(quoteTradePreview, 280);
   });
   click('trade-max', fillTradeMax);
+  $('trade-avail')?.addEventListener('click', fillTradeMax);
   $('trade-side')?.addEventListener('click', e => {
     const b = e.target.closest('[data-side]');
     if (!b) return;
     $('trade-side').querySelectorAll('button').forEach(x => x.classList.toggle('on', x === b));
+    if ($('trade-amount')) $('trade-amount').value = '';
     syncTradeLabel();
-    quoteTradePreview();
+    if (b.dataset.side === 'sell') fillTradeMax();
+    else quoteTradePreview();
   });
   $('pin-cancel')?.addEventListener('click', cancelPinGate);
   $('kron-markets')?.addEventListener('click', e => {
@@ -3430,10 +3537,13 @@ function bind() {
     }
     const row = e.target.closest('[data-token-key], [data-ticker]');
     if (!row) return;
-    if (row.dataset.ticker === 'KAS') { openReceive(); return; }
+    if (row.dataset.ticker === 'KAS') { openKasSheet(); return; }
     const token = findToken(row.dataset.tokenKey);
     if (token) openTokenSheet(token);
     else showPage('tokens');
+  });
+  $('token-native')?.addEventListener('click', e => {
+    if (e.target.closest('[data-ticker="KAS"], [data-token-key]')) openKasSheet();
   });
   $('token-list')?.addEventListener('click', e => {
     const rm = e.target.closest('[data-remove]');

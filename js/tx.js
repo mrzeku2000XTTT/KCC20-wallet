@@ -993,9 +993,19 @@ async function revealKrc20({ k, wallet, priv, script, p2shAddr, revealUtxos }) {
 }
 
 const KRON_IDX = 'https://idx.kron.technology';
-const TOKEN_DUST = 1000n;
+const MIN_CELL_KAS = 5_000_000n;
 const P2PK_RE = /^20([0-9a-f]{64})ac$/i;
 const NATIVE_SUBNET = '0000000000000000000000000000000000000000';
+
+function kasNeedError(moreSompi) {
+  const n = Number(moreSompi < 0n ? 0n : moreSompi) / 1e8;
+  const shown = n <= 0.05 ? '0.05' : (n < 1 ? n.toFixed(2) : n.toFixed(1));
+  return new Error(
+    `Need about ${shown} more KAS in this wallet as a normal UTXO. ` +
+    `Token cells have to carry enough KAS or Kaspa rejects the send (storage mass). ` +
+    `Receive a bit of KAS here, then tap Send again.`
+  );
+}
 
 function hexToU8(hex) {
   const h = String(hex || '').replace(/^0x/i, '');
@@ -1166,15 +1176,21 @@ export async function sendKcc20({ wallet, dest, token, amountHuman, utxos, onSta
   const currentRedeem = piece.redeem.script;
   const tokenSpk = k.payToScriptHashScript(currentRedeem);
   const sigScript = transferSigScript(k, currentRedeem, next, 1);
-  const tokenOuts = next.map(st => ({
-    value: TOKEN_DUST,
-    spk: k.payToScriptHashScript(materializeKcc20Script(tpl, st))
-  }));
-  const tokenOutSum = tokenOuts.reduce((a, o) => a + o.value, 0n);
+  const nTok = next.length;
+  let tokenKas;
+  if (nTok === 1) tokenKas = [piece.value];
+  else {
+    const a = piece.value * 3n / 5n;
+    const b = piece.value - a;
+    tokenKas = a >= MIN_CELL_KAS && b >= MIN_CELL_KAS ? [a, b] : [MIN_CELL_KAS, MIN_CELL_KAS];
+  }
+  let tokenOutSum = tokenKas.reduce((a, v) => a + v, 0n);
+  const extraForCells = tokenOutSum > piece.value ? tokenOutSum - piece.value : 0n;
+  const feeGuess = 500_000n;
+  const walletNeed = extraForCells + feeGuess + 200_000n;
 
   onStatus?.('Connecting to Kaspa…');
   const { rpc, url } = await connectPublicNode();
-  const feeNeed = 1_000_000n;
   const walletUtxos = utxos && utxos.length ? utxos : await fetchAddressUtxos(wallet.address);
   const feeEntries = restUtxosToEntries(walletUtxos, wallet.address)
     .sort((a, b) => (a.amount < b.amount ? 1 : -1));
@@ -1183,11 +1199,22 @@ export async function sendKcc20({ wallet, dest, token, amountHuman, utxos, onSta
   for (const e of feeEntries) {
     picked.push(e);
     feeSum += e.amount;
-    if (feeSum >= feeNeed) break;
+    if (feeSum >= walletNeed) break;
   }
-  if (!picked.length || feeSum < 200_000n) {
-    throw new Error('Need a little native KAS in this wallet to authorize the KCC20 send (KasWare spends a KAS UTXO alongside the cell).');
+  if (!picked.length) throw kasNeedError(walletNeed);
+  if (feeSum < walletNeed) throw kasNeedError(walletNeed - feeSum);
+
+  const inAmts = [piece.value, ...picked.map(e => e.amount)];
+  let kasChange = piece.value + feeSum - tokenOutSum - feeGuess;
+  if (kasChange < 200_000n) kasChange = 0n;
+  const outAmts = kasChange > 0n ? [...tokenKas, kasChange] : tokenKas;
+  if (!storageMassOk(k, inAmts, outAmts)) {
+    throw kasNeedError(50_000_000n);
   }
+  const tokenOuts = next.map((st, i) => ({
+    value: tokenKas[i],
+    spk: k.payToScriptHashScript(materializeKcc20Script(tpl, st))
+  }));
 
   const cid = new k.Hash(tokenCovid);
   function spkOf(v) {
@@ -1241,10 +1268,6 @@ export async function sendKcc20({ wallet, dest, token, amountHuman, utxos, onSta
   }));
   const covOutputs = tokenOuts.map(o => new k.TransactionOutput(o.value, o.spk, new k.CovenantBinding(0, cid)));
   const inSum = piece.value + feeSum;
-  const feeGuess = 500_000n;
-  let kasChange = inSum - tokenOutSum - feeGuess;
-  if (kasChange < 0n) throw new Error('Not enough KAS to cover the send fee');
-  if (kasChange > 0n && kasChange < 200_000n) kasChange = 0n;
   const changeSpk = k.payToAddressScript(wallet.address);
   const outputs = kasChange > 0n
     ? [...covOutputs, new k.TransactionOutput(kasChange, changeSpk)]
@@ -1280,6 +1303,7 @@ export async function sendKcc20({ wallet, dest, token, amountHuman, utxos, onSta
       scripts
     });
   } catch (e) {
+    if (isMassError(e)) throw kasNeedError(50_000_000n);
     const need = requiredFeeFromError(e);
     if (!need) throw e;
     const paid = inSum - [...tx.outputs].reduce((a, o) => a + BigInt(o.value), 0n);

@@ -1047,7 +1047,7 @@ function sendHintFor(a) {
   if (a.protocol === 'krc20') {
     return `${a.ticker} · ${proto}. Available ${assetAvail(a)}. Kasplex commit-reveal parks ~0.1 KAS, then returns it minus the fee.`;
   }
-  return `${a.ticker} · ${proto}. Available ${assetAvail(a)}. Sends a KRON cell to a kaspa:q… key (same path as KasWare). Need a little native KAS in this wallet to authorize.`;
+  return `${a.ticker} · ${proto}. Available ${assetAvail(a)}. Sends a KRON cell to a kaspa:q… key. Keep a bit of native KAS here so the new cell passes storage mass.`;
 }
 
 function paintSendAsset(a) {

@@ -38,6 +38,30 @@ const ACTIVE_KEY = 'kcc20_active_id';
 
 const $ = (id) => document.getElementById(id);
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const explorerTx = (id) => 'https://kaspa.stream/transactions/' + encodeURIComponent(id || '');
+const explorerAddr = (addr) => 'https://kaspa.stream/addresses/' + encodeURIComponent(addr || '');
+
+function txidBlock(id, label = 'TX') {
+  if (!id) return '';
+  return `
+    <div class="kv">
+      <span class="k">${esc(label)}</span>
+      <span class="v txid-v">
+        <code class="txid-text">${esc(id)}</code>
+        <button type="button" class="copy-chip" data-copy="${esc(id)}">Copy</button>
+      </span>
+    </div>
+    <p class="muted tx-links"><a href="${esc(explorerTx(id))}" target="_blank" rel="noopener">Open on kaspa.stream</a></p>`;
+}
+
+async function copyText(text) {
+  try {
+    await navigator.clipboard.writeText(String(text || ''));
+    toast('Copied');
+  } catch {
+    toast('Could not copy');
+  }
+}
 
 let wallet = null;
 let utxos = [];
@@ -534,7 +558,9 @@ function renderActivity(txs = []) {
           <b>${esc(row.label)}</b>
           <span>${esc(sub)}</span>
         </div>
-        <div class="val ${row.dir === 'in' ? 'in' : 'out'}">${row.dir === 'in' ? '+' : '−'}${formatAmount(row.amount || 0)}${feeLine}</div>
+        <div class="val ${row.dir === 'in' ? 'in' : 'out'}">${row.dir === 'in' ? '+' : '−'}${formatAmount(row.amount || 0)}${feeLine}
+          ${id ? `<button type="button" class="copy-chip" data-copy="${esc(id)}">Copy ID</button>` : ''}
+        </div>
       </button>`;
   }).join('');
 }
@@ -551,7 +577,10 @@ function renderProfile() {
     $('profile-utxos').textContent = n === 1 ? '1' : String(n);
   }
   const ex = $('profile-explorer');
-  if (ex && addr) ex.href = 'https://kas.fyi/address/' + encodeURIComponent(addr);
+  if (ex && addr) {
+    ex.href = explorerAddr(addr);
+    ex.textContent = 'Open on kaspa.stream';
+  }
   const box = $('wallet-list');
   if (box) {
     const list = loadWalletList();
@@ -607,7 +636,7 @@ function explHtml(expl) {
     ${bullets ? `<ul style="text-align:left;padding-left:18px;color:var(--label-2);font-size:13px;line-height:1.45;margin:0 0 8px;">${bullets}</ul>` : ''}
     <div class="scorpion-factors">${factors}</div>
     ${expl.next ? `<p class="muted" style="text-align:left;padding:10px 0 0;">${esc(expl.next)}</p>` : ''}
-    ${expl.id ? `<p class="muted" style="text-align:left;padding:4px 0 0;"><a href="https://kas.fyi/transaction/${esc(expl.id)}" target="_blank" rel="noopener" style="color:var(--gold-2)">Open on kas.fyi</a></p>` : ''}
+    ${expl.id ? txidBlock(expl.id) : ''}
   `;
 }
 
@@ -842,7 +871,7 @@ function openTokenSheet(token) {
   const proto = token.protocol === 'krc20' ? 'KRC-20' : 'KCC20';
   const amt = formatTokenUnits(token.balance, token.decimals);
   const link = token.protocol === 'krc20'
-    ? `https://kas.fyi/krc20-${encodeURIComponent(token.ticker)}`
+    ? explorerAddr(wallet?.address || '')
     : (token.tokenId ? `https://kascov.io/#/mainnet/token/${encodeURIComponent(token.tokenId)}` : 'https://kascov.io/#/tokens');
   const logoSrc = token.image || (token.native ? 'assets/kas.svg' : (token.protocol === 'krc20' ? krc20Logo(token.ticker) : ''));
   openSheet(token.ticker, `
@@ -889,8 +918,7 @@ async function runCompound() {
       <div class="kv"><span class="k">Merged</span><span class="v">${esc(result.inputs)} → 1 UTXO</span></div>
       <div class="kv"><span class="k">Held</span><span class="v">${esc(formatKas(result.amountKas))} KAS</span></div>
       <div class="kv"><span class="k">Network fee</span><span class="v">${Number(result.feeKas || 0).toFixed(6)} KAS</span></div>
-      <div class="kv"><span class="k">TX</span><span class="v">${esc(result.txId)}</span></div>
-      <p class="muted"><a href="https://kas.fyi/transaction/${esc(result.txId)}" target="_blank" rel="noopener" style="color:var(--gold-2)">View on explorer</a></p>
+      ${txidBlock(result.txId)}
     `, { confirm: 'Done', cancel: false, onConfirm: () => { closeSheet(); refreshAll(); } });
   } catch (e) {
     toast(errText(e));
@@ -1160,8 +1188,7 @@ async function broadcastSend(dest, amount) {
     openSheet('Sent', `
       <div class="kv"><span class="k">Amount</span><span class="v">${esc(formatKas(result.amountKas || amount))} KAS</span></div>
       <div class="kv"><span class="k">Network fee</span><span class="v">${Number(result.feeKas || 0).toFixed(6)} KAS</span></div>
-      <div class="kv"><span class="k">TX</span><span class="v">${esc(result.txId)}</span></div>
-      <p class="muted"><a href="https://kas.fyi/transaction/${esc(result.txId)}" target="_blank" rel="noopener" style="color:var(--gold-2)">View on explorer</a></p>
+      ${txidBlock(result.txId)}
     `, { confirm: 'Done', cancel: false, onConfirm: () => { closeSheet(); refreshAll(); } });
   } catch (e) {
     toast(e.message || 'Broadcast failed');
@@ -1189,9 +1216,8 @@ async function broadcastTokenSend(dest, asset, human, raw) {
       <div class="kv"><span class="k">Asset</span><span class="v">${esc(asset.ticker)}</span></div>
       <div class="kv"><span class="k">Amount</span><span class="v">${esc(human)} ${esc(asset.ticker)}</span></div>
       <div class="kv"><span class="k">To</span><span class="v">${esc(shortAddr(dest, 14, 8))}</span></div>
-      ${result.commitTxId ? `<div class="kv"><span class="k">Commit</span><span class="v">${esc(result.commitTxId)}</span></div>` : ''}
-      <div class="kv"><span class="k">Reveal / TX</span><span class="v">${esc(id)}</span></div>
-      <p class="muted"><a href="https://kas.fyi/transaction/${esc(id)}" target="_blank" rel="noopener" style="color:var(--gold-2)">View on explorer</a></p>
+      ${result.commitTxId ? txidBlock(result.commitTxId, 'Commit') : ''}
+      ${txidBlock(id, 'Reveal / TX')}
     `, { confirm: 'Done', cancel: false, onConfirm: () => { closeSheet(); refreshAll(); } });
   } catch (e) {
     toast(errText(e));
@@ -1428,9 +1454,8 @@ async function fundVault(vault) {
     <div class="kv"><span class="k">Left this wallet</span><span class="v">${formatKas(lockedKas + feeKas)} KAS</span></div>
     <div class="kv"><span class="k">Covenant</span><span class="v">${esc(vault.address)}</span></div>
     ${result.covenantId ? `<div class="kv"><span class="k">Covenant ID</span><span class="v">${esc(result.covenantId)}</span></div>` : ''}
-    <div class="kv"><span class="k">TX</span><span class="v">${esc(result.txId || '')}</span></div>
+    ${txidBlock(result.txId)}
     <p class="muted" style="text-align:left;">Exactly ${esc(formatKas(lockedKas))} KAS is frozen in the capsule. The fee was paid from leftover UTXOs; change stays in this wallet. Sweep later returns the locked amount minus a small sweep fee (~0.004 KAS).</p>
-    <p class="muted"><a href="https://kaspa.stream/transactions/${esc(result.txId)}" target="_blank" rel="noopener" style="color:var(--gold-2)">View on kaspa.stream</a></p>
   `, { confirm: 'Done', cancel: false, onConfirm: () => { closeSheet(); refreshAll(); } });
 }
 
@@ -1488,9 +1513,8 @@ async function unlockVault(vault) {
   openSheet('Swept', `
     <div class="kv"><span class="k">Returned</span><span class="v">${esc(formatKas(result.amountKas))} KAS</span></div>
     <div class="kv"><span class="k">Sweep fee</span><span class="v">${Number(result.feeKas || 0).toFixed(6)} KAS</span></div>
-    <div class="kv"><span class="k">TX</span><span class="v">${esc(result.txId)}</span></div>
+    ${txidBlock(result.txId)}
     <p class="muted" style="text-align:left;">The sweep fee is the Toccata compute fee (usually 0.004–0.007 KAS), not a cut of the lock. You should get lock amount minus this fee.</p>
-    <p class="muted"><a href="https://kaspa.stream/transactions/${esc(result.txId)}" target="_blank" rel="noopener" style="color:var(--gold-2)">View on kaspa.stream</a></p>
   `, { confirm: 'Done', cancel: false, onConfirm: () => { closeSheet(); refreshAll(); } });
 }
 
@@ -1638,6 +1662,13 @@ function bind() {
     buildCovenant(p, intent.params);
   });
   $('sheet-overlay')?.addEventListener('click', e => { if (e.target === $('sheet-overlay')) closeSheet(); });
+  $('phone')?.addEventListener('click', e => {
+    const btn = e.target.closest('[data-copy]');
+    if (!btn?.dataset.copy) return;
+    e.preventDefault();
+    e.stopPropagation();
+    copyText(btn.dataset.copy);
+  });
   document.querySelectorAll('.tab').forEach(t => t.onclick = () => {
     haptic();
     const tab = t.dataset.tab;
@@ -1649,6 +1680,7 @@ function bind() {
     if (tab === 'home') refreshAll();
   });
   $('activity-list')?.addEventListener('click', e => {
+    if (e.target.closest('[data-copy]')) return;
     const row = e.target.closest('[data-txid]');
     if (row?.dataset.txid) openScorpionTx(row.dataset.txid);
   });

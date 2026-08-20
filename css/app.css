@@ -472,6 +472,21 @@ img { display: block; max-width: 100%; }
 .tx .val.in { color: var(--green); }
 .tx .val.out { color: var(--label); }
 .tx .val small { display: block; font-size: 11px; font-weight: 500; color: var(--label-2); margin-top: 2px; }
+.txid-v { display: flex; align-items: flex-start; gap: 8px; justify-content: flex-end; max-width: 68%; }
+.txid-text {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 11px; line-height: 1.35; word-break: break-all; text-align: right;
+  color: var(--gold-2);
+}
+.copy-chip {
+  flex-shrink: 0; height: 28px; padding: 0 10px; border-radius: 8px;
+  background: var(--fill); border: 0.5px solid var(--hairline);
+  color: var(--gold-2); font-size: 12px; font-weight: 650;
+}
+.copy-chip:active { opacity: 0.75; }
+.tx .copy-chip { display: block; margin: 6px 0 0 auto; height: 24px; font-size: 11px; }
+.tx-links { text-align: left; padding: 4px 0 0; }
+.tx-links a { color: var(--gold-2); font-weight: 600; }
 
 .empty {
   text-align: center; padding: 28px 12px; color: var(--label-2); font-size: 14px; line-height: 1.5;

@@ -261,7 +261,7 @@ export async function scorpionAnswer(query, ctx = {}) {
       kind: 'help',
       title: 'Scorpion',
       headline: 'I read Kaspa transactions in plain English — sends, receives, time capsules, sweeps, compounds, KRC-20 and KCC20.',
-      next: 'Paste a 64-character txid, a kas.fyi link, or ask “what was my last lock?”',
+      next: 'Paste a 64-character txid, a kaspa.stream link, or ask “what was my last lock?”',
       factors: [
         { k: 'Wallet', v: address || 'none yet' },
         { k: 'Vaults I know', v: String(vaults.length) },
@@ -292,7 +292,7 @@ export async function scorpionAnswer(query, ctx = {}) {
     };
   }
 
-  const urlId = q.match(/transaction\/([0-9a-fA-F]{64})/i);
+  const urlId = q.match(/transactions?\/([0-9a-fA-F]{64})/i);
   const hexId = q.match(TXID_RE);
   const id = (urlId && urlId[1]) || (hexId && hexId[0]) || '';
   if (id) {

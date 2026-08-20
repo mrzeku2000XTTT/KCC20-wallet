@@ -11,7 +11,8 @@
   <link rel="apple-touch-icon" href="assets/icon.png">
   <link rel="icon" href="assets/icon.png">
   <title>KCC20 Wallet</title>
-  <link rel="stylesheet" href="css/app.css?v=35">
+  <meta http-equiv="Cache-Control" content="no-store, no-cache, must-revalidate">
+  <link rel="stylesheet" href="css/app.css?v=36">
 </head>
 <body>
   <img class="bg-poster" src="assets/bg.jpg" alt="">
@@ -136,7 +137,66 @@
 
         <!-- ACTIVITY -->
         <section class="page" id="page-activity">
+          <div class="scorpion-banner glass" id="scorpion-hint">
+            <span class="scorp-mark">🦂</span>
+            <div>
+              <div class="title">Scorpion</div>
+              <div class="sub">Tap any tx — covenant++ in plain English</div>
+            </div>
+          </div>
           <div class="glass" id="activity-list"></div>
+        </section>
+
+        <!-- PROFILE / SETTINGS -->
+        <section class="page" id="page-you">
+          <div class="glass profile-card">
+            <div class="profile-avatar">K</div>
+            <div class="card-label">Your Kaspa address</div>
+            <p class="profile-addr" id="profile-addr">kaspa:…</p>
+            <div class="btn-row" style="margin-top:12px;">
+              <button class="btn btn-gold" id="profile-copy" type="button">Copy address</button>
+              <button class="btn btn-glass" id="profile-qr" type="button">QR</button>
+            </div>
+            <div class="kv"><span class="k">Balance</span><span class="v" id="profile-bal">0 KAS</span></div>
+            <div class="kv"><span class="k">Script</span><span class="v" id="profile-script">P2PK</span></div>
+            <div class="kv"><span class="k">UTXOs</span><span class="v" id="profile-utxos">0</span></div>
+            <a class="profile-link" id="profile-explorer" href="#" target="_blank" rel="noopener">Open on kas.fyi</a>
+          </div>
+
+          <div class="section-label">Scorpion AI</div>
+          <div class="glass scorpion-box">
+            <div class="scorpion-head">
+              <span class="scorp-mark">🦂</span>
+              <div>
+                <div class="title">Covenant++</div>
+                <div class="sub">Translates sends, locks, sweeps, tokens</div>
+              </div>
+            </div>
+            <div class="chat scorpion-chat" id="scorpion-log"></div>
+            <div class="chatbar">
+              <input id="scorpion-input" placeholder="Paste a txid or ask “last lock”" autocomplete="off">
+              <button class="send-orb" id="scorpion-send" type="button">↑</button>
+            </div>
+          </div>
+
+          <div class="section-label">Settings</div>
+          <div class="glass list">
+            <button class="row" id="profile-compound" type="button">
+              <div class="glyph" style="background:rgba(212,176,122,.16);color:var(--gold)">⧉</div>
+              <div><div class="title">Compound UTXOs</div><div class="sub">Merge coins into one output</div></div>
+              <span class="chev">›</span>
+            </button>
+            <button class="row" id="profile-keys" type="button">
+              <div class="glyph" style="background:rgba(10,132,255,.16);color:var(--blue)">🔑</div>
+              <div><div class="title">Private key</div><div class="sub">Reveal or copy — never share</div></div>
+              <span class="chev">›</span>
+            </button>
+            <button class="row" id="profile-wipe" type="button">
+              <div class="glyph" style="background:rgba(255,69,58,.16);color:var(--red)">✕</div>
+              <div><div class="title">Remove wallet</div><div class="sub">Keys leave this device only</div></div>
+              <span class="chev">›</span>
+            </button>
+          </div>
         </section>
       </div>
 
@@ -157,6 +217,10 @@
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 5h16M4 12h10M4 19h16"/></svg>
           <span>Activity</span>
         </button>
+        <button class="tab" data-tab="you">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="8" r="3.4"/><path d="M5 19c1.6-3.4 4.2-5 7-5s5.4 1.6 7 5"/></svg>
+          <span>You</span>
+        </button>
       </nav>
 
       <div class="sheet-overlay" id="sheet-overlay">
@@ -172,6 +236,13 @@
 
   <script>
     (function () {
+      try {
+        if (navigator.serviceWorker) {
+          navigator.serviceWorker.getRegistrations().then(function (rs) {
+            rs.forEach(function (r) { r.unregister(); });
+          });
+        }
+      } catch (e) {}
       function pad(n) { return String(n).padStart(2, '0'); }
       function tick() {
         var d = new Date();
@@ -198,7 +269,7 @@
     })();
   </script>
   <script type="module">
-    import('./js/app.js?v=35').catch(function (err) {
+    import('./js/app.js?v=36').catch(function (err) {
       console.error(err);
       var phone = document.getElementById('phone');
       var d = document.createElement('div');

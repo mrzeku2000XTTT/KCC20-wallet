@@ -9,6 +9,7 @@ import {
 } from './kcc20.js';
 import { parseIntent, describeIntent, askFor, parseDurationField } from './intent.js';
 import { payloadFromAddress } from './script.js';
+import { explainTransaction, scorpionAnswer } from './scorpion.js';
 import {
   sendKas, fetchAddressUtxos, fetchAddressBalance, loadKaspaSdk,
   buildTimelockCovenant, buildEscrowCovenant, buildMultisigCovenant, currentDaa,
@@ -129,16 +130,22 @@ function showPage(id) {
   document.querySelectorAll('.page').forEach(p => p.classList.toggle('active', p.id === 'page-' + id));
   currentTab = id;
   document.querySelectorAll('.tab').forEach(t => t.classList.toggle('active', t.dataset.tab === id));
-  const titles = { home: 'KCC20', tokens: 'Tokens', vault: 'Vault', activity: 'Activity' };
+  const titles = { home: 'KCC20', tokens: 'Tokens', vault: 'Vault', activity: 'Activity', you: 'Profile' };
   $('nav-title').textContent = titles[id] || 'KCC20';
   $('nav-left').innerHTML = '';
   $('nav-right').innerHTML = id === 'home'
     ? `<button class="icon-btn" id="btn-settings" aria-label="Settings">•••</button>`
     : '';
-  if (id === 'home') $('btn-settings')?.addEventListener('click', openSettings);
+  if (id === 'home') $('btn-settings')?.addEventListener('click', () => showPage('you'));
   $('tabbar').classList.toggle('show', !!wallet);
   if (id === 'vault') {
     try { renderVault(); } catch (e) { console.error(e); }
+  }
+  if (id === 'you') {
+    try { renderProfile(); } catch (e) { console.error(e); }
+  }
+  if (id === 'activity') {
+    try { renderActivity(window.__txs || []); } catch (e) { console.error(e); }
   }
 }
 
@@ -406,28 +413,138 @@ function summarizeTx(tx, myAddr) {
 }
 
 function renderActivity(txs = []) {
+  const box = $('activity-list');
+  if (!box) return;
   if (!txs.length) {
-    $('activity-list').innerHTML = `<div class="empty">No recent transactions on this address.</div>`;
+    box.innerHTML = `<div class="empty">No recent transactions on this address. Scorpion can still decode a pasted txid on the You tab.</div>`;
     return;
   }
-  $('activity-list').innerHTML = txs.slice(0, 25).map(tx => {
+  box.innerHTML = txs.slice(0, 25).map(tx => {
     const id = tx.transaction_id || tx.transactionId || '';
     const row = summarizeTx(tx, wallet.address);
+    const expl = explainTransaction(tx, { address: wallet.address, vaults: loadVaults() });
     const feeLine = row.fee > 0
       ? `<small>fee ${formatAmount(row.fee)} KAS</small>`
       : (row.note ? `<small>${esc(row.note)}</small>` : '');
-    const sub = [id.slice(0, 12) + '…', new Date(tx.block_time || Date.now()).toLocaleString(), row.note && row.fee > 0 ? row.note : '']
+    const sub = [expl.title, id.slice(0, 10) + '…', new Date(tx.block_time || Date.now()).toLocaleString()]
       .filter(Boolean).join(' · ');
     return `
-      <a class="tx" href="https://kas.fyi/transaction/${esc(id)}" target="_blank" rel="noopener">
+      <button class="tx" type="button" data-txid="${esc(id)}">
         <div class="dir">${row.dir === 'in' ? '↓' : '↑'}</div>
         <div class="meta">
           <b>${esc(row.label)}</b>
           <span>${esc(sub)}</span>
         </div>
         <div class="val ${row.dir === 'in' ? 'in' : 'out'}">${row.dir === 'in' ? '+' : '−'}${formatAmount(row.amount || 0)}${feeLine}</div>
-      </a>`;
+      </button>`;
   }).join('');
+}
+
+function renderProfile() {
+  if (!wallet) return;
+  const addr = wallet.address || '';
+  if ($('profile-addr')) $('profile-addr').textContent = addr;
+  if ($('profile-bal')) $('profile-bal').textContent = formatAmount(balanceSompi) + ' KAS';
+  if ($('profile-script')) $('profile-script').textContent = String(addr).startsWith('kaspa:p') ? 'P2SH covenant' : 'P2PK Schnorr key';
+  if ($('profile-utxos')) {
+    const n = Array.isArray(utxos) ? utxos.length : 0;
+    $('profile-utxos').textContent = n === 1 ? '1' : String(n);
+  }
+  const ex = $('profile-explorer');
+  if (ex && addr) ex.href = 'https://kas.fyi/address/' + encodeURIComponent(addr);
+  const log = $('scorpion-log');
+  if (log && !log.childElementCount) {
+    log.innerHTML = `<div class="bubble ai">I am Scorpion. I translate any Kaspa tx into plain English — lock vs send vs sweep vs KRC-20. Paste a txid or ask <em>what was my last lock?</em></div>`;
+  }
+}
+
+function explHtml(expl) {
+  const factors = (expl.factors || []).map(f =>
+    `<div class="kv"><span class="k">${esc(f.k)}</span><span class="v">${esc(f.v)}</span></div>`
+  ).join('');
+  const bullets = (expl.bullets || []).map(b => `<li>${esc(b)}</li>`).join('');
+  return `
+    <span class="kind-pill">${esc(expl.title || expl.kind || 'Scorpion')}</span>
+    <p style="text-align:left;font-size:15px;line-height:1.45;margin:0 0 8px;">${esc(expl.headline)}</p>
+    ${bullets ? `<ul style="text-align:left;padding-left:18px;color:var(--label-2);font-size:13px;line-height:1.45;margin:0 0 8px;">${bullets}</ul>` : ''}
+    <div class="scorpion-factors">${factors}</div>
+    ${expl.next ? `<p class="muted" style="text-align:left;padding:10px 0 0;">${esc(expl.next)}</p>` : ''}
+    ${expl.id ? `<p class="muted" style="text-align:left;padding:4px 0 0;"><a href="https://kas.fyi/transaction/${esc(expl.id)}" target="_blank" rel="noopener" style="color:var(--gold-2)">Open on kas.fyi</a></p>` : ''}
+  `;
+}
+
+function openScorpionTx(id) {
+  haptic();
+  const tx = (window.__txs || []).find(t => (t.transaction_id || t.transactionId) === id);
+  if (!tx) {
+    toast('Tx not loaded — refresh Activity');
+    return;
+  }
+  const expl = explainTransaction(tx, { address: wallet.address, vaults: loadVaults() });
+  openSheet('Scorpion', explHtml(expl), { confirm: 'Done', cancel: false });
+}
+
+async function fetchKaspaTx(id) {
+  const res = await fetch(`${API_BASE}/transactions/${id}?resolve_previous_outpoints=light`);
+  if (!res.ok) throw new Error('Tx not found');
+  return res.json();
+}
+
+function appendScorpion(role, html) {
+  const log = $('scorpion-log');
+  if (!log) return;
+  const el = document.createElement('div');
+  el.className = `bubble ${role === 'me' ? 'me' : 'ai'}`;
+  el.innerHTML = html;
+  log.appendChild(el);
+  log.scrollTop = log.scrollHeight;
+  return el;
+}
+
+async function sendScorpion() {
+  const input = $('scorpion-input');
+  const text = (input?.value || '').trim();
+  if (!text) {
+    const latest = (window.__txs || [])[0];
+    if (latest) {
+      const expl = explainTransaction(latest, { address: wallet.address, vaults: loadVaults() });
+      appendScorpion('ai', explHtml(expl));
+    } else toast('No txs yet — paste a txid');
+    return;
+  }
+  if (input) input.value = '';
+  appendScorpion('me', esc(text));
+  const typing = appendScorpion('ai', '<span style="opacity:0.55">Reading the chain…</span>');
+  try {
+    let expl = await scorpionAnswer(text, {
+      address: wallet?.address || '',
+      txs: window.__txs || [],
+      vaults: loadVaults(),
+      fetchTx: fetchKaspaTx
+    });
+    try {
+      const res = await fetch(`${BACKEND_URL}/kccApi`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'explainTx', message: text, tx: expl, address: wallet?.address })
+      });
+      if (res.ok) {
+        const remote = await res.json();
+        if (remote && !remote.error && (remote.headline || remote.summary || remote.text)) {
+          expl = {
+            ...expl,
+            headline: remote.headline || remote.summary || remote.text,
+            next: remote.next || expl.next
+          };
+        }
+      }
+    } catch { /* local covenant++ is enough */ }
+    typing.remove();
+    appendScorpion('ai', explHtml(expl));
+  } catch (e) {
+    typing.remove();
+    appendScorpion('ai', esc(errText(e)));
+  }
 }
 
 function setLiveFast(on) {
@@ -522,6 +639,7 @@ async function tickLive(full) {
           window.__txs = Array.isArray(txs) ? txs : (txs.transactions || []);
           if (currentTab === 'activity') renderActivity(window.__txs);
         }
+        if (currentTab === 'you') renderProfile();
       } catch {}
       refreshVaultBalances();
     }
@@ -1230,8 +1348,27 @@ function bind() {
     if (tab === 'tokens') renderTokens();
     if (tab === 'vault') renderVault();
     if (tab === 'activity') renderActivity(window.__txs || []);
+    if (tab === 'you') renderProfile();
     if (tab === 'home') refreshAll();
   });
+  $('activity-list')?.addEventListener('click', e => {
+    const row = e.target.closest('[data-txid]');
+    if (row?.dataset.txid) openScorpionTx(row.dataset.txid);
+  });
+  click('profile-copy', async () => {
+    if (!wallet?.address) return;
+    await navigator.clipboard.writeText(wallet.address);
+    toast('Address copied');
+  });
+  click('profile-qr', () => openReceive());
+  click('profile-compound', openCompound);
+  click('profile-keys', openSettings);
+  click('profile-wipe', logout);
+  click('scorpion-send', () => sendScorpion().catch(err => toast(errText(err))));
+  $('scorpion-input')?.addEventListener('keydown', e => {
+    if (e.key === 'Enter') sendScorpion().catch(err => toast(errText(err)));
+  });
+  $('scorpion-hint')?.addEventListener('click', () => showPage('you'));
   $('holdings')?.addEventListener('click', e => {
     const lock = e.target.closest('[data-lock-holding]');
     if (lock?.dataset.lockHolding) {

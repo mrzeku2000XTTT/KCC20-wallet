@@ -305,11 +305,12 @@ img { display: block; max-width: 100%; }
 }
 .tabbar.show { display: flex; }
 .tab {
-  flex: 1; text-align: center; color: var(--label-3); padding: 6px 0 8px;
+  flex: 1; text-align: center; color: var(--label-3); padding: 6px 2px 8px;
+  min-width: 0;
 }
 .tab.active { color: var(--gold-2); }
-.tab svg { width: 24px; height: 24px; margin: 0 auto 2px; display: block; }
-.tab span { font-size: 10px; font-weight: 500; letter-spacing: 0.2px; }
+.tab svg { width: 22px; height: 22px; margin: 0 auto 2px; display: block; }
+.tab span { font-size: 10px; font-weight: 500; letter-spacing: 0.1px; display:block; white-space:nowrap; }
 
 .btn {
   width: 100%; height: 52px; border-radius: 16px;
@@ -464,6 +465,51 @@ img { display: block; max-width: 100%; }
 .empty {
   text-align: center; padding: 28px 12px; color: var(--label-2); font-size: 14px; line-height: 1.5;
 }
+
+.profile-card { padding: 22px 18px 16px; text-align: center; margin-bottom: 16px; }
+.profile-avatar {
+  width: 64px; height: 64px; border-radius: 20px; margin: 0 auto 12px;
+  display: grid; place-items: center;
+  background: linear-gradient(180deg, #f3e2bf, #c9a36a);
+  color: #1a140c; font-weight: 800; font-size: 24px;
+  box-shadow: 0 10px 24px rgba(201,163,106,0.28);
+}
+.profile-addr {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 12px; line-height: 1.45; word-break: break-all;
+  color: var(--gold-2); text-align: left;
+  padding: 12px 14px; border-radius: 14px;
+  background: rgba(0,0,0,0.35); border: 0.5px solid var(--hairline);
+  margin-top: 8px;
+}
+.profile-link {
+  display: inline-block; margin-top: 12px; color: var(--gold-2);
+  font-size: 13px; font-weight: 600; text-decoration: none;
+}
+.scorpion-banner, .scorpion-head {
+  display: flex; align-items: center; gap: 12px;
+  padding: 12px 14px; margin-bottom: 12px;
+}
+.scorpion-banner { cursor: default; }
+.scorpion-banner .title, .scorpion-head .title { font-size: 16px; font-weight: 650; }
+.scorpion-banner .sub, .scorpion-head .sub { font-size: 12px; color: var(--label-2); margin-top: 2px; }
+.scorp-mark {
+  width: 40px; height: 40px; border-radius: 12px; flex-shrink: 0;
+  display: grid; place-items: center; font-size: 20px;
+  background: rgba(212,176,122,0.16);
+}
+.scorpion-box { padding: 4px 12px 12px; margin-bottom: 16px; }
+.scorpion-chat { max-height: 220px; min-height: 88px; }
+.scorpion-factors { margin-top: 8px; text-align: left; }
+.scorpion-factors .kv { padding: 8px 0; }
+.kind-pill {
+  display: inline-flex; align-items: center;
+  font-size: 11px; font-weight: 700; letter-spacing: 0.4px;
+  text-transform: uppercase; color: var(--gold-2);
+  background: rgba(212,176,122,0.16);
+  border-radius: 999px; padding: 4px 10px; margin-bottom: 8px;
+}
+button.tx { width: 100%; text-align: left; color: inherit; }
 
 @media (prefers-reduced-motion: reduce) {
   .bg-video { display: none; }

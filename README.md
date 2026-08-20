@@ -26,11 +26,9 @@ Import this repo. Framework: Other. No build command. Root directory: `.`
 - Create / import Schnorr wallet (browser keygen)
 - Live KAS balance, USD, UTXOs, activity from api.kaspa.org
 - Send / receive (QR)
-- Time capsule locks the exact KAS you type (leftover stays as change; it is not absorbed into the vault)
-- Network fees shown on lock, send, sweep, and Activity (Toccata compute fee, usually 0.004–0.007 KAS)
-- Live KCC20 balances (KRON, KKDAG / Kas Knight) from kascov.io — same source KasWare uses, auto-refresh
-- Live KRC-20 balances from Kasplex
-- UTXO compounder (merge coins into one UTXO)
+- KCC20 watchlist
+- Profile tab (bottom right): full Kaspa address, QR, keys, compound, wipe
+- Scorpion AI: covenant++ translator — tap any tx or paste a txid for plain-English kind, amount, fee, P2SH vs P2PK, vault product, KRC-20/KCC20 payload
 - AI + manual covenant builder (existing `kccApi` backend)
 
 Keys stay in `localStorage`. Confirmed sends still use the proven covenant builder to assemble the transaction.

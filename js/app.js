@@ -1,24 +1,24 @@
 import {
   loadCryptoLibs, generatePrivateKey, createKeypairFromHex,
   isValidKaspaAddress, shortAddr, hexToBytes, privKeyToHex, derivePublicKey, kaspaAddressFromPubkey, bytesToHex
-} from './crypto.js?v=57';
+} from './crypto.js?v=58';
 import {
   NATIVE_KAS, VAULT_PRODUCTS, loadWatchlist, addToken, removeToken,
   loadVaults, saveVault, updateVault, formatAmount, formatTokenUnits, tokenColor,
   fetchKcc20Portfolio, fetchKrc20Portfolio, krc20Logo, toTokenRaw, setVaultOwner
-} from './kcc20.js?v=57';
-import { parseIntent, describeIntent, askFor, parseDurationField } from './intent.js?v=57';
-import { payloadFromAddress } from './script.js?v=57';
-import { explainTransaction, scorpionAnswer } from './scorpion.js?v=57';
+} from './kcc20.js?v=58';
+import { parseIntent, describeIntent, askFor, parseDurationField } from './intent.js?v=58';
+import { payloadFromAddress } from './script.js?v=58';
+import { explainTransaction, scorpionAnswer } from './scorpion.js?v=58';
 import {
   sendKas, fetchAddressUtxos, fetchAddressBalance, loadKaspaSdk,
   buildTimelockCovenant, buildEscrowCovenant, buildMultisigCovenant, currentDaa,
   pingPublicNode, sweepVault, toRpcTransaction, p2shSpendScript, planKasPayment, storageMassOk,
   compoundUtxos, sendKrc20, sendKcc20, loadKrc20Pending, lockKcc20Timelock, sweepKcc20Capsule
-} from './tx.js?v=57';
-import { kronMarkets, quoteKronTrade, executeKronTrade, formatKasSompi, lookupKronTick, tradeCostLines } from './kronTrade.js?v=57';
+} from './tx.js?v=58';
+import { kronMarkets, quoteKronTrade, executeKronTrade, formatKasSompi, lookupKronTick, tradeCostLines } from './kronTrade.js?v=58';
 
-export const BUILD = '57';
+export const BUILD = '58';
 
 function errText(e) {
   if (e == null) return 'Unknown error';
@@ -111,6 +111,7 @@ let lastTokenFetch = 0;
 let tokenBusy = false;
 let tokenPending = false;
 let tokenActBackfill = false;
+let activityAll = false;
 let seenTokens = false;
 let tokenStream = null;
 let tokenFastOff = 0;
@@ -330,6 +331,7 @@ function rememberActiveSnap() {
     sompi: balanceSompi,
     kcc: slimTokens(kccHoldings),
     krc: slimTokens(krcHoldings),
+    txs: window.__txs || [],
     at: Date.now()
   };
   persistSnaps();
@@ -344,6 +346,45 @@ function hydrateFromSnap(addr) {
   }
   if (Array.isArray(snap.kcc)) kccHoldings = snap.kcc;
   if (Array.isArray(snap.krc)) krcHoldings = snap.krc;
+  if (Array.isArray(snap.txs)) window.__txs = snap.txs;
+}
+
+async function fetchWalletTxs(addr) {
+  const res = await fetch(`${API_BASE}/addresses/${encodeURIComponent(addr)}/full-transactions?limit=20&resolve_previous_outpoints=light`);
+  if (!res.ok) return [];
+  const txs = await res.json();
+  return Array.isArray(txs) ? txs : (txs.transactions || []);
+}
+
+function detectHoldingCredits(walletName, addr, prevList, nextList, protocol) {
+  for (const t of nextList || []) {
+    const prev = (prevList || []).find(x =>
+      (t.tokenId && x.tokenId === t.tokenId) || (x.protocol === t.protocol && x.ticker === t.ticker)
+    );
+    let d = 0n;
+    try {
+      const nextAmt = BigInt(t.balance || '0');
+      const prevAmt = BigInt(prev?.balance || '0');
+      if (nextAmt > prevAmt) d = nextAmt - prevAmt;
+    } catch { continue; }
+    if (d <= 0n) continue;
+    toast(`${walletName} received ${formatTokenUnits(d, t.decimals)} ${t.ticker}`);
+    haptic();
+    pushTokenActivity({
+      dir: 'in',
+      tick: t.ticker,
+      protocol: protocol || t.protocol || 'kcc20',
+      amount: d.toString(),
+      decimals: t.decimals,
+      label: 'Received'
+    }, addr);
+  }
+}
+
+function noteOwnedInbound(dest, ev) {
+  const other = loadWalletList().find(w => w.address === dest);
+  if (!other || other.address === wallet?.address) return;
+  pushTokenActivity({ ...ev, dir: 'in', label: ev.label || 'Received' }, other.address);
 }
 
 async function refreshAllWalletSnaps({ tokens = false } = {}) {
@@ -360,17 +401,36 @@ async function refreshAllWalletSnaps({ tokens = false } = {}) {
         return;
       }
       try {
-        const sompi = await fetchAddressBalance(w.address);
         const prev = walletSnap[w.address] || {};
-        walletSnap[w.address] = { ...prev, sompi, at: Date.now() };
+        const sompi = await fetchAddressBalance(w.address);
+        const grew = prev.sompi != null && Number(sompi) > Number(prev.sompi);
+        const name = w.name || 'Wallet';
+        if (grew) {
+          const delta = Number(sompi) - Number(prev.sompi);
+          toast(`${name} received ${formatAmount(delta)} KAS`);
+          haptic();
+          pushTokenActivity({
+            dir: 'in', tick: 'KAS', protocol: 'kas',
+            amount: String(delta), decimals: 8, label: 'Received'
+          }, w.address);
+        }
+        const next = { ...prev, sompi, at: Date.now() };
+        if (tokens || grew) {
+          try { next.txs = await fetchWalletTxs(w.address); } catch {}
+        }
         if (tokens) {
           const [kcc, krc] = await Promise.allSettled([
             fetchKcc20Portfolio(w.address, w.pubKey),
             fetchKrc20Portfolio(w.address)
           ]);
-          if (kcc.status === 'fulfilled') walletSnap[w.address].kcc = slimTokens(kcc.value);
-          if (krc.status === 'fulfilled') walletSnap[w.address].krc = slimTokens(krc.value);
+          const nextKcc = kcc.status === 'fulfilled' ? slimTokens(kcc.value) : (prev.kcc || []);
+          const nextKrc = krc.status === 'fulfilled' ? slimTokens(krc.value) : (prev.krc || []);
+          if (prev.kcc) detectHoldingCredits(name, w.address, prev.kcc, nextKcc, 'kcc20');
+          if (prev.krc) detectHoldingCredits(name, w.address, prev.krc, nextKrc, 'krc20');
+          if (kcc.status === 'fulfilled') next.kcc = nextKcc;
+          if (krc.status === 'fulfilled') next.krc = nextKrc;
         }
+        walletSnap[w.address] = next;
       } catch (e) {
         console.warn(e);
       }
@@ -378,6 +438,7 @@ async function refreshAllWalletSnaps({ tokens = false } = {}) {
     persistSnaps();
     if (currentTab === 'you') renderProfile();
     if (currentTab === 'home') renderHomeWallets();
+    if (currentTab === 'activity' && activityAll) renderActivity(window.__txs || []);
   } finally {
     snapBusy = false;
   }
@@ -906,12 +967,69 @@ function renderHomeWallets() {
   const list = loadWalletList();
   box.innerHTML = list.map(w => {
     const active = w.id === wallet.id;
+    const kasTxt = walletKasLabel(w, active);
+    const sendBtn = !active
+      ? `<button class="w-send" type="button" data-send-to="${esc(w.id)}" aria-label="Send to ${esc(w.name || 'wallet')}">↗</button>`
+      : '';
     return `
-      <button class="w-chip${active ? ' on' : ''}" type="button" data-switch-wallet="${esc(w.id)}">
-        <b>${esc(w.name || 'Wallet')}</b>
-        <em>${esc(walletKasLabel(w, active))} KAS</em>
-      </button>`;
+      <div class="w-chip${active ? ' on' : ''}">
+        <button class="w-chip-main" type="button" data-switch-wallet="${esc(w.id)}">
+          <img class="w-kas" src="assets/kas.svg" alt="">
+          <span>
+            <b>${esc(w.name || 'Wallet')}</b>
+            <em>${esc(kasTxt)} KAS</em>
+          </span>
+        </button>
+        ${sendBtn}
+      </div>`;
   }).join('') + `<button class="w-chip add" type="button" data-add-wallet="1" aria-label="Add wallet">＋</button>`;
+}
+
+function otherWallets() {
+  return loadWalletList().filter(w => w.id !== wallet?.id);
+}
+
+function openSendToWallet(id) {
+  const w = loadWalletList().find(x => x.id === id);
+  if (!w) return;
+  if (w.id === wallet?.id) { toast('That is this wallet'); return; }
+  openSend({ destination: w.address, ownedName: w.name || 'Wallet' });
+}
+
+function openMoveToOwned() {
+  const others = otherWallets();
+  if (!others.length) {
+    toast('Add another wallet first — then Move sends from here to it');
+    return;
+  }
+  if (others.length === 1) {
+    openSendToWallet(others[0].id);
+    return;
+  }
+  haptic();
+  const rows = others.map(w => {
+    const sompi = walletSnap[w.address]?.sompi;
+    const kasTxt = sompi == null ? '…' : formatAmount(sompi) + ' KAS';
+    return `
+      <button class="row token-row" type="button" data-send-to="${esc(w.id)}">
+        <img class="w-kas" src="assets/kas.svg" alt="" style="width:28px;height:28px;border-radius:8px;">
+        <div style="flex:1;min-width:0">
+          <div class="title">${esc(w.name || 'Wallet')}</div>
+          <div class="sub">${esc(shortAddr(w.address, 12, 8))}</div>
+        </div>
+        <div class="amt"><b>${esc(kasTxt)}</b><em>Send here</em></div>
+      </button>`;
+  }).join('');
+  openSheet('Move from ' + (wallet?.name || 'this wallet'), `
+    <p class="muted" style="text-align:left;padding:0 0 10px;">Sends from the wallet you are in now to another of your wallets.</p>
+    <div class="glass list">${rows}</div>
+  `, { confirm: 'Cancel', cancel: false, onConfirm: () => closeSheet() });
+  $('sheet-body')?.addEventListener('click', e => {
+    const btn = e.target.closest('[data-send-to]');
+    if (!btn?.dataset.sendTo) return;
+    closeSheet();
+    openSendToWallet(btn.dataset.sendTo);
+  }, { once: true });
 }
 
 function switchToWallet(id) {
@@ -996,6 +1114,7 @@ function tokenRow(t, extra = '') {
 }
 
 function renderHoldings() {
+  const kasRow = tokenRow({ ...NATIVE_KAS, sompi: balanceSompi, usd: usd(kas()), protocol: 'native' }, 'data-ticker="KAS"');
   const kccRows = kccHoldings.map(t => tokenRow(t));
   const krcRows = krcHoldings.map(t => tokenRow(t));
   const locked = loadVaults().filter(v => v.address && Number(v.fundedSompi) > 0 && !isVaultHistory(v));
@@ -1016,8 +1135,8 @@ function renderHoldings() {
       </div>
     </button>`;
   });
-  const rows = [...kccRows, ...krcRows, ...lockRows];
-  $('holdings').innerHTML = rows.join('') || `<div class="empty">No tokens yet — TRADE KCC20 to buy.</div>`;
+  const rows = [kasRow, ...kccRows, ...krcRows, ...lockRows];
+  $('holdings').innerHTML = rows.join('');
   const n = Array.isArray(utxos) ? utxos.length : 0;
   if ($('utxo-count')) $('utxo-count').textContent = n === 1 ? '1 UTXO' : `${n} UTXOs`;
 }
@@ -1164,9 +1283,10 @@ function saveTokenActivity(list, addr) {
   localStorage.setItem(actStoreKey(addr), JSON.stringify((list || []).slice(0, 80)));
 }
 
-function pushTokenActivity(ev) {
-  if (!wallet?.address || !ev) return null;
-  const list = loadTokenActivity();
+function pushTokenActivity(ev, addr) {
+  const use = addr || wallet?.address;
+  if (!use || !ev) return null;
+  const list = loadTokenActivity(use);
   const row = {
     id: ev.id || ('ta-' + Date.now().toString(36) + Math.random().toString(16).slice(2, 8)),
     time: Number(ev.time || Date.now()),
@@ -1176,7 +1296,8 @@ function pushTokenActivity(ev) {
     amount: String(ev.amount || '0'),
     decimals: Number(ev.decimals || 0),
     txId: ev.txId || '',
-    label: ev.label || (ev.dir === 'out' ? 'Sent' : 'Received')
+    label: ev.label || (ev.dir === 'out' ? 'Sent' : 'Received'),
+    wallet: loadWalletList().find(w => w.address === use)?.name || ''
   };
   const dup = list.find(x =>
     x.tick === row.tick && x.dir === row.dir && x.amount === row.amount &&
@@ -1186,13 +1307,13 @@ function pushTokenActivity(ev) {
     if (row.txId && !dup.txId) {
       dup.txId = row.txId;
       if (ev.time) dup.time = Number(ev.time);
-      saveTokenActivity(list);
+      saveTokenActivity(list, use);
     }
     if (currentTab === 'activity') renderActivity(window.__txs || []);
     return dup;
   }
   list.unshift(row);
-  saveTokenActivity(list);
+  saveTokenActivity(list, use);
   if (currentTab === 'activity') renderActivity(window.__txs || []);
   return row;
 }
@@ -1254,29 +1375,35 @@ function summarizeTx(tx, myAddr) {
   return { label: 'Received', dir: 'in', amount: received, fee: 0, note: '' };
 }
 
-function renderActivity(txs = []) {
-  const box = $('activity-list');
-  if (!box) return;
-  const tokenActs = loadTokenActivity();
+function activityVal(a) {
+  if (a.protocol === 'kas' || a.tick === 'KAS') {
+    return (a.dir === 'in' ? '+' : '−') + formatAmount(a.amount);
+  }
+  return (a.dir === 'in' ? '+' : '−') + formatTokenUnits(a.amount, a.decimals) + ' ' + a.tick;
+}
+
+function rowsForWallet(addr, txs, walletName) {
+  const tokenActs = loadTokenActivity(addr);
   const chain = Array.isArray(txs) ? txs : [];
   const chainIds = new Set(chain.map(t => t.transaction_id || t.transactionId).filter(Boolean));
   const rows = [];
+  const tag = walletName && activityAll ? walletName + ' · ' : '';
   for (const tx of chain) {
     const id = tx.transaction_id || tx.transactionId || '';
     const tok = tokenActs.find(a => a.txId && a.txId === id);
-    const row = summarizeTx(tx, wallet.address);
+    const row = summarizeTx(tx, addr);
     if (tok) {
       row.label = (tok.dir === 'in' ? 'Received ' : 'Sent ') + tok.tick;
-      row.tokenLabel = (tok.dir === 'in' ? '+' : '−') + formatTokenUnits(tok.amount, tok.decimals) + ' ' + tok.tick;
+      row.tokenLabel = activityVal(tok);
     }
-    const expl = explainTransaction(tx, { address: wallet.address, vaults: loadVaults() });
+    const expl = explainTransaction(tx, { address: addr, vaults: loadVaults() });
     rows.push({
       kind: 'chain',
       id,
       time: Number(tx.block_time || tx.blockTime || 0),
       dir: row.dir,
-      title: row.label,
-      sub: [tok ? (tok.protocol === 'krc20' ? 'KRC-20' : 'KCC20') : expl.title, id ? id.slice(0, 10) + '…' : '', new Date(tx.block_time || Date.now()).toLocaleString()].filter(Boolean).join(' · '),
+      title: tag + row.label,
+      sub: [tok ? (tok.protocol === 'krc20' ? 'KRC-20' : (tok.protocol === 'kas' ? 'KAS' : 'KCC20')) : expl.title, id ? id.slice(0, 10) + '…' : '', new Date(tx.block_time || Date.now()).toLocaleString()].filter(Boolean).join(' · '),
       val: row.tokenLabel || ((row.dir === 'in' ? '+' : '−') + formatAmount(row.amount || 0)),
       feeLine: row.fee > 0 ? `fee ${formatAmount(row.fee)} KAS` : (row.note || ''),
       tokId: tok?.id || ''
@@ -1284,25 +1411,48 @@ function renderActivity(txs = []) {
   }
   for (const a of tokenActs) {
     if (a.txId && chainIds.has(a.txId)) continue;
+    const proto = a.protocol === 'krc20' ? 'KRC-20' : (a.protocol === 'kas' || a.tick === 'KAS' ? 'KAS' : 'KCC20');
     rows.push({
       kind: 'token',
       id: a.txId || '',
       actId: a.id,
       time: Number(a.time || 0),
       dir: a.dir,
-      title: (a.label || (a.dir === 'in' ? 'Received' : 'Sent')) + ' ' + a.tick,
-      sub: [a.protocol === 'krc20' ? 'KRC-20' : 'KCC20', a.txId ? a.txId.slice(0, 10) + '…' : 'cell credit', new Date(a.time || Date.now()).toLocaleString()].filter(Boolean).join(' · '),
-      val: (a.dir === 'in' ? '+' : '−') + formatTokenUnits(a.amount, a.decimals) + ' ' + a.tick,
+      title: tag + (a.label || (a.dir === 'in' ? 'Received' : 'Sent')) + ' ' + a.tick,
+      sub: [proto, a.txId ? a.txId.slice(0, 10) + '…' : 'live credit', new Date(a.time || Date.now()).toLocaleString()].filter(Boolean).join(' · '),
+      val: activityVal(a),
       feeLine: a.txId ? '' : 'Indexed to this wallet',
       tokId: a.id
     });
   }
+  return rows;
+}
+
+function renderActivity(txs = []) {
+  const box = $('activity-list');
+  if (!box) return;
+  const many = loadWalletList().length > 1;
+  const scope = $('act-scope');
+  if (scope) {
+    scope.classList.toggle('hidden', !many);
+    scope.querySelectorAll('button').forEach(b => b.classList.toggle('on', (b.dataset.actscope === 'all') === activityAll));
+  }
+  let rows = [];
+  if (activityAll && many) {
+    for (const w of loadWalletList()) {
+      const isActive = wallet && w.address === wallet.address;
+      const txsW = isActive ? (txs || window.__txs || []) : (walletSnap[w.address]?.txs || []);
+      rows = rows.concat(rowsForWallet(w.address, txsW, w.name || 'Wallet'));
+    }
+  } else {
+    rows = rowsForWallet(wallet?.address, txs, wallet?.name);
+  }
   rows.sort((a, b) => (b.time || 0) - (a.time || 0));
   if (!rows.length) {
-    box.innerHTML = `<div class="empty">No recent transactions on this address. Incoming KCC20 will show here when the indexer credits it. Scorpion can still decode a pasted txid on the You tab.</div>`;
+    box.innerHTML = `<div class="empty">No recent activity on ${activityAll ? 'these wallets' : 'this wallet'}. Incoming KAS and KCC20 show here automatically.</div>`;
     return;
   }
-  box.innerHTML = rows.slice(0, 30).map(r => `
+  box.innerHTML = rows.slice(0, 40).map(r => `
       <button class="tx" type="button" ${r.id ? `data-txid="${esc(r.id)}"` : ''} ${r.tokId ? `data-token-act="${esc(r.tokId)}"` : ''}>
         <div class="dir">${r.dir === 'in' ? '↓' : '↑'}</div>
         <div class="meta">
@@ -1656,6 +1806,17 @@ async function tickLive(full) {
       haptic();
       $('card-bal')?.classList.add('flash-up');
       setTimeout(() => $('card-bal')?.classList.remove('flash-up'), 1200);
+      pushTokenActivity({
+        dir: 'in', tick: 'KAS', protocol: 'kas',
+        amount: String(delta), decimals: 8, label: 'Received'
+      });
+      setLiveFast(true);
+      fetchWalletTxs(addr).then(txs => {
+        if (!wallet || wallet.address !== addr) return;
+        window.__txs = txs;
+        rememberActiveSnap();
+        if (currentTab === 'activity') renderActivity(txs);
+      }).catch(() => {});
       if (receiveWatch) {
         const el = $('recv-status');
         if (el) el.textContent = `Received ${formatAmount(delta)} KAS`;
@@ -1668,6 +1829,7 @@ async function tickLive(full) {
       if (currentTab === 'home' || currentTab === 'tokens') renderHome();
       if (currentTab === 'tokens') renderTokens();
       if (currentTab === 'you') renderProfile();
+      if (currentTab === 'activity') renderActivity(window.__txs || []);
     }
     const recvBal = $('recv-balance');
     if (recvBal) recvBal.textContent = `${formatAmount(balanceSompi)} KAS`;
@@ -1686,6 +1848,7 @@ async function tickLive(full) {
         if (tRes.ok) {
           const txs = await tRes.json();
           window.__txs = Array.isArray(txs) ? txs : (txs.transactions || []);
+          rememberActiveSnap();
           if (currentTab === 'activity') renderActivity(window.__txs);
         }
         if (currentTab === 'you') renderProfile();
@@ -1698,8 +1861,8 @@ async function tickLive(full) {
       lastAutoSweep = now;
       maybeAutoUnlock();
     }
-    if (full || now - lastAllSnap > 10000) {
-      refreshAllWalletSnaps({ tokens: now - lastAllTokenSnap > 22000 }).catch(() => {});
+    if (full || now - lastAllSnap > 5000) {
+      refreshAllWalletSnaps({ tokens: now - lastAllTokenSnap > 12000 }).catch(() => {});
     }
   } catch (e) {
     console.warn(e);
@@ -2229,6 +2392,7 @@ function bindSendAssetPicker() {
 function openSend(prefill) {
   haptic();
   const dest0 = prefill?.destination || '';
+  const owned = dest0 ? loadWalletList().find(w => w.address === dest0) : null;
   const amt0 = prefill?.amountKas || prefill?.amount || '';
   const prefKey = prefill?.assetKey || (prefill?.token
     ? `${prefill.token.protocol}:${prefill.token.ticker}`
@@ -2245,7 +2409,7 @@ function openSend(prefill) {
         <span class="asset-opt-bal">${esc(assetAvail(a))}</span>
       </button>`;
   }).join('');
-  openSheet('Send', `
+  openSheet(owned ? ('Send to ' + (owned.name || 'wallet')) : 'Send', `
     <div class="field"><label>Asset</label>
       <input type="hidden" id="send-asset" value="${esc(chosen.key)}">
       <button class="asset-pick" id="send-asset-btn" type="button">
@@ -2335,6 +2499,16 @@ async function broadcastSend(dest, amount) {
     const availableUtxos = await fetchAddressUtxos(wallet.address);
     if (!availableUtxos.length) { toast('No UTXOs yet — receive KAS first'); return; }
     const result = await sendKas({ wallet, dest, amountKas: amount, utxos: availableUtxos });
+    pushTokenActivity({
+      dir: 'out', tick: 'KAS', protocol: 'kas',
+      amount: String(Math.round(Number(result.amountKas || amount) * 1e8)),
+      decimals: 8, txId: result.txId || '', label: 'Sent'
+    });
+    noteOwnedInbound(dest, {
+      tick: 'KAS', protocol: 'kas',
+      amount: String(Math.round(Number(result.amountKas || amount) * 1e8)),
+      decimals: 8, txId: result.txId || '', label: 'Received'
+    });
     afterTx();
     closeSheet();
     toast('Sent');
@@ -2373,6 +2547,14 @@ async function broadcastTokenSend(dest, asset, human, raw) {
       decimals: asset.decimals,
       txId: result.revealId || result.txId || '',
       label: 'Sent'
+    });
+    noteOwnedInbound(dest, {
+      tick: asset.ticker,
+      protocol: asset.protocol,
+      amount: String(raw),
+      decimals: asset.decimals,
+      txId: result.revealId || result.txId || '',
+      label: 'Received'
     });
     afterTx();
     const id = result.revealId || result.txId;
@@ -2937,11 +3119,26 @@ function bind() {
     if (row?.dataset.tradeTick) openTrade({ tick: row.dataset.tradeTick, side: 'buy' });
   });
   click('btn-copy-addr', async () => { await navigator.clipboard.writeText(wallet.address); toast('Copied'); });
+  click('btn-move-wallet', () => openMoveToOwned());
   click('card-wallet', openWalletSwitcher);
   $('home-wallets')?.addEventListener('click', e => {
     if (e.target.closest('[data-add-wallet]')) { openWalletSwitcher(); return; }
+    const sendTo = e.target.closest('[data-send-to]');
+    if (sendTo?.dataset.sendTo) {
+      e.preventDefault();
+      e.stopPropagation();
+      openSendToWallet(sendTo.dataset.sendTo);
+      return;
+    }
     const btn = e.target.closest('[data-switch-wallet]');
     if (btn?.dataset.switchWallet) switchToWallet(btn.dataset.switchWallet);
+  });
+  $('act-scope')?.addEventListener('click', e => {
+    const b = e.target.closest('[data-actscope]');
+    if (!b?.dataset.actscope) return;
+    activityAll = b.dataset.actscope === 'all';
+    haptic();
+    renderActivity(window.__txs || []);
   });
   click('btn-refresh', () => { haptic(); refreshAll(); toast('Refreshing'); });
   $('btn-compound')?.addEventListener('click', openCompound);

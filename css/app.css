@@ -252,8 +252,8 @@ img { display: block; max-width: 100%; }
 .wallet-switch::-webkit-scrollbar { display: none; }
 .w-chip {
   flex-shrink: 0;
-  display: flex; flex-direction: column; align-items: flex-start; gap: 2px;
-  padding: 10px 14px; min-width: 118px;
+  display: flex; align-items: center; gap: 4px;
+  padding: 8px 10px 8px 12px; min-width: 118px;
   border-radius: 14px;
   background: var(--glass-2);
   border: 0.5px solid var(--hairline);
@@ -263,13 +263,24 @@ img { display: block; max-width: 100%; }
   border-color: var(--gold);
   background: rgba(212,176,122,0.16);
 }
-.w-chip b { font-size: 13px; font-weight: 650; max-width: 140px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.w-chip em { font-style: normal; font-size: 11px; color: var(--label-2); font-variant-numeric: tabular-nums; }
+.w-chip-main {
+  display: flex; align-items: center; gap: 8px;
+  background: none; border: 0; padding: 0; color: inherit; text-align: left; min-width: 0;
+}
+.w-kas { width: 18px; height: 18px; border-radius: 50%; flex-shrink: 0; background: #111; }
+.w-chip b { display: block; font-size: 13px; font-weight: 650; max-width: 110px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.w-chip em { display: block; font-style: normal; font-size: 11px; color: var(--label-2); font-variant-numeric: tabular-nums; }
+.w-send {
+  flex-shrink: 0; width: 28px; height: 28px; border-radius: 8px;
+  background: rgba(212,176,122,0.18); color: var(--gold-2);
+  font-size: 14px; font-weight: 700; line-height: 1;
+}
 .w-chip.add {
   align-items: center; justify-content: center;
   min-width: 48px; padding: 10px 12px;
   color: var(--gold-2); font-size: 20px; font-weight: 600;
 }
+.card-foot-btns { display: flex; gap: 12px; flex-shrink: 0; }
 .pk-mask {
   width: 100%; padding: 14px 16px; border-radius: 14px;
   background: rgba(0,0,0,0.35);
@@ -379,9 +390,11 @@ img { display: block; max-width: 100%; }
 #page-home.home-fit .card-foot { margin-top: 8px; font-size: 11px; }
 #page-home.home-fit .card-chip { width: 28px; height: 20px; }
 #page-home.home-fit .wallet-switch { margin: 0 0 8px; padding: 0; }
-#page-home.home-fit .w-chip { padding: 6px 10px; min-width: 86px; border-radius: 12px; }
+#page-home.home-fit .w-chip { padding: 6px 8px 6px 10px; min-width: 96px; border-radius: 12px; }
 #page-home.home-fit .w-chip b { font-size: 12px; }
 #page-home.home-fit .w-chip em { font-size: 10px; }
+#page-home.home-fit .w-kas { width: 16px; height: 16px; }
+#page-home.home-fit .w-send { width: 24px; height: 24px; font-size: 12px; }
 #page-home.home-fit .w-chip.add { min-width: 40px; padding: 6px 10px; font-size: 18px; }
 #page-home.home-fit .actions { margin-bottom: 6px; gap: 4px; }
 #page-home.home-fit .action { padding: 2px 2px 4px; gap: 4px; }

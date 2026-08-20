@@ -12,7 +12,7 @@
   <link rel="icon" href="assets/icon.png">
   <title>KCC20 Wallet</title>
   <meta http-equiv="Cache-Control" content="no-store, no-cache, must-revalidate">
-  <link rel="stylesheet" href="css/app.css?v=57">
+  <link rel="stylesheet" href="css/app.css?v=58">
 </head>
 <body>
   <img class="bg-poster" src="assets/bg.jpg" alt="">
@@ -73,7 +73,10 @@
             <div class="card-usd" id="card-usd">≈ $0.00</div>
             <div class="card-foot">
               <span id="card-addr">kaspa:…</span>
-              <button id="btn-copy-addr" style="color:var(--gold-2);font-weight:600;">Copy</button>
+              <span class="card-foot-btns">
+                <button id="btn-move-wallet" type="button" style="color:var(--gold-2);font-weight:600;">Move</button>
+                <button id="btn-copy-addr" type="button" style="color:var(--gold-2);font-weight:600;">Copy</button>
+              </span>
             </div>
           </div>
           <div class="wallet-switch" id="home-wallets"></div>
@@ -152,6 +155,10 @@
 
         <!-- ACTIVITY -->
         <section class="page" id="page-activity">
+          <div class="seg hidden" id="act-scope">
+            <button class="on" data-actscope="this" type="button">This wallet</button>
+            <button data-actscope="all" type="button">All wallets</button>
+          </div>
           <div class="scorpion-banner glass" id="scorpion-hint">
             <span class="scorp-mark">🦂</span>
             <div>
@@ -348,7 +355,7 @@
     })();
   </script>
   <script type="module">
-    import('./js/app.js?v=57').catch(function (err) {
+    import('./js/app.js?v=58').catch(function (err) {
       console.error(err);
       var phone = document.getElementById('phone');
       var d = document.createElement('div');

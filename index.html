@@ -12,7 +12,7 @@
   <link rel="icon" href="assets/icon.png">
   <title>KCC20 Wallet</title>
   <meta http-equiv="Cache-Control" content="no-store, no-cache, must-revalidate">
-  <link rel="stylesheet" href="css/app.css?v=44">
+  <link rel="stylesheet" href="css/app.css?v=45">
 </head>
 <body>
   <img class="bg-poster" src="assets/bg.jpg" alt="">
@@ -83,6 +83,10 @@
             <button class="action" id="btn-vault-short"><div class="orb"><svg viewBox="0 0 24 24" fill="none" stroke="var(--gold-2)" stroke-width="1.8"><rect x="5" y="11" width="14" height="10" rx="2"/><path d="M8 11V8a4 4 0 018 0v3"/></svg></div><span>Vault</span></button>
             <button class="action" id="btn-refresh"><div class="orb"><svg viewBox="0 0 24 24" fill="none" stroke="var(--gold-2)" stroke-width="1.8"><path d="M21 12a9 9 0 11-3-6.7"/><path d="M21 4v6h-6"/></svg></div><span>Refresh</span></button>
           </div>
+          <button class="glass utxo-bar" id="btn-trade" type="button">
+            <span>Buy KRON</span>
+            <span class="utxo-go">Trade</span>
+          </button>
           <button class="glass utxo-bar" id="btn-compound" type="button">
             <span id="utxo-count">0 UTXOs</span>
             <span class="utxo-go">Compound</span>
@@ -93,6 +97,12 @@
 
         <!-- TOKENS -->
         <section class="page" id="page-tokens">
+          <div class="section-label">KRON DEX</div>
+          <button class="glass utxo-bar" id="btn-trade-tokens" type="button">
+            <span>Buy &amp; sell KCC20</span>
+            <span class="utxo-go">Trade</span>
+          </button>
+          <div class="glass list" id="kron-markets"></div>
           <div class="section-label">Native</div>
           <div class="glass list" id="token-native"></div>
           <div class="section-label">KCC20 · KRON</div>
@@ -307,7 +317,7 @@
     })();
   </script>
   <script type="module">
-    import('./js/app.js?v=44').catch(function (err) {
+    import('./js/app.js?v=45').catch(function (err) {
       console.error(err);
       var phone = document.getElementById('phone');
       var d = document.createElement('div');

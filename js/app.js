@@ -16,6 +16,7 @@ import {
   pingPublicNode, sweepVault, toRpcTransaction, p2shSpendScript, planKasPayment, storageMassOk,
   compoundUtxos, sendKrc20, sendKcc20, loadKrc20Pending
 } from './tx.js';
+import { kronMarkets, quoteKronTrade, executeKronTrade, formatKasSompi } from './kronTrade.js';
 
 function errText(e) {
   if (e == null) return 'Unknown error';
@@ -197,6 +198,9 @@ function showPage(id) {
   if (id === 'you') {
     try { renderProfile(); } catch (e) { console.error(e); }
     refreshAllWalletSnaps({ tokens: true }).catch(() => {});
+  }
+  if (id === 'tokens') {
+    try { renderKronMarkets(); } catch (e) { console.error(e); }
   }
   if (id === 'activity') {
     try { renderActivity(window.__txs || []); } catch (e) { console.error(e); }
@@ -1447,6 +1451,10 @@ function openTokenSheet(token) {
     ${token.cells ? `<div class="kv"><span class="k">Cells</span><span class="v">${esc(token.cells)}</span></div>` : ''}
     ${token.tokenId && token.protocol === 'kcc20' ? `<div class="kv"><span class="k">Token ID</span><span class="v">${esc(token.tokenId)}</span></div>` : ''}
     <p class="muted" style="text-align:left;padding-top:8px;">Live from kascov.io (KRON / KCC20, CORS open). Same holdings KasWare shows for this address.</p>
+    ${token.protocol === 'kcc20' ? `<div class="btn-row" style="margin-top:10px;">
+      <button class="btn btn-gold" id="tk-buy" type="button">Buy</button>
+      <button class="btn btn-glass" id="tk-sell" type="button">Sell</button>
+    </div>` : ''}
     <p class="muted"><a href="${esc(link)}" target="_blank" rel="noopener" style="color:var(--gold-2)">Open explorer</a></p>
   `, {
     confirm: 'Send ' + token.ticker,
@@ -1454,6 +1462,195 @@ function openTokenSheet(token) {
     cancelLabel: 'Close',
     onConfirm: () => openSend({ token, assetKey: `${token.protocol}:${token.ticker}` })
   });
+  $('tk-buy')?.addEventListener('click', () => { closeSheet(); openTrade({ tick: token.ticker, side: 'buy' }); });
+  $('tk-sell')?.addEventListener('click', () => { closeSheet(); openTrade({ tick: token.ticker, side: 'sell' }); });
+}
+
+async function renderKronMarkets() {
+  const box = $('kron-markets');
+  if (!box) return;
+  if (!box.dataset.loaded) box.innerHTML = `<div class="empty">Loading KRON markets…</div>`;
+  try {
+    const rows = (await kronMarkets()).slice(0, 12);
+    box.dataset.loaded = '1';
+    box.innerHTML = rows.map(m => {
+      const chg = Number(m.change24h || 0);
+      const chgCls = chg > 0 ? 'up' : (chg < 0 ? 'down' : '');
+      const chgTxt = (chg > 0 ? '+' : '') + (chg * 100).toFixed(1) + '%';
+      const px = m.price ? Number(m.price).toPrecision(4) + ' KAS' : (m.graduated ? 'Pool' : 'Curve');
+      return `
+        <button class="row token-row" type="button" data-trade-tick="${esc(m.tick)}">
+          <div class="dot" style="background:rgba(212,176,122,.16);color:var(--gold-2)">${m.logo ? `<img alt="" src="${esc(m.logo)}" data-tick="${esc(m.tick)}" data-fb="${esc(m.tick.slice(0, 3))}">` : esc(m.tick.slice(0, 3))}</div>
+          <div>
+            <div class="title">${esc(m.tick)}</div>
+            <div class="sub">${esc(m.graduated ? 'Pool' : 'Curve')} · ${esc(m.name)}</div>
+          </div>
+          <div class="amt">
+            <b>${esc(px)}</b>
+            <em class="mkt-chg ${chgCls}">${esc(chgTxt)}</em>
+          </div>
+        </button>`;
+    }).join('') || `<div class="empty">KRON markets unavailable.</div>`;
+  } catch (e) {
+    box.innerHTML = `<div class="empty">${esc(errText(e))}</div>`;
+  }
+}
+
+function openTrade(prefill = {}) {
+  haptic();
+  const tick0 = String(prefill.tick || 'KRON').toUpperCase();
+  const side0 = prefill.side === 'sell' ? 'sell' : 'buy';
+  openSheet('Trade on KRON', `<div class="spinner"></div><p class="muted">Loading markets…</p>`, { confirm: 'Close', cancel: false });
+  kronMarkets().then(markets => {
+    const ticks = markets.length ? markets : [{ tick: 'KRON', name: 'Kron Token', graduated: true, price: 0 }];
+    const chosen = ticks.find(t => t.tick === tick0) || ticks[0];
+    const opts = ticks.slice(0, 24).map(m =>
+      `<button class="asset-opt${m.tick === chosen.tick ? ' on' : ''}" type="button" data-trade-pick="${esc(m.tick)}">
+        <span class="asset-opt-tick">${esc(m.tick)}</span>
+        <span class="asset-opt-proto">${esc(m.graduated ? 'Pool' : 'Curve')}</span>
+        <span class="asset-opt-bal">${m.price ? Number(m.price).toPrecision(4) : '—'}</span>
+      </button>`
+    ).join('');
+    openSheet('Trade on KRON', `
+      <div class="seg" id="trade-side">
+        <button class="${side0 === 'buy' ? 'on' : ''}" data-side="buy" type="button">Buy</button>
+        <button class="${side0 === 'sell' ? 'on' : ''}" data-side="sell" type="button">Sell</button>
+      </div>
+      <div class="field"><label>Token</label>
+        <input type="hidden" id="trade-tick" value="${esc(chosen.tick)}">
+        <button class="asset-pick" id="trade-tick-btn" type="button">
+          <span><b id="trade-tick-name">${esc(chosen.tick)}</b><small id="trade-tick-meta">${esc(chosen.graduated ? 'Locked AMM pool' : 'Bonding curve')}</small></span>
+          <span class="chev">›</span>
+        </button>
+        <div class="asset-pick-list hidden" id="trade-tick-list">${opts}</div>
+      </div>
+      <div class="field"><label id="trade-amt-label">${side0 === 'sell' ? 'Amount (' + chosen.tick + ')' : 'Pay (KAS)'}</label>
+        <input id="trade-amount" type="text" inputmode="decimal" placeholder="${side0 === 'sell' ? '100' : '5'}" value="${esc(prefill.amount || '')}">
+      </div>
+      <div class="trade-quote" id="trade-quote"><p class="muted" style="text-align:left;padding:0;">KRON SDK quotes a live pool or curve. Expect ~1 KAS of fixed cost (fees + 0.5 KAS cell + network) on top of the trade.</p></div>
+    `, {
+      confirm: 'Review swap',
+      gold: true,
+      onConfirm: () => reviewTrade()
+    });
+    const btn = $('trade-tick-btn');
+    const list = $('trade-tick-list');
+    btn?.addEventListener('click', () => list?.classList.toggle('hidden'));
+    list?.addEventListener('click', e => {
+      const row = e.target.closest('[data-trade-pick]');
+      if (!row) return;
+      const m = ticks.find(t => t.tick === row.dataset.tradePick);
+      if (!m) return;
+      $('trade-tick').value = m.tick;
+      $('trade-tick-name').textContent = m.tick;
+      $('trade-tick-meta').textContent = m.graduated ? 'Locked AMM pool' : 'Bonding curve';
+      list.classList.add('hidden');
+      syncTradeLabel();
+      quoteTradePreview();
+    });
+    $('trade-side')?.addEventListener('click', e => {
+      const b = e.target.closest('[data-side]');
+      if (!b) return;
+      $('trade-side').querySelectorAll('button').forEach(x => x.classList.toggle('on', x === b));
+      syncTradeLabel();
+      quoteTradePreview();
+    });
+    $('trade-amount')?.addEventListener('input', () => {
+      clearTimeout(openTrade._t);
+      openTrade._t = setTimeout(quoteTradePreview, 280);
+    });
+    if (prefill.amount) quoteTradePreview();
+  }).catch(e => {
+    setSheetStatus(errText(e), true);
+    toast(errText(e));
+  });
+}
+
+function syncTradeLabel() {
+  const side = $('trade-side')?.querySelector('.on')?.dataset.side || 'buy';
+  const tick = $('trade-tick')?.value || 'KRON';
+  const lab = $('trade-amt-label');
+  if (lab) lab.textContent = side === 'sell' ? `Amount (${tick})` : 'Pay (KAS)';
+}
+
+async function quoteTradePreview() {
+  const box = $('trade-quote');
+  const amount = $('trade-amount')?.value.trim();
+  const tick = $('trade-tick')?.value || 'KRON';
+  const side = $('trade-side')?.querySelector('.on')?.dataset.side || 'buy';
+  if (!box || !amount) return;
+  box.innerHTML = `<p class="muted" style="text-align:left;padding:0;">Quoting…</p>`;
+  try {
+    const q = await quoteKronTrade({ tick, side, amount });
+    if (q.side === 'buy') {
+      box.innerHTML = `
+        <div class="kv"><span class="k">You pay</span><span class="v">${esc(formatKasSompi(q.kasIn))} KAS</span></div>
+        <div class="kv"><span class="k">You get</span><span class="v">${esc(formatTokenUnits(q.tokenOut, q.decimals))} ${esc(q.tick)}</span></div>
+        <div class="kv"><span class="k">Protocol fees</span><span class="v">${esc(formatKasSompi(q.fee))} KAS</span></div>
+        <p class="muted" style="text-align:left;padding:8px 0 0;">Plus ~0.5 KAS cell dust and a network fee (~0.3–0.4 KAS). Built with the KRON SDK.</p>`;
+    } else {
+      box.innerHTML = `
+        <div class="kv"><span class="k">You sell</span><span class="v">${esc(formatTokenUnits(q.tokenIn, q.decimals))} ${esc(q.tick)}</span></div>
+        <div class="kv"><span class="k">You receive</span><span class="v">${esc(formatKasSompi(q.net))} KAS</span></div>
+        <div class="kv"><span class="k">Protocol fees</span><span class="v">${esc(formatKasSompi(q.fee))} KAS</span></div>
+        <p class="muted" style="text-align:left;padding:8px 0 0;">Network fee is extra. Small sells can fail if padded fees exceed proceeds.</p>`;
+    }
+  } catch (e) {
+    box.innerHTML = `<p class="muted" style="text-align:left;padding:0;color:var(--red);">${esc(errText(e))}</p>`;
+  }
+}
+
+async function reviewTrade() {
+  const amount = $('trade-amount')?.value.trim();
+  const tick = $('trade-tick')?.value || 'KRON';
+  const side = $('trade-side')?.querySelector('.on')?.dataset.side || 'buy';
+  if (!amount) { toast('Enter an amount'); return; }
+  setSheetStatus('Quoting…');
+  let q;
+  try { q = await quoteKronTrade({ tick, side, amount }); }
+  catch (e) { setSheetStatus(errText(e), true); toast(errText(e)); return; }
+  const lines = q.side === 'buy'
+    ? `<div class="kv"><span class="k">Pay</span><span class="v">${esc(formatKasSompi(q.kasIn))} KAS</span></div>
+       <div class="kv"><span class="k">Receive</span><span class="v">${esc(formatTokenUnits(q.tokenOut, q.decimals))} ${esc(q.tick)}</span></div>`
+    : `<div class="kv"><span class="k">Sell</span><span class="v">${esc(formatTokenUnits(q.tokenIn, q.decimals))} ${esc(q.tick)}</span></div>
+       <div class="kv"><span class="k">Receive</span><span class="v">${esc(formatKasSompi(q.net))} KAS</span></div>`;
+  openSheet('Review KRON swap', `
+    <div class="kv"><span class="k">Market</span><span class="v">${esc(q.tick)} · ${esc(q.graduated ? 'Pool' : 'Curve')}</span></div>
+    ${lines}
+    <div class="kv"><span class="k">Protocol fees</span><span class="v">${esc(formatKasSompi(q.fee))} KAS</span></div>
+    <p class="muted" style="text-align:left;padding-top:8px;">Signed in this wallet with the KRON SDK. KRON never holds your key. Keep extra native KAS here for the 0.5 KAS cell and network fee.</p>
+  `, {
+    confirm: 'Swap now',
+    gold: true,
+    onConfirm: () => runTrade({ tick, side, amount, quote: q })
+  });
+}
+
+async function runTrade({ tick, side, amount }) {
+  toast('Building KRON swap…');
+  try {
+    await loadKaspaSdk();
+    const utxosNow = await fetchAddressUtxos(wallet.address);
+    const result = await executeKronTrade({
+      wallet,
+      tick,
+      side,
+      amount,
+      utxos: utxosNow,
+      onStatus: (m) => { toast(m); setSheetStatus(m); }
+    });
+    setLiveFast(true);
+    setTimeout(() => setLiveFast(false), 30000);
+    openSheet('Swap sent', `
+      <div class="kv"><span class="k">Market</span><span class="v">${esc(tick)}</span></div>
+      <div class="kv"><span class="k">Side</span><span class="v">${esc(side)}</span></div>
+      <div class="kv"><span class="k">Network fee</span><span class="v">${esc(formatKasSompi(result.fee))} KAS</span></div>
+      ${txidBlock(result.txId)}
+    `, { confirm: 'Done', cancel: false, onConfirm: () => { closeSheet(); refreshAll(); } });
+  } catch (e) {
+    toast(errText(e));
+    setSheetStatus(errText(e), true);
+  }
 }
 
 function openCompound() {
@@ -2207,6 +2404,12 @@ function bind() {
   click('btn-import', importWallet);
   click('btn-send', openSend);
   click('btn-receive', openReceive);
+  click('btn-trade', () => openTrade({ tick: 'KRON', side: 'buy' }));
+  click('btn-trade-tokens', () => openTrade({ tick: 'KRON', side: 'buy' }));
+  $('kron-markets')?.addEventListener('click', e => {
+    const row = e.target.closest('[data-trade-tick]');
+    if (row?.dataset.tradeTick) openTrade({ tick: row.dataset.tradeTick, side: 'buy' });
+  });
   click('btn-copy-addr', async () => { await navigator.clipboard.writeText(wallet.address); toast('Copied'); });
   click('card-wallet', openWalletSwitcher);
   $('home-wallets')?.addEventListener('click', e => {
@@ -2258,7 +2461,7 @@ function bind() {
     haptic();
     const tab = t.dataset.tab;
     showPage(tab);
-    if (tab === 'tokens') renderTokens();
+    if (tab === 'tokens') { renderTokens(); renderKronMarkets(); }
     if (tab === 'vault') renderVault();
     if (tab === 'activity') renderActivity(window.__txs || []);
     if (tab === 'you') renderProfile();

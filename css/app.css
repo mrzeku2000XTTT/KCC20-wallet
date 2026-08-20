@@ -473,6 +473,49 @@ img { display: block; max-width: 100%; }
 .btn-row .btn { flex: 1; }
 .btn:disabled { opacity: 0.4; }
 
+.tk-hero { text-align: center; padding: 2px 0 6px; }
+.tk-hero-logo {
+  width: 72px; height: 72px; border-radius: 22px; object-fit: cover;
+  margin: 0 auto 12px; background: rgba(255,255,255,0.06);
+}
+.tk-hero-logo.kas {
+  background: #0b2a26 url("../assets/kas.svg") center / 70% no-repeat;
+}
+.tk-hero .tk-amt {
+  font-size: 28px; font-weight: 700; letter-spacing: -0.7px; line-height: 1.15;
+  font-variant-numeric: tabular-nums;
+}
+.tk-hero .tk-amt small { font-size: 15px; font-weight: 600; opacity: 0.55; margin-left: 6px; }
+.tk-hero .tk-meta { margin-top: 6px; font-size: 13px; color: var(--label-2); }
+.tk-actions {
+  display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px;
+  margin: 16px 0 8px;
+}
+.tk-actions.tk-2 { grid-template-columns: repeat(2, 1fr); }
+.tk-act {
+  display: flex; flex-direction: column; align-items: center; gap: 7px;
+  padding: 12px 4px 10px; border-radius: 16px;
+  background: rgba(255,255,255,0.06);
+  border: 0.5px solid var(--hairline);
+  min-width: 0;
+}
+.tk-act:active { transform: scale(0.96); opacity: 0.88; }
+.tk-act-orb {
+  width: 44px; height: 44px; border-radius: 50%;
+  display: grid; place-items: center;
+  background: rgba(212,176,122,0.18);
+  color: var(--gold-2);
+}
+.tk-act-orb svg { width: 20px; height: 20px; }
+.tk-act span:last-child {
+  font-size: 11px; font-weight: 650; letter-spacing: 0.02em;
+  color: var(--label); white-space: nowrap;
+}
+.tk-act.tk-sell .tk-act-orb { background: rgba(255,69,58,0.16); color: #ff8a82; }
+.tk-act.tk-buy .tk-act-orb { background: rgba(48,209,88,0.16); color: #49eacb; }
+.tk-more { margin-top: 4px; }
+.tk-more svg { width: 18px; height: 18px; }
+
 .field { margin-bottom: 14px; }
 .field label {
   display: block; font-size: 13px; color: var(--label-2); font-weight: 500; margin-bottom: 6px;

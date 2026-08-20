@@ -1,30 +1,30 @@
 import {
   loadCryptoLibs, generatePrivateKey, createKeypairFromHex,
   isValidKaspaAddress, shortAddr, hexToBytes, privKeyToHex, derivePublicKey, kaspaAddressFromPubkey, bytesToHex
-} from './crypto.js?v=65';
+} from './crypto.js?v=66';
 import {
   NATIVE_KAS, VAULT_PRODUCTS, loadWatchlist, addToken, removeToken,
   loadVaults, saveVault, updateVault, formatAmount, formatTokenUnits, tokenColor,
   fetchKcc20Portfolio, fetchKrc20Portfolio, fetchKcc20PortfolioMany, fetchKrc20PortfolioMany,
   krc20Logo, toTokenRaw, setVaultOwner, kcc20Identicon
-} from './kcc20.js?v=65';
-import { parseIntent, describeIntent, askFor, parseDurationField, interpretVaultChat, normalizeChat } from './intent.js?v=65';
-import { payloadFromAddress } from './script.js?v=65';
-import { explainTransaction, scorpionAnswer } from './scorpion.js?v=65';
+} from './kcc20.js?v=66';
+import { parseIntent, describeIntent, askFor, parseDurationField, interpretVaultChat, normalizeChat } from './intent.js?v=66';
+import { payloadFromAddress } from './script.js?v=66';
+import { explainTransaction, scorpionAnswer } from './scorpion.js?v=66';
 import {
   sendKas, fetchAddressUtxos, fetchAddressBalance, loadKaspaSdk,
   buildTimelockCovenant, buildEscrowCovenant, buildMultisigCovenant, currentDaa,
   pingPublicNode, sweepVault, toRpcTransaction, p2shSpendScript, planKasPayment, storageMassOk,
   compoundUtxos, sendKrc20, sendKcc20, loadKrc20Pending, lockKcc20Timelock, sweepKcc20Capsule,
   fetchOwnedUtxos
-} from './tx.js?v=65';
-import { kronMarkets, quoteKronTrade, executeKronTrade, formatKasSompi, lookupKronTick, tradeCostLines, attachKronLogos } from './kronTrade.js?v=65';
+} from './tx.js?v=66';
+import { kronMarkets, quoteKronTrade, executeKronTrade, formatKasSompi, lookupKronTick, tradeCostLines, attachKronLogos } from './kronTrade.js?v=66';
 import {
   migrateReceiveBook, ownedAddresses, deriveFreshReceiveAddress, ensureFreshReceive,
   markAddressUsed, currentReceive
-} from './receive.js?v=65';
+} from './receive.js?v=66';
 
-export const BUILD = '65';
+export const BUILD = '66';
 
 function errText(e) {
   if (e == null) return 'Unknown error';
@@ -1974,25 +1974,32 @@ function holdingForTick(tick) {
     || null;
 }
 
+function tkAct(id, label, svg, extra = '') {
+  return `<button class="tk-act${extra}" id="${id}" type="button">
+    <span class="tk-act-orb">${svg}</span>
+    <span>${label}</span>
+  </button>`;
+}
+
+const ICO_RECV = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9"><path d="M12 5v14M5 12l7 7 7-7"/></svg>';
+const ICO_SEND = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9"><path d="M12 19V5M5 12l7-7 7 7"/></svg>';
+const ICO_BUY = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9"><path d="M12 5v14M5 12h14"/></svg>';
+const ICO_SELL = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9"><path d="M5 12h14"/></svg>';
+const ICO_LOCK = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="5" y="11" width="14" height="10" rx="2"/><path d="M8 11V8a4 4 0 018 0v3"/></svg>';
+
 function openKasSheet() {
   haptic();
-  const kasAsset = { native: true, protocol: 'kas', ticker: 'KAS', decimals: 8, balance: String(balanceSompi) };
-  const maxSend = maxFillForAsset(kasAsset);
   openSheet('Kaspa', `
-    <div style="display:flex;justify-content:center;padding:8px 0 14px;"><img src="assets/kas.svg" alt="" style="width:56px;height:56px;border-radius:16px;object-fit:cover;"></div>
-    <div class="kv"><span class="k">Balance</span><span class="v">${esc(formatAmount(balanceSompi))} KAS</span></div>
-    <div class="kv"><span class="k">Sendable max</span><span class="v">${esc(maxSend)} KAS</span></div>
-    <p class="muted" style="text-align:left;padding-top:8px;">Max leaves ~0.008 KAS for the network fee. Send any part of it, or tap Send max.</p>
-    <div class="btn-row" style="margin-top:10px;">
-      <button class="btn btn-gold" id="tk-recv" type="button">Receive</button>
-      <button class="btn btn-glass" id="tk-send" type="button">Send</button>
+    <div class="tk-hero">
+      <div class="tk-hero-logo kas" aria-hidden="true"></div>
+      <div class="tk-amt">${esc(formatAmount(balanceSompi))}<small>KAS</small></div>
+      <div class="tk-meta">${price ? '≈ ' + usd(kas()) : 'Native KAS'}</div>
     </div>
-  `, {
-    confirm: 'Send max',
-    gold: true,
-    cancelLabel: 'Close',
-    onConfirm: () => openSend({ assetKey: 'kas', amount: maxSend })
-  });
+    <div class="tk-actions tk-2">
+      ${tkAct('tk-recv', 'Receive', ICO_RECV)}
+      ${tkAct('tk-send', 'Send', ICO_SEND)}
+    </div>
+  `, { confirm: false, cancelLabel: 'Close' });
   $('tk-recv')?.addEventListener('click', () => { closeSheet(); openReceive(); });
   $('tk-send')?.addEventListener('click', () => { closeSheet(); openSend({ assetKey: 'kas' }); });
 }
@@ -2002,40 +2009,35 @@ function openTokenSheet(token) {
   haptic();
   const proto = token.protocol === 'krc20' ? 'KRC-20' : 'KCC20';
   const amt = formatTokenUnits(token.balance, token.decimals);
-  const maxSend = maxFillForAsset(token);
   const link = token.protocol === 'krc20'
     ? explorerAddr(wallet?.address || '')
     : (token.tokenId ? `https://kascov.io/#/mainnet/token/${encodeURIComponent(token.tokenId)}` : 'https://kascov.io/#/tokens');
   const logoSrc = token.image || (token.native ? 'assets/kas.svg' : (token.protocol === 'krc20' ? krc20Logo(token.ticker) : kcc20Identicon(token.ticker)));
   const assetKey = `${token.protocol}:${token.ticker}`;
+  const kcc = token.protocol === 'kcc20';
+  const acts = [
+    tkAct('tk-recv', 'Receive', ICO_RECV),
+    tkAct('tk-send', 'Send', ICO_SEND),
+    ...(kcc ? [
+      tkAct('tk-buy', 'Buy', ICO_BUY, ' tk-buy'),
+      tkAct('tk-sell', 'Sell', ICO_SELL, ' tk-sell')
+    ] : [])
+  ].join('');
   openSheet(token.ticker, `
-    ${logoSrc ? `<div style="display:flex;justify-content:center;padding:8px 0 14px;"><img src="${esc(logoSrc)}" alt="" data-tick="${esc(token.ticker || '')}" data-proto="${esc(token.protocol || '')}" data-fb="${esc((token.ticker || '?').slice(0, 3))}" referrerpolicy="no-referrer" decoding="async" style="width:56px;height:56px;border-radius:16px;object-fit:cover;"></div>` : ''}
-    <div class="kv"><span class="k">Balance</span><span class="v">${esc(amt)} ${esc(token.ticker)}</span></div>
-    <div class="kv"><span class="k">Sendable max</span><span class="v">${esc(maxSend)} ${esc(token.ticker)}</span></div>
-    <div class="kv"><span class="k">Name</span><span class="v">${esc(token.name)}</span></div>
-    <div class="kv"><span class="k">Standard</span><span class="v">${esc(proto)}${token.standard ? ' · ' + esc(token.standard) : ''}</span></div>
-    ${token.cells ? `<div class="kv"><span class="k">Cells</span><span class="v">${esc(token.cells)}</span></div>` : ''}
-    ${token.tokenId && token.protocol === 'kcc20' ? `<div class="kv"><span class="k">Token ID</span><span class="v">${esc(token.tokenId)}</span></div>` : ''}
-    <p class="muted" style="text-align:left;padding-top:8px;">${esc(proto)} in this wallet. Send max fills the full balance. Sell max is the same number on KRON.</p>
-    <div class="btn-row" style="margin-top:10px;">
-      <button class="btn btn-gold" id="tk-recv" type="button">Receive</button>
-      <button class="btn btn-glass" id="tk-send" type="button">Send</button>
-      ${token.protocol === 'kcc20' ? `<button class="btn btn-glass" id="tk-buy" type="button">Buy</button>
-      <button class="btn btn-glass" id="tk-sell" type="button">Sell max</button>
-      <button class="btn btn-glass" id="tk-freeze" type="button">Freeze</button>` : ''}
+    <div class="tk-hero">
+      <img class="tk-hero-logo" src="${esc(logoSrc)}" alt="" data-tick="${esc(token.ticker || '')}" data-proto="${esc(token.protocol || '')}" data-fb="${esc((token.ticker || '?').slice(0, 3))}" referrerpolicy="no-referrer" decoding="async">
+      <div class="tk-amt">${esc(amt)}<small>${esc(token.ticker)}</small></div>
+      <div class="tk-meta">${esc(token.name || token.ticker)} · ${esc(proto)}${token.cells ? ' · ' + esc(token.cells) + ' cells' : ''}</div>
     </div>
-    <p class="muted"><a href="${esc(link)}" target="_blank" rel="noopener" style="color:var(--gold-2)">Open explorer</a></p>
-  `, {
-    confirm: 'Send max',
-    gold: true,
-    cancelLabel: 'Close',
-    onConfirm: () => openSend({ token, assetKey, amount: maxSend })
-  });
+    <div class="tk-actions${kcc ? '' : ' tk-2'}">${acts}</div>
+    ${kcc ? `<button class="btn btn-glass tk-more" id="tk-freeze" type="button">${ICO_LOCK} Freeze</button>` : ''}
+    <p class="muted" style="padding-top:12px;"><a href="${esc(link)}" target="_blank" rel="noopener" style="color:var(--gold-2)">Open explorer</a></p>
+  `, { confirm: false, cancelLabel: 'Close' });
   $('tk-recv')?.addEventListener('click', () => { closeSheet(); openReceive({ token }); });
   $('tk-send')?.addEventListener('click', () => { closeSheet(); openSend({ token, assetKey }); });
   $('tk-buy')?.addEventListener('click', () => { closeSheet(); openTrade({ tick: token.ticker, side: 'buy' }); });
-  $('tk-sell')?.addEventListener('click', () => { closeSheet(); openTrade({ tick: token.ticker, side: 'sell', amount: maxSend }); });
-  $('tk-freeze')?.addEventListener('click', () => { closeSheet(); openProduct('kcc20freeze', { tick: token.ticker, amountToken: maxSend }); });
+  $('tk-sell')?.addEventListener('click', () => { closeSheet(); openTrade({ tick: token.ticker, side: 'sell' }); });
+  $('tk-freeze')?.addEventListener('click', () => { closeSheet(); openProduct('kcc20freeze', { tick: token.ticker }); });
 }
 
 async function renderKronMarkets() {
@@ -2089,7 +2091,6 @@ function openTrade(prefill = {}) {
     $('trade-go').onclick = () => reviewTrade();
   }
   syncTradeLabel();
-  if (side0 === 'sell' && !prefill.amount) fillTradeMax();
   lookupTradeTicker();
   loadKaspaSdk().catch(() => {});
   pingPublicNode().catch(() => {});
@@ -2380,16 +2381,17 @@ function setSheetStatus(msg, isErr) {
 function openSheet(title, body, opts = {}) {
   $('sheet-title').textContent = title;
   $('sheet-body').innerHTML = body;
+  const showOk = opts.confirm !== false;
   $('sheet-actions').innerHTML = `
     <p class="muted" id="sheet-status" style="text-align:left;padding:0 0 10px;min-height:1.2em;"></p>
     ${opts.cancel === false ? '' : `<button class="btn btn-glass" id="sheet-cancel">${esc(opts.cancelLabel || 'Cancel')}</button>`}
-    <button class="btn ${opts.danger ? 'btn-danger' : (opts.gold ? 'btn-gold' : 'btn-blue')}" id="sheet-ok">${esc(opts.confirm || 'Confirm')}</button>
+    ${showOk ? `<button class="btn ${opts.danger ? 'btn-danger' : (opts.gold ? 'btn-gold' : 'btn-blue')}" id="sheet-ok">${esc(opts.confirm || 'Confirm')}</button>` : ''}
   `;
-  $('sheet-actions').style.display = opts.cancel === false ? 'block' : 'flex';
+  $('sheet-actions').style.display = opts.cancel === false && !showOk ? 'block' : 'flex';
   $('sheet-actions').style.flexWrap = 'wrap';
   $('sheet-overlay').classList.add('open');
   $('sheet-cancel')?.addEventListener('click', closeSheet);
-  $('sheet-ok').addEventListener('click', async () => {
+  $('sheet-ok')?.addEventListener('click', async () => {
     const btn = $('sheet-ok');
     if (!btn || btn.dataset.busy === '1') return;
     if (typeof opts.onConfirm !== 'function') { closeSheet(); return; }
@@ -3422,8 +3424,7 @@ function bind() {
     $('trade-side').querySelectorAll('button').forEach(x => x.classList.toggle('on', x === b));
     if ($('trade-amount')) $('trade-amount').value = '';
     syncTradeLabel();
-    if (b.dataset.side === 'sell') fillTradeMax();
-    else quoteTradePreview();
+    quoteTradePreview();
   });
   $('pin-cancel')?.addEventListener('click', cancelPinGate);
   $('kron-markets')?.addEventListener('click', e => {

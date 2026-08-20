@@ -1,5 +1,5 @@
 /* Official rusty-kaspa WASM: P2SH covenants + signed send/fund. */
-import { hexToBytes, kaspaAddressFromScriptHash } from './crypto.js?v=59';
+import { hexToBytes, kaspaAddressFromScriptHash } from './crypto.js?v=60';
 
 const API = 'https://api.kaspa.org';
 
@@ -283,6 +283,10 @@ function isMassError(e) {
   return /storage mass|mass exceeds|transaction mass/i.test(errText(e));
 }
 
+function isOrphanError(e) {
+  return /orphan/i.test(errText(e));
+}
+
 function sompiNum(v) {
   return Number(typeof v === 'bigint' ? v : BigInt(v));
 }
@@ -423,7 +427,7 @@ async function submitSignedRpc(k, rpc, url, tx, { sigOpCount, computeBudget, loc
   }
   const plain = JSON.parse(JSON.stringify(obj));
   try {
-    const txId = await submitRpcTx(rpc, url, plain);
+    const txId = await submitRpcTx(rpc, url, plain, false);
     if (txId) return txId;
   } catch (e) {
     try {
@@ -431,13 +435,68 @@ async function submitSignedRpc(k, rpc, url, tx, { sigOpCount, computeBudget, loc
         inp.sigOpCount = opCount;
         if (version >= 1) inp.computeBudget = Number(computeBudget ?? 10);
       }
-      const submitted = await withTimeout(rpc.submitTransaction({ transaction: tx, allowOrphan: false }), 20000, 'Timed out broadcasting to ' + url);
-      const txId = submitted?.transactionId || submitted || tx.id;
-      if (txId) return txId;
+      let last = e;
+      for (let i = 0; i < 4; i++) {
+        try {
+          const submitted = await withTimeout(
+            rpc.submitTransaction({ transaction: tx, allowOrphan: i > 0 || isOrphanError(last) }),
+            20000,
+            'Timed out broadcasting to ' + url
+          );
+          const txId = submitted?.transactionId || submitted || tx.id;
+          if (txId) return txId;
+        } catch (e2) {
+          last = e2;
+          if (isOrphanError(e2) && i < 3) {
+            await sleep(1000 * (i + 1));
+            continue;
+          }
+        }
+      }
     } catch {}
     throw e;
   }
   throw new Error('Node did not return a transaction id');
+}
+
+async function fetchNodeUtxos(rpc, address) {
+  const res = await rpc.getUtxosByAddresses({ addresses: [address] });
+  const entries = res?.entries || [];
+  return [...entries].map(e => {
+    const prev = e.outpoint || e.previousOutpoint || {};
+    const id = String(prev.transactionId || prev.transaction_id || '');
+    const idx = Number(prev.index ?? 0);
+    const inner = e.utxoEntry || e.entry || e;
+    const amount = inner.amount ?? e.amount;
+    const spk = inner.scriptPublicKey || e.scriptPublicKey || {};
+    const script = spk.script || spk.scriptPublicKey || '';
+    return {
+      address,
+      outpoint: { transactionId: id, index: idx },
+      amount: BigInt(amount || 0),
+      scriptPublicKey: { version: Number(spk.version || 0), script: hexish(script) },
+      blockDaaScore: BigInt(inner.blockDaaScore || inner.block_daa_score || 0),
+      isCoinbase: !!(inner.isCoinbase || inner.is_coinbase)
+    };
+  }).filter(x => x.outpoint.transactionId && x.amount > 0n && x.scriptPublicKey.script);
+}
+
+async function waitFreshNodeUtxos(rpc, address, spentKeys, needSompi, onStatus) {
+  const start = Date.now();
+  let last = [];
+  while (Date.now() - start < 28000) {
+    try {
+      const all = await fetchNodeUtxos(rpc, address);
+      const fresh = all.filter(e => !spentKeys.has(`${e.outpoint.transactionId}:${e.outpoint.index}`));
+      const sum = fresh.reduce((a, e) => a + e.amount, 0n);
+      if (fresh.length && sum >= needSompi) return fresh;
+      last = fresh;
+    } catch {}
+    onStatus?.('Waiting for the Time Capsule fund to land on the node…');
+    await sleep(800);
+  }
+  if (last.length) return last;
+  throw new Error('Capsule 0.2 KAS is funded, but the node has not shown change yet. Wait 10 seconds and tap Freeze again.');
 }
 
 export async function sendKas({ wallet, dest, amountKas, utxos, exact = false }) {
@@ -603,13 +662,28 @@ function signP2shInputs(k, tx, priv, redeemHex) {
   return scripts;
 }
 
-async function submitRpcTx(rpc, url, obj) {
-  const submitted = await withTimeout(
-    rpc.submitTransaction({ transaction: obj, allowOrphan: false }),
-    20000,
-    'Timed out sweeping via ' + url
-  );
-  return submitted?.transactionId || submitted || null;
+async function submitRpcTx(rpc, url, obj, allowOrphan = false) {
+  let last = null;
+  for (let i = 0; i < 5; i++) {
+    try {
+      const submitted = await withTimeout(
+        rpc.submitTransaction({ transaction: obj, allowOrphan: allowOrphan || i > 0 }),
+        20000,
+        'Timed out broadcasting to ' + url
+      );
+      const txId = submitted?.transactionId || submitted || null;
+      if (txId) return txId;
+    } catch (e) {
+      last = e;
+      if (isOrphanError(e) && i < 4) {
+        await sleep(1000 * (i + 1));
+        continue;
+      }
+      throw e;
+    }
+  }
+  if (last) throw last;
+  return null;
 }
 
 function toccataMinFee(k, tx, floor = 0n) {
@@ -1690,13 +1764,19 @@ export async function lockKcc20Timelock({ wallet, tick, amountHuman, decimals, m
   // Same as Vault → Time Capsule: fund the kaspa:p CLTV with a normal exact KAS send
   // first. Putting the 0.2 KAS witness in the token tx is what blows storage mass.
   onStatus?.('Funding capsule (same as Time Capsule)…');
+  const { rpc, url } = await connectPublicNode();
   let fund = null;
   let lastFundErr = '';
+  let spentKeys = new Set();
   for (const amt of [0.2, 0.25, 0.15, 0.3]) {
     try {
       const fundUtxos = utxos && utxos.length && !fund
         ? utxos
         : await fetchAddressUtxos(wallet.address);
+      spentKeys = new Set(
+        restUtxosToEntries(fundUtxos, wallet.address)
+          .map(e => `${e.outpoint.transactionId}:${e.outpoint.index}`)
+      );
       fund = await sendKas({ wallet, dest: capsule.address, amountKas: amt, utxos: fundUtxos, exact: true });
       break;
     } catch (e) {
@@ -1709,7 +1789,6 @@ export async function lockKcc20Timelock({ wallet, tick, amountHuman, decimals, m
   }
   const witnessKas = Math.round(Number(fund.amountKas || 0.2) * 1e8);
 
-  await sleep(900);
   const inTok = have;
   const changeTok = inTok - sendAmt;
   const tpl = { script: selected[0].redeem.script, stateStart: selected[0].redeem.stateStart || 0 };
@@ -1723,12 +1802,20 @@ export async function lockKcc20Timelock({ wallet, tick, amountHuman, decimals, m
   const feeGuess = 500_000n;
   const walletNeed = (nTok > 1 ? CHANGE_CELL_KAS : 0n) + feeGuess + 200_000n;
 
-  onStatus?.('Moving ' + ticker + ' into the capsule…');
-  const { rpc, url } = await connectPublicNode();
+  onStatus?.('Waiting for capsule fund to land on the node…');
   const priv = new k.PrivateKey(wallet.privKey);
-  const walletUtxos = await fetchAddressUtxos(wallet.address);
-  const feeEntries = restUtxosToEntries(walletUtxos, wallet.address)
-    .sort((a, b) => (a.amount < b.amount ? 1 : -1));
+  let feeEntries = [];
+  try {
+    feeEntries = await waitFreshNodeUtxos(rpc, wallet.address, spentKeys, walletNeed, onStatus);
+  } catch (e) {
+    onStatus?.(errText(e));
+    const rest = await fetchAddressUtxos(wallet.address);
+    feeEntries = restUtxosToEntries(rest, wallet.address)
+      .filter(e => !spentKeys.has(`${e.outpoint.transactionId}:${e.outpoint.index}`))
+      .sort((a, b) => (a.amount < b.amount ? 1 : -1));
+  }
+  onStatus?.('Moving ' + ticker + ' into the capsule…');
+  feeEntries = [...feeEntries].sort((a, b) => (a.amount < b.amount ? 1 : -1));
   const picked = [];
   let feeSum = 0n;
   for (const e of feeEntries) {

@@ -1,24 +1,24 @@
 import {
   loadCryptoLibs, generatePrivateKey, createKeypairFromHex,
   isValidKaspaAddress, shortAddr, hexToBytes, privKeyToHex, derivePublicKey, kaspaAddressFromPubkey, bytesToHex
-} from './crypto.js?v=59';
+} from './crypto.js?v=60';
 import {
   NATIVE_KAS, VAULT_PRODUCTS, loadWatchlist, addToken, removeToken,
   loadVaults, saveVault, updateVault, formatAmount, formatTokenUnits, tokenColor,
   fetchKcc20Portfolio, fetchKrc20Portfolio, krc20Logo, toTokenRaw, setVaultOwner
-} from './kcc20.js?v=59';
-import { parseIntent, describeIntent, askFor, parseDurationField } from './intent.js?v=59';
-import { payloadFromAddress } from './script.js?v=59';
-import { explainTransaction, scorpionAnswer } from './scorpion.js?v=59';
+} from './kcc20.js?v=60';
+import { parseIntent, describeIntent, askFor, parseDurationField } from './intent.js?v=60';
+import { payloadFromAddress } from './script.js?v=60';
+import { explainTransaction, scorpionAnswer } from './scorpion.js?v=60';
 import {
   sendKas, fetchAddressUtxos, fetchAddressBalance, loadKaspaSdk,
   buildTimelockCovenant, buildEscrowCovenant, buildMultisigCovenant, currentDaa,
   pingPublicNode, sweepVault, toRpcTransaction, p2shSpendScript, planKasPayment, storageMassOk,
   compoundUtxos, sendKrc20, sendKcc20, loadKrc20Pending, lockKcc20Timelock, sweepKcc20Capsule
-} from './tx.js?v=59';
-import { kronMarkets, quoteKronTrade, executeKronTrade, formatKasSompi, lookupKronTick, tradeCostLines } from './kronTrade.js?v=59';
+} from './tx.js?v=60';
+import { kronMarkets, quoteKronTrade, executeKronTrade, formatKasSompi, lookupKronTick, tradeCostLines } from './kronTrade.js?v=60';
 
-export const BUILD = '59';
+export const BUILD = '60';
 
 function errText(e) {
   if (e == null) return 'Unknown error';

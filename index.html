@@ -1,0 +1,166 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, viewport-fit=cover">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="KCC20">
+  <meta name="theme-color" content="#050506">
+  <link rel="manifest" href="manifest.json">
+  <link rel="apple-touch-icon" href="assets/icon.png">
+  <link rel="icon" href="assets/icon.png">
+  <title>KCC20 Wallet</title>
+  <link rel="stylesheet" href="css/app.css?v=25">
+</head>
+<body>
+  <img class="bg-poster" src="assets/bg.jpg" alt="">
+  <video id="bg-video" class="bg-video" autoplay muted loop playsinline poster="assets/bg.jpg">
+    <source src="assets/bg.mp4" type="video/mp4">
+  </video>
+  <div class="veil"></div>
+  <div class="sheen"></div>
+
+  <div class="stage">
+    <div class="phone" id="phone">
+      <div class="status">
+        <span class="clock" id="clock">9:41</span>
+        <span class="status-pips"><i></i></span>
+      </div>
+      <div class="nav">
+        <span class="nav-btn" id="nav-left"></span>
+        <h1 id="nav-title">KCC20</h1>
+        <span class="nav-btn" id="nav-right"></span>
+      </div>
+
+      <div class="scroll" id="scroll">
+        <!-- LOCK -->
+        <section class="page active" id="page-lock">
+          <div class="hero-brand">
+            <img class="app-icon" src="assets/icon.png" alt="KCC20">
+            <h2>KCC20 Wallet</h2>
+            <p>Non-custodial Kaspa. Native KAS, KCC20 tokens, and covenant vaults — in an Apple-grade private bank shell.</p>
+          </div>
+          <div class="glass list">
+            <button class="row" id="btn-create">
+              <div class="glyph" style="background:rgba(48,209,88,.16);color:var(--green)">＋</div>
+              <div><div class="title">Create wallet</div><div class="sub">Fresh Schnorr key in this device</div></div>
+              <span class="chev">›</span>
+            </button>
+            <button class="row" id="btn-show-import">
+              <div class="glyph" style="background:rgba(212,176,122,.16);color:var(--gold)">↓</div>
+              <div><div class="title">Import wallet</div><div class="sub">Paste a 64-character hex key</div></div>
+              <span class="chev">›</span>
+            </button>
+          </div>
+          <div id="import-box" class="glass hidden" style="padding:16px;margin-bottom:16px;">
+            <div class="field"><label>Private key</label><input id="import-key" placeholder="6d3af702…" spellcheck="false" autocomplete="off"></div>
+            <button class="btn btn-gold" id="btn-import">Import</button>
+          </div>
+          <div class="notice">Your key is generated in the browser. Signing stays local except when you confirm a send, which uses the existing covenant builder to assemble the transaction.</div>
+        </section>
+
+        <!-- HOME -->
+        <section class="page" id="page-home">
+          <div class="metal-card">
+            <div class="card-top">
+              <div class="card-chip"></div>
+              <div class="card-mark">KCC20</div>
+            </div>
+            <div class="card-label">Total balance <span class="live-pill" id="live-pill">Live</span></div>
+            <div class="card-bal" id="card-bal">0.00<small>KAS</small></div>
+            <div class="card-usd" id="card-usd">≈ $0.00</div>
+            <div class="card-foot">
+              <span id="card-addr">kaspa:…</span>
+              <button id="btn-copy-addr" style="color:var(--gold-2);font-weight:600;">Copy</button>
+            </div>
+          </div>
+          <div class="actions">
+            <button class="action" id="btn-send"><div class="orb"><svg viewBox="0 0 24 24" fill="none" stroke="var(--gold-2)" stroke-width="1.8"><path d="M12 19V5M5 12l7-7 7 7"/></svg></div><span>Send</span></button>
+            <button class="action" id="btn-receive"><div class="orb"><svg viewBox="0 0 24 24" fill="none" stroke="var(--gold-2)" stroke-width="1.8"><path d="M12 5v14M5 12l7 7 7-7"/></svg></div><span>Receive</span></button>
+            <button class="action" id="btn-vault-short"><div class="orb"><svg viewBox="0 0 24 24" fill="none" stroke="var(--gold-2)" stroke-width="1.8"><rect x="5" y="11" width="14" height="10" rx="2"/><path d="M8 11V8a4 4 0 018 0v3"/></svg></div><span>Vault</span></button>
+            <button class="action" id="btn-refresh"><div class="orb"><svg viewBox="0 0 24 24" fill="none" stroke="var(--gold-2)" stroke-width="1.8"><path d="M21 12a9 9 0 11-3-6.7"/><path d="M21 4v6h-6"/></svg></div><span>Refresh</span></button>
+          </div>
+          <div class="section-label">Holdings</div>
+          <div class="glass list" id="holdings"></div>
+        </section>
+
+        <!-- TOKENS -->
+        <section class="page" id="page-tokens">
+          <div class="section-label">Native</div>
+          <div class="glass list" id="token-native"></div>
+          <div class="section-label">KCC20</div>
+          <div class="glass list" id="token-list"></div>
+          <button class="btn btn-gold" id="btn-add-token" style="margin-top:8px;">Watch a KCC20</button>
+          <p class="muted">KCC20 is Kaspa’s fungible-token covenant. Watch an instance by ticker and covenant address. Native KAS is always first.</p>
+        </section>
+
+        <!-- VAULT -->
+        <section class="page" id="page-vault">
+          <div class="glass" style="padding:16px;margin-bottom:16px;">
+            <h3 style="font-size:18px;margin-bottom:6px;">Ask the builder</h3>
+            <p class="muted" style="text-align:left;padding:0 0 10px;">Describe a covenant in plain English.</p>
+            <div class="chat" id="chat-log">
+              <div class="bubble ai">Say it like you mean it: <em>Lock .15 KAS for 3 minutes</em>. That sends KAS to a capsule; when the timer ends this wallet returns it. I also take escrow and send.</div>
+            </div>
+            <div class="chatbar">
+              <input id="chat-input" placeholder="Describe a vault…" autocomplete="off">
+              <button class="send-orb" id="chat-send">↑</button>
+            </div>
+          </div>
+          <div class="glass" id="sweep-panel" style="padding:18px;margin-bottom:16px;">
+            <h3 style="font-size:18px;margin-bottom:6px;">Sweep</h3>
+            <p class="muted" style="text-align:left;padding:0 0 12px;">Time capsules auto-return when the lock expires (keep the app open). Sweep now if you don’t want to wait.</p>
+            <button class="btn btn-gold" id="btn-sweep-now" type="button">Sweep vaults</button>
+            <div class="field" style="margin-top:14px;">
+              <label>Or paste a kaspa:p… vault address</label>
+              <input id="sweep-addr" placeholder="kaspa:p…" spellcheck="false" autocomplete="off">
+            </div>
+            <button class="btn btn-glass" id="btn-sweep-addr" type="button">Sweep this address</button>
+          </div>
+          <div class="section-label">Your vaults</div>
+          <div id="vault-mine"></div>
+          <div class="section-label">Products</div>
+          <div id="vault-products"></div>
+          <div style="height:28px"></div>
+        </section>
+
+        <!-- ACTIVITY -->
+        <section class="page" id="page-activity">
+          <div class="glass" id="activity-list"></div>
+        </section>
+      </div>
+
+      <nav class="tabbar" id="tabbar">
+        <button class="tab active" data-tab="home">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 11.5 12 4l8 7.5V20a1 1 0 01-1 1h-5v-6H10v6H5a1 1 0 01-1-1z"/></svg>
+          <span>Home</span>
+        </button>
+        <button class="tab" data-tab="tokens">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="8"/><path d="M12 8v8M9.5 10.5c.6-1 1.5-1.5 2.5-1.5s2 .6 2.5 1.5M9.5 13.5c.6 1 1.5 1.5 2.5 1.5s2-.6 2.5-1.5"/></svg>
+          <span>Tokens</span>
+        </button>
+        <button class="tab" data-tab="vault">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="5" y="11" width="14" height="10" rx="2"/><path d="M8 11V8a4 4 0 018 0v3"/></svg>
+          <span>Vault</span>
+        </button>
+        <button class="tab" data-tab="activity">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 5h16M4 12h10M4 19h16"/></svg>
+          <span>Activity</span>
+        </button>
+      </nav>
+
+      <div class="sheet-overlay" id="sheet-overlay">
+        <div class="sheet" role="dialog" aria-modal="true">
+          <div class="grabber"></div>
+          <h3 id="sheet-title">Sheet</h3>
+          <div id="sheet-body"></div>
+          <div class="btn-row" id="sheet-actions" style="margin-top:16px;"></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script type="module" src="js/app.js?v=25"></script>
+</body>
+</html>

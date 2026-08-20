@@ -1,0 +1,13 @@
+{
+  "name": "KCC20 Wallet",
+  "short_name": "KCC20",
+  "description": "Premium non-custodial Kaspa wallet for KAS and KCC20 covenants",
+  "start_url": "./index.html",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#050506",
+  "theme_color": "#050506",
+  "icons": [
+    { "src": "assets/icon.png", "sizes": "1024x1024", "type": "image/png", "purpose": "any maskable" }
+  ]
+}

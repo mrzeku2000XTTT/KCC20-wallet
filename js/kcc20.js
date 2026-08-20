@@ -40,6 +40,14 @@ export const VAULT_PRODUCTS = [
     blurb: 'Sends KAS to a capsule until a timer. When it expires, this wallet sweeps it back automatically.'
   },
   {
+    id: 'kcc20freeze',
+    name: 'KCC20 Freeze',
+    type: 'kcc20lock',
+    tag: 'CLTV+',
+    status: 'mainnet',
+    blurb: 'Same CLTV as native KAS, for KCC20. Tokens move to SCRIPT_HASH ownership of the capsule; ~0.2 KAS sits in the P2SH as witness. Auto-sweeps back when the timer ends.'
+  },
+  {
     id: 'escrow',
     name: 'Escrow',
     type: 'escrow',

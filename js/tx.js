@@ -1375,6 +1375,522 @@ export async function sendKcc20({ wallet, dest, token, amountHuman, utxos, onSta
   };
 }
 
+const WITNESS_KAS = 20_000_000n; // 0.2 KAS co-present CLTV UTXO — SCRIPT_HASH witness + sweep fee
+
+function scriptHashState(hash32, amount) {
+  return { ownerIdentifier: hash32, identifierType: 1, amount: BigInt(amount), isMinter: false };
+}
+
+function p2shHash32(k, redeem) {
+  const bytes = typeof redeem === 'string' ? hexToU8(redeem) : redeem;
+  const p2sh = k.payToScriptHashScript(bytes);
+  const h = hexish(p2sh.script);
+  const m = /^aa20([0-9a-f]{64})87$/i.exec(h);
+  if (!m) throw new Error('Could not derive P2SH script hash from the time-capsule redeem');
+  return hexToU8(m[1]);
+}
+
+function kccSpkOf(k, v) {
+  if (v instanceof k.ScriptPublicKey) return v;
+  if (typeof v === 'string') return new k.ScriptPublicKey(0, v);
+  if (v && (typeof v.script === 'string' || v.script instanceof Uint8Array)) {
+    return new k.ScriptPublicKey(Number(v.version || 0), v.script);
+  }
+  throw new Error('Missing script for a KCC20 input');
+}
+
+function kccInputFromUtxo(k, {
+  txid, index, amount, scriptPublicKey, address, blockDaaScore, isCoinbase, signatureScript, computeBudget
+}) {
+  const id = String(txid);
+  const idx = Number(index);
+  const spk = kccSpkOf(k, scriptPublicKey);
+  const utxo = {
+    address: address || undefined,
+    outpoint: { transactionId: id, index: idx },
+    amount: BigInt(amount),
+    scriptPublicKey: { version: Number(spk.version || 0), script: hexish(spk.script) },
+    blockDaaScore: BigInt(blockDaaScore || 0),
+    isCoinbase: !!isCoinbase
+  };
+  return new k.TransactionInput({
+    previousOutpoint: new k.TransactionOutpoint(new k.Hash(id), idx),
+    signatureScript: signatureScript || '',
+    sequence: 0n,
+    sigOpCount: 0,
+    computeBudget: Number(computeBudget || 10),
+    utxo
+  });
+}
+
+function pickKcc20Pieces(pieces, sendAmt, maxIns) {
+  let selected = pieces.filter(p => p.tokenAmount >= sendAmt).slice(0, 1);
+  if (!selected.length) {
+    selected = [];
+    let covered = 0n;
+    for (const p of pieces) {
+      selected.push(p);
+      covered += p.tokenAmount;
+      if (covered >= sendAmt) break;
+      if (selected.length >= maxIns) break;
+    }
+  }
+  return selected;
+}
+
+async function loadKcc20Pieces(wallet, tick) {
+  const info = await kronJson(`/v1/kcc20/token/${encodeURIComponent(tick)}`);
+  const meta = Array.isArray(info?.result) ? info.result[0] : info?.result;
+  const tokenCovid = String(meta?.covenantId || '').replace(/^0x/i, '').toLowerCase();
+  if (!/^[0-9a-f]{64}$/.test(tokenCovid)) throw new Error('KRON did not return a covenant id for ' + tick);
+  const rawCells = await kronJson(`/v1/kcc20/token/${encodeURIComponent(tick)}/address/${encodeURIComponent(wallet.address)}/utxos`);
+  const cells = Array.isArray(rawCells?.result) ? rawCells.result : [];
+  const pieces = [];
+  await Promise.all((cells || []).map(async c => {
+    const txid = c.outpoint?.transactionId;
+    const index = Number(c.outpoint?.index ?? 0);
+    const redeem = c.redeemScriptHex || c.redeem;
+    if (!txid || !redeem) return;
+    try {
+      const parsed = parseKcc20Redeem(redeem);
+      if (parsed.identifierType === 1) return;
+      const kasValue = await cellKasValue(txid, index);
+      pieces.push({
+        transactionId: txid,
+        index,
+        tokenAmount: BigInt(c.amount ?? parsed.amount),
+        value: kasValue,
+        redeem: parsed
+      });
+    } catch {}
+  }));
+  pieces.sort((a, b) => (a.tokenAmount < b.tokenAmount ? 1 : -1));
+  return {
+    pieces,
+    tokenCovid,
+    maxIns: Math.max(1, Math.min(4, Number(meta?.maxIns || 4))),
+    decimals: Number(meta?.decimals ?? meta?.dec ?? 0)
+  };
+}
+
+async function loadLockedKcc20Pieces(vault) {
+  const tick = String(vault.tick || '').toUpperCase();
+  const addr = vault.tokenScriptAddress;
+  if (tick && addr) {
+    try {
+      const raw = await kronJson(`/v1/kcc20/token/${encodeURIComponent(tick)}/address/${encodeURIComponent(addr)}/utxos`);
+      const cells = Array.isArray(raw?.result) ? raw.result : [];
+      const pieces = [];
+      for (const c of cells) {
+        const txid = c.outpoint?.transactionId;
+        const index = Number(c.outpoint?.index ?? 0);
+        const redeem = c.redeemScriptHex || c.redeem || vault.tokenRedeemHex;
+        if (!txid || !redeem) continue;
+        const parsed = parseKcc20Redeem(redeem);
+        const kasValue = await cellKasValue(txid, index);
+        pieces.push({
+          transactionId: txid,
+          index,
+          tokenAmount: BigInt(c.amount ?? parsed.amount),
+          value: kasValue,
+          redeem: parsed
+        });
+      }
+      if (pieces.length) return pieces;
+    } catch {}
+  }
+  if (!addr || !vault.tokenRedeemHex) return [];
+  const utxos = await fetchAddressUtxos(addr);
+  const parsed = parseKcc20Redeem(vault.tokenRedeemHex);
+  return restUtxosToEntries(utxos, addr).map(e => ({
+    transactionId: e.outpoint.transactionId,
+    index: e.outpoint.index,
+    tokenAmount: parsed.amount,
+    value: e.amount,
+    redeem: parsed
+  }));
+}
+
+/**
+ * Freeze KCC20 the same way native KAS freezes: CLTV P2SH capsule + SCRIPT_HASH
+ * ownership. One tx transfers tokens to scriptHashOwned(blake2b(timelockRedeem))
+ * and funds ~0.2 KAS to that kaspa:p as the co-present witness. Unlock spends
+ * the P2SH after DAA (witness) and transfers back to ADDRESS presence.
+ */
+export async function lockKcc20Timelock({ wallet, tick, amountHuman, decimals, minutes, utxos, onStatus }) {
+  const ticker = String(tick || '').toUpperCase().trim();
+  if (!ticker) throw new Error('Missing KCC20 ticker');
+  const k = await loadKaspaSdk();
+  const loaded = await loadKcc20Pieces(wallet, ticker);
+  const dec = decimals != null && decimals !== '' ? Number(decimals) : loaded.decimals;
+  const sendAmt = BigInt(toRawLocal(amountHuman, dec));
+  if (sendAmt <= 0n) throw new Error('Enter an amount greater than 0');
+  if (!loaded.pieces.length) throw new Error('No spendable ' + ticker + ' cells on this address (SCRIPT_HASH frozen cells stay in the capsule)');
+  const totalTok = loaded.pieces.reduce((a, p) => a + p.tokenAmount, 0n);
+  if (totalTok < sendAmt) throw new Error(`You only hold ${totalTok} spendable ${ticker}`);
+  const selected = pickKcc20Pieces(loaded.pieces, sendAmt, loaded.maxIns);
+  const have = selected.reduce((a, p) => a + p.tokenAmount, 0n);
+  if (have < sendAmt) {
+    throw new Error(`${ticker} is split across ${loaded.pieces.length} cells. The largest ${selected.length} only hold ${have}.`);
+  }
+
+  onStatus?.('Building CLTV time capsule for ' + ticker + '…');
+  const capsule = await buildTimelockCovenant({ pubkeyHex: wallet.pubKey, minutes });
+  const hash32 = p2shHash32(k, capsule.redeemHex);
+  const priv = new k.PrivateKey(wallet.privKey);
+  const selfPk = hexToU8(priv.toPublicKey().toXOnlyPublicKey().toString());
+
+  const inTok = have;
+  const changeTok = inTok - sendAmt;
+  const tpl = { script: selected[0].redeem.script, stateStart: selected[0].redeem.stateStart || 0 };
+  const ownerId = selected[0].redeem.ownerIdentifier;
+  const next = [scriptHashState(hash32, sendAmt)];
+  if (changeTok > 0n) next.push(presenceState(ownerId, changeTok));
+  const presenceIdx = selected.length;
+  const witnesses = selected.map(() => presenceIdx);
+  const inCellKas = selected.reduce((a, p) => a + p.value, 0n);
+  const nTok = next.length;
+  let tokenKas;
+  if (nTok === 1) tokenKas = [inCellKas >= MIN_CELL_KAS ? inCellKas : MIN_CELL_KAS];
+  else {
+    const a = inCellKas * 3n / 5n;
+    const b = inCellKas - a;
+    tokenKas = a >= MIN_CELL_KAS && b >= MIN_CELL_KAS ? [a, b] : [MIN_CELL_KAS, MIN_CELL_KAS];
+  }
+  let tokenOutSum = tokenKas.reduce((a, v) => a + v, 0n);
+  const extraForCells = tokenOutSum > inCellKas ? tokenOutSum - inCellKas : 0n;
+  const feeGuess = 500_000n;
+  const walletNeed = extraForCells + WITNESS_KAS + feeGuess + 200_000n;
+
+  onStatus?.('Connecting to Kaspa…');
+  const { rpc, url } = await connectPublicNode();
+  const walletUtxos = utxos && utxos.length ? utxos : await fetchAddressUtxos(wallet.address);
+  const feeEntries = restUtxosToEntries(walletUtxos, wallet.address)
+    .sort((a, b) => (a.amount < b.amount ? 1 : -1));
+  const picked = [];
+  let feeSum = 0n;
+  for (const e of feeEntries) {
+    picked.push(e);
+    feeSum += e.amount;
+    if (feeSum >= walletNeed) break;
+  }
+  if (!picked.length || feeSum < walletNeed) throw kasNeedError(walletNeed - feeSum);
+
+  let kasChange = inCellKas + feeSum - tokenOutSum - WITNESS_KAS - feeGuess;
+  if (kasChange < 200_000n) kasChange = 0n;
+  const outAmts = kasChange > 0n ? [...tokenKas, WITNESS_KAS, kasChange] : [...tokenKas, WITNESS_KAS];
+  const inAmts = [...selected.map(p => p.value), ...picked.map(e => e.amount)];
+  if (!storageMassOk(k, inAmts, outAmts)) throw kasNeedError(50_000_000n);
+
+  const lockedRedeem = materializeKcc20Script(tpl, next[0]);
+  const tokenScriptAddress = String(k.addressFromScriptPublicKey(k.payToScriptHashScript(lockedRedeem), 'mainnet') || '');
+  const tokenOuts = next.map((st, i) => ({
+    value: tokenKas[i],
+    spk: k.payToScriptHashScript(materializeKcc20Script(tpl, st))
+  }));
+
+  const tokenIns = selected.map(p => {
+    const redeem = p.redeem.script;
+    const spk = k.payToScriptHashScript(redeem);
+    return kccInputFromUtxo(k, {
+      txid: p.transactionId,
+      index: p.index,
+      amount: p.value,
+      scriptPublicKey: spk,
+      address: String(k.addressFromScriptPublicKey(spk, 'mainnet') || ''),
+      signatureScript: transferSigScript(k, redeem, next, witnesses),
+      computeBudget: 100
+    });
+  });
+  const tokenScripts = tokenIns.map(inp => hexish(inp.signatureScript));
+  const kasIns = picked.map(e => kccInputFromUtxo(k, {
+    txid: e.outpoint.transactionId,
+    index: e.outpoint.index,
+    amount: e.amount,
+    scriptPublicKey: e.scriptPublicKey,
+    address: wallet.address,
+    blockDaaScore: e.blockDaaScore,
+    isCoinbase: e.isCoinbase,
+    computeBudget: 10
+  }));
+  const covOutputs = tokenOuts.map(o =>
+    new k.TransactionOutput(o.value, o.spk, new k.CovenantBinding(0, new k.Hash(loaded.tokenCovid)))
+  );
+  const p2shOut = new k.TransactionOutput(WITNESS_KAS, k.payToAddressScript(capsule.address));
+  const changeSpk = k.payToAddressScript(wallet.address);
+  const outputs = kasChange > 0n
+    ? [...covOutputs, p2shOut, new k.TransactionOutput(kasChange, changeSpk)]
+    : [...covOutputs, p2shOut];
+
+  const tx = new k.Transaction({
+    version: 1,
+    inputs: [...tokenIns, ...kasIns],
+    outputs,
+    lockTime: 0n,
+    gas: 0n,
+    payload: '',
+    subnetworkId: NATIVE_SUBNET
+  });
+  prepInputs(tx, { sigOpCount: 0, computeBudget: 10 });
+  const tokenN = tokenIns.length;
+  for (let i = 0; i < tokenN; i++) {
+    tx.inputs[i].computeBudget = 100;
+    tx.inputs[i].signatureScript = tokenScripts[i];
+  }
+  try { k.updateTransactionMass('mainnet', tx); } catch {}
+
+  function signKasInputs() {
+    const signed = tokenScripts.slice();
+    for (let i = tokenN; i < tx.inputs.length; i++) {
+      const sig = k.createInputSignature(tx, i, priv, k.SighashType.All);
+      tx.inputs[i].signatureScript = hexish(sig);
+      signed.push(hexish(sig));
+    }
+    return signed;
+  }
+  let scripts = signKasInputs();
+  const inSum = inCellKas + feeSum;
+  onStatus?.('Broadcasting KCC20 freeze…');
+  let txId;
+  try {
+    txId = await submitSignedRpc(k, rpc, url, tx, {
+      sigOpCount: 0,
+      computeBudget: 100,
+      lockTime: 0,
+      scripts
+    });
+  } catch (e) {
+    if (isMassError(e)) throw kasNeedError(50_000_000n);
+    const need = requiredFeeFromError(e);
+    if (!need) throw e;
+    const paid = inSum - [...tx.outputs].reduce((a, o) => a + BigInt(o.value), 0n);
+    if (need <= paid) throw e;
+    const last = tx.outputs.length - 1;
+    const extra = need - paid + 50_000n;
+    if (kasChange <= extra) throw e;
+    tx.outputs[last].value = BigInt(tx.outputs[last].value) - extra;
+    scripts = signKasInputs();
+    txId = await submitSignedRpc(k, rpc, url, tx, {
+      sigOpCount: 0,
+      computeBudget: 100,
+      lockTime: 0,
+      scripts
+    });
+  }
+
+  const paidFee = inSum - [...tx.outputs].reduce((a, o) => a + BigInt(o.value), 0n);
+  return {
+    txId,
+    tick: ticker,
+    tokenAmount: sendAmt.toString(),
+    decimals: dec,
+    feeKas: Number(paidFee) / 1e8,
+    witnessKas: Number(WITNESS_KAS) / 1e8,
+    node: url,
+    vault: {
+      type: 'kcc20lock',
+      name: ticker + ' Freeze',
+      address: capsule.address,
+      scriptHex: capsule.redeemHex,
+      spkHex: capsule.spkHex,
+      unlockDaa: capsule.unlockDaa,
+      tick: ticker,
+      tokenAmount: sendAmt.toString(),
+      decimals: dec,
+      tokenCovid: loaded.tokenCovid,
+      tokenRedeemHex: u8ToHex(lockedRedeem),
+      tokenScriptAddress,
+      tokenOutpoint: { transactionId: txId, index: 0 },
+      lockTxId: txId,
+      status: 'locked',
+      fundedSompi: Number(WITNESS_KAS),
+      fundFeeKas: Number(paidFee) / 1e8,
+      params: {
+        amountKas: Number(WITNESS_KAS) / 1e8,
+        amountToken: Number(amountHuman),
+        tick: ticker,
+        duration: `${minutes} minutes`,
+        lockMinutes: Number(minutes)
+      }
+    }
+  };
+}
+
+export async function sweepKcc20Capsule({ wallet, vault, utxos, onStatus }) {
+  if (!vault?.address) throw new Error('Missing freeze address');
+  const k = await loadKaspaSdk();
+  const redeemHex = vault.scriptHex || await reconstructTimelockRedeem(vault, wallet.pubKey);
+  if (!redeemHex) throw new Error('This freeze has no redeem script saved — cannot sweep');
+  const daaNow = await currentDaa();
+  const unlock = Number(vault.unlockDaa || 0);
+  if (unlock && daaNow < unlock) {
+    const waitSec = Math.ceil((unlock - daaNow) / 10);
+    throw new Error(`Still time-locked. Unlock DAA ${unlock}, now ${daaNow}. Wait ~${waitSec}s then Sweep.`);
+  }
+  const lockTime = Math.max(unlock || 0, daaNow);
+  const p2shUtxos = utxos && utxos.length ? utxos : await fetchAddressUtxos(vault.address);
+  const p2shEntries = restUtxosToEntries(p2shUtxos, vault.address);
+  if (!p2shEntries.length) throw new Error('Witness capsule is empty — nothing to unlock with');
+  onStatus?.('Loading frozen ' + (vault.tick || 'KCC20') + ' cells…');
+  const selected = await loadLockedKcc20Pieces({ ...vault, scriptHex: redeemHex });
+  if (!selected.length) {
+    onStatus?.('No frozen token cells — sweeping witness KAS only…');
+    return sweepVault({ wallet, vault: { ...vault, scriptHex: redeemHex }, utxos: p2shUtxos });
+  }
+
+  const priv = new k.PrivateKey(wallet.privKey);
+  const selfPk = hexToU8(priv.toPublicKey().toXOnlyPublicKey().toString());
+  const sendAmt = selected.reduce((a, p) => a + p.tokenAmount, 0n);
+  const tpl = { script: selected[0].redeem.script, stateStart: selected[0].redeem.stateStart || 0 };
+  const next = [presenceState(selfPk, sendAmt)];
+  const tokenN = selected.length;
+  const p2shIdx = tokenN;
+  const witnesses = selected.map(() => p2shIdx);
+  const inCellKas = selected.reduce((a, p) => a + p.value, 0n);
+  const tokenKas = [inCellKas >= MIN_CELL_KAS ? inCellKas : MIN_CELL_KAS];
+  const extraForCells = tokenKas[0] > inCellKas ? tokenKas[0] - inCellKas : 0n;
+  const p2shSum = p2shEntries.reduce((a, e) => a + e.amount, 0n);
+  const feeGuess = 600_000n;
+  const { rpc, url } = await connectPublicNode();
+
+  let extra = [];
+  let extraSum = 0n;
+  if (p2shSum + (inCellKas - tokenKas[0]) < feeGuess + extraForCells + 200_000n) {
+    const walletUtxos = await fetchAddressUtxos(wallet.address);
+    const feeEntries = restUtxosToEntries(walletUtxos, wallet.address)
+      .sort((a, b) => (a.amount < b.amount ? 1 : -1));
+    const need = extraForCells + feeGuess + 200_000n - p2shSum;
+    for (const e of feeEntries) {
+      extra.push(e);
+      extraSum += e.amount;
+      if (extraSum >= need) break;
+    }
+  }
+
+  let kasChange = p2shSum + extraSum + inCellKas - tokenKas[0] - feeGuess;
+  if (kasChange < 200_000n) kasChange = 0n;
+  const tokenCovid = String(vault.tokenCovid || '').replace(/^0x/i, '').toLowerCase();
+  if (!/^[0-9a-f]{64}$/.test(tokenCovid)) throw new Error('Missing token covenant id on this freeze');
+
+  const tokenIns = selected.map(p => {
+    const redeem = p.redeem.script;
+    const spk = k.payToScriptHashScript(redeem);
+    return kccInputFromUtxo(k, {
+      txid: p.transactionId,
+      index: p.index,
+      amount: p.value,
+      scriptPublicKey: spk,
+      address: String(k.addressFromScriptPublicKey(spk, 'mainnet') || ''),
+      signatureScript: transferSigScript(k, redeem, next, witnesses),
+      computeBudget: 100
+    });
+  });
+  const tokenScripts = tokenIns.map(inp => hexish(inp.signatureScript));
+  const p2shSpk = k.payToScriptHashScript(hexToU8(redeemHex));
+  const p2shIns = p2shEntries.map(e => kccInputFromUtxo(k, {
+    txid: e.outpoint.transactionId,
+    index: e.outpoint.index,
+    amount: e.amount,
+    scriptPublicKey: e.scriptPublicKey || p2shSpk,
+    address: vault.address,
+    blockDaaScore: e.blockDaaScore,
+    isCoinbase: e.isCoinbase,
+    computeBudget: 60
+  }));
+  const kasIns = extra.map(e => kccInputFromUtxo(k, {
+    txid: e.outpoint.transactionId,
+    index: e.outpoint.index,
+    amount: e.amount,
+    scriptPublicKey: e.scriptPublicKey,
+    address: wallet.address,
+    blockDaaScore: e.blockDaaScore,
+    isCoinbase: e.isCoinbase,
+    computeBudget: 10
+  }));
+
+  const tokenOut = new k.TransactionOutput(
+    tokenKas[0],
+    k.payToScriptHashScript(materializeKcc20Script(tpl, next[0])),
+    new k.CovenantBinding(0, new k.Hash(tokenCovid))
+  );
+  const changeSpk = k.payToAddressScript(wallet.address);
+  const outputs = kasChange > 0n
+    ? [tokenOut, new k.TransactionOutput(kasChange, changeSpk)]
+    : [tokenOut];
+
+  const tx = new k.Transaction({
+    version: 1,
+    inputs: [...tokenIns, ...p2shIns, ...kasIns],
+    outputs,
+    lockTime: BigInt(lockTime),
+    gas: 0n,
+    payload: '',
+    subnetworkId: NATIVE_SUBNET
+  });
+  prepInputs(tx, { sigOpCount: 0, computeBudget: 10 });
+  for (let i = 0; i < tokenN; i++) {
+    tx.inputs[i].computeBudget = 100;
+    tx.inputs[i].signatureScript = tokenScripts[i];
+  }
+  const p2shEnd = tokenN + p2shIns.length;
+  for (let i = tokenN; i < p2shEnd; i++) tx.inputs[i].computeBudget = 60;
+  try { k.updateTransactionMass('mainnet', tx); } catch {}
+
+  function signMixed() {
+    const signed = tokenScripts.slice();
+    for (let i = tokenN; i < p2shEnd; i++) {
+      const sig = k.createInputSignature(tx, i, priv, k.SighashType.All);
+      const script = p2shSpendScript(k, redeemHex, sig);
+      tx.inputs[i].signatureScript = script;
+      signed.push(script);
+    }
+    for (let i = p2shEnd; i < tx.inputs.length; i++) {
+      const sig = k.createInputSignature(tx, i, priv, k.SighashType.All);
+      tx.inputs[i].signatureScript = hexish(sig);
+      signed.push(hexish(sig));
+    }
+    return signed;
+  }
+  let scripts = signMixed();
+  const inSum = inCellKas + p2shSum + extraSum;
+  onStatus?.('Broadcasting KCC20 unfreeze…');
+  let txId;
+  try {
+    txId = await submitSignedRpc(k, rpc, url, tx, {
+      sigOpCount: 0,
+      computeBudget: 100,
+      lockTime,
+      scripts
+    });
+  } catch (e) {
+    if (isMassError(e)) throw kasNeedError(50_000_000n);
+    const need = requiredFeeFromError(e);
+    if (!need) throw e;
+    const paid = inSum - [...tx.outputs].reduce((a, o) => a + BigInt(o.value), 0n);
+    if (need <= paid) throw e;
+    const last = tx.outputs.length - 1;
+    const extraFee = need - paid + 50_000n;
+    if (kasChange <= extraFee) throw e;
+    tx.outputs[last].value = BigInt(tx.outputs[last].value) - extraFee;
+    scripts = signMixed();
+    txId = await submitSignedRpc(k, rpc, url, tx, {
+      sigOpCount: 0,
+      computeBudget: 100,
+      lockTime,
+      scripts
+    });
+  }
+  const paidFee = inSum - [...tx.outputs].reduce((a, o) => a + BigInt(o.value), 0n);
+  return {
+    txId,
+    tick: vault.tick,
+    tokenAmount: sendAmt.toString(),
+    amountKas: Number(kasChange) / 1e8,
+    feeKas: Number(paidFee) / 1e8,
+    node: url
+  };
+}
+
 function toRawLocal(human, decimals) {
   const d = Math.max(0, Number(decimals) || 0);
   const t = String(human ?? '').trim().replace(',', '.');

@@ -14,7 +14,7 @@ import {
   sendKas, fetchAddressUtxos, fetchAddressBalance, loadKaspaSdk,
   buildTimelockCovenant, buildEscrowCovenant, buildMultisigCovenant, currentDaa,
   pingPublicNode, sweepVault, toRpcTransaction, p2shSpendScript, planKasPayment, storageMassOk,
-  compoundUtxos, sendKrc20, sendKcc20, loadKrc20Pending
+  compoundUtxos, sendKrc20, sendKcc20, loadKrc20Pending, lockKcc20Timelock, sweepKcc20Capsule
 } from './tx.js';
 import { kronMarkets, quoteKronTrade, executeKronTrade, formatKasSompi, lookupKronTick, tradeCostLines } from './kronTrade.js';
 
@@ -25,9 +25,19 @@ function errText(e) {
 }
 
 function productForIntent(intent) {
+  if (intent.type === 'kcc20lock') return VAULT_PRODUCTS.find(p => p.id === 'kcc20freeze');
   if (intent.type === 'timelock') return VAULT_PRODUCTS.find(p => p.id === 'timelock');
   return VAULT_PRODUCTS.find(p => p.id === intent.type)
     || { id: intent.type, name: intent.type, type: intent.type };
+}
+
+function isKcc20Vault(v) {
+  return v?.type === 'kcc20lock' || v?.asset === 'kcc20';
+}
+
+function vaultTokenLabel(v) {
+  if (!isKcc20Vault(v) || !v.tick) return '';
+  return formatTokenUnits(v.tokenAmount || 0, v.decimals) + ' ' + v.tick;
 }
 
 const API_BASE = 'https://api.kaspa.org';
@@ -978,6 +988,7 @@ function renderHoldings() {
   const lockRows = locked.map(v => {
     const sec = remainingLockSec(v.unlockDaa);
     const lockedNow = sec == null || sec > 0;
+    const tok = vaultTokenLabel(v);
     return `
     <button class="row token-row" data-lock-holding="${esc(v.address)}">
       <div class="dot" style="background:rgba(212,176,122,.18);color:var(--gold-2)">⏱</div>
@@ -986,7 +997,7 @@ function renderHoldings() {
         <div class="sub">${lockedNow ? 'Unlocks in <span data-unlock-daa="' + esc(v.unlockDaa) + '">' + esc(formatLockClock(sec)) + '</span>' : 'Unlocked — returning to wallet'}</div>
       </div>
       <div class="amt">
-        <b>${formatAmount(v.fundedSompi || 0)}</b>
+        <b>${tok ? esc(tok) : formatAmount(v.fundedSompi || 0)}</b>
         <em>${lockedNow ? 'Locked' : 'Unlocking'}</em>
       </div>
     </button>`;
@@ -1029,8 +1040,9 @@ function renderTokens() {
 }
 
 function vaultStatusLine(v) {
-  const amt = v.fundedSompi ? formatAmount(v.fundedSompi) + ' KAS' : '0 KAS';
-  if (!v.fundedSompi) return `${v.status || 'unfunded'} · ${amt}`;
+  const tok = vaultTokenLabel(v);
+  const amt = tok || (v.fundedSompi ? formatAmount(v.fundedSompi) + ' KAS' : '0 KAS');
+  if (!v.fundedSompi && !tok) return `${v.status || 'unfunded'} · ${amt}`;
   if (v.unlockDaa) {
     const sec = remainingLockSec(v.unlockDaa);
     if (sec == null) return `Locked · ${amt}`;
@@ -1556,6 +1568,7 @@ function openTokenSheet(token) {
     ${token.protocol === 'kcc20' ? `<div class="btn-row" style="margin-top:10px;">
       <button class="btn btn-gold" id="tk-buy" type="button">Buy</button>
       <button class="btn btn-glass" id="tk-sell" type="button">Sell</button>
+      <button class="btn btn-glass" id="tk-freeze" type="button">Freeze</button>
     </div>` : ''}
     <p class="muted"><a href="${esc(link)}" target="_blank" rel="noopener" style="color:var(--gold-2)">Open explorer</a></p>
   `, {
@@ -1566,6 +1579,7 @@ function openTokenSheet(token) {
   });
   $('tk-buy')?.addEventListener('click', () => { closeSheet(); openTrade({ tick: token.ticker, side: 'buy' }); });
   $('tk-sell')?.addEventListener('click', () => { closeSheet(); openTrade({ tick: token.ticker, side: 'sell' }); });
+  $('tk-freeze')?.addEventListener('click', () => { closeSheet(); openProduct('kcc20freeze', { tick: token.ticker }); });
 }
 
 async function renderKronMarkets() {
@@ -1835,11 +1849,18 @@ async function maybeAutoUnlock() {
       try { utxosV = await fetchAddressUtxos(v.address); } catch { continue; }
       if (!utxosV.length) continue;
       autoSweepTried.add(v.address);
-      toast('Time lock ended — returning KAS…');
+      toast(isKcc20Vault(v) ? ('Time lock ended — returning ' + (v.tick || 'KCC20') + '…') : 'Time lock ended — returning KAS…');
       try {
-        const result = await sweepVault({ wallet, vault: v, utxos: utxosV });
-        updateVault(v.address, { status: 'swept', unlockTxId: result.txId, fundedSompi: 0 });
-        toast(`Returned ${result.amountKas} KAS from time capsule`);
+        const result = isKcc20Vault(v)
+          ? await sweepKcc20Capsule({ wallet, vault: v, utxos: utxosV })
+          : await sweepVault({ wallet, vault: v, utxos: utxosV });
+        updateVault(v.address, { status: 'swept', unlockTxId: result.txId, fundedSompi: 0, tokenAmount: isKcc20Vault(v) ? '0' : v.tokenAmount });
+        if (isKcc20Vault(v) && result.tokenAmount) {
+          applyLocalTokenDelta(v.tick, 'kcc20', result.tokenAmount);
+          toast(`Returned ${formatTokenUnits(result.tokenAmount, v.decimals)} ${v.tick} from freeze`);
+        } else {
+          toast(`Returned ${result.amountKas} KAS from time capsule`);
+        }
         afterTx();
         if (currentTab === 'vault') renderVault();
       } catch (e) {
@@ -2201,7 +2222,7 @@ function readProductForm(type) {
   const params = {};
   const amt = parseFloat($('ct-amount')?.value);
   if (Number.isFinite(amt) && amt > 0) params.amountKas = amt;
-  if (type === 'timelock') {
+  if (type === 'timelock' || type === 'kcc20lock') {
     const dur = parseDurationField($('ct-duration')?.value);
     if (dur) {
       params.lockDays = dur.days;
@@ -2209,16 +2230,37 @@ function readProductForm(type) {
       params.durationLabel = dur.label;
     }
   }
+  if (type === 'kcc20lock') {
+    params.tick = ($('ct-tick')?.value || '').trim().toUpperCase();
+    const tok = parseFloat($('ct-token-amt')?.value);
+    if (Number.isFinite(tok) && tok > 0) params.amountToken = tok;
+  }
   if (type === 'escrow') params.buyerAddress = $('ct-buyer')?.value.trim();
   if (type === 'multisig') params.counterparty = $('ct-counterparty')?.value.trim();
   return params;
 }
 
-function openProduct(id) {
+function openProduct(id, prefill) {
   const p = VAULT_PRODUCTS.find(x => x.id === id);
   if (!p) return;
   haptic();
   if (p.type === 'kcc20') { showPage('tokens'); return; }
+  if (p.type === 'kcc20lock') {
+    const ticks = (kccHoldings || []).map(t => t.ticker).filter(Boolean);
+    const preTick = String(prefill?.tick || ticks[0] || '').toUpperCase();
+    const tickField = ticks.length
+      ? `<select id="ct-tick">${ticks.map(t => `<option value="${esc(t)}" ${t === preTick ? 'selected' : ''}>${esc(t)}</option>`).join('')}</select>`
+      : `<input id="ct-tick" placeholder="KKDAG" autocapitalize="characters" value="${esc(preTick)}">`;
+    const fields = `
+      <div class="field"><label>KCC20 ticker</label>${tickField}</div>
+      <div class="field"><label>Amount (tokens)</label><input id="ct-token-amt" type="number" step="any" min="0" inputmode="decimal" placeholder="20"></div>
+      <div class="field"><label>Duration</label><input id="ct-duration" placeholder="3 minutes or 30 days"></div>
+    `;
+    openSheet(p.name, `<p class="muted" style="text-align:left;padding:0 0 12px;">${esc(p.blurb)} Uses ~0.2 KAS witness dust plus the network fee. Tokens stay in a SCRIPT_HASH cell until Sweep.</p>${fields}`, {
+      confirm: 'Freeze with PIN', gold: true, onConfirm: () => buildCovenant(p, readProductForm(p.type))
+    });
+    return;
+  }
   let fields = `<div class="field"><label>Amount (KAS)</label><input id="ct-amount" type="number" step="0.0001" min="0" inputmode="decimal" placeholder="0.15"></div>`;
   if (p.type === 'timelock') {
     fields += `<div class="field"><label>Duration</label><input id="ct-duration" placeholder="3 minutes or 30 days"></div>`;
@@ -2230,6 +2272,61 @@ function openProduct(id) {
   openSheet(p.name, `<p class="muted" style="text-align:left;padding:0 0 12px;">${esc(p.blurb)}</p>${fields}`, {
     confirm: 'Build vault', gold: true, onConfirm: () => buildCovenant(p, readProductForm(p.type))
   });
+}
+
+async function executeKcc20Freeze(params) {
+  const tick = String(params.tick || '').toUpperCase().trim();
+  const amountToken = Number(params.amountToken);
+  const minutes = Number(params.lockMinutes) || Math.round((Number(params.lockDays) || 0) * 1440);
+  if (!tick) { toast('Enter a KCC20 ticker'); return; }
+  if (!Number.isFinite(amountToken) || amountToken <= 0) { toast('Enter a token amount like 20'); return; }
+  if (!minutes) { toast('Enter a duration like 3 minutes'); return; }
+  const token = (kccHoldings || []).find(t => String(t.ticker || '').toUpperCase() === tick);
+  openSheet('Freeze ' + tick, `
+    <div class="kv"><span class="k">Lock</span><span class="v">${esc(amountToken)} ${esc(tick)}</span></div>
+    <div class="kv"><span class="k">Duration</span><span class="v">${esc(params.durationLabel || (minutes + ' minutes'))}</span></div>
+    <div class="kv"><span class="k">Witness dust</span><span class="v">0.2 KAS</span></div>
+    <div class="kv"><span class="k">Network fee</span><span class="v">~0.005 KAS</span></div>
+    <p class="muted" style="text-align:left;">Tokens move to SCRIPT_HASH ownership of a CLTV capsule — the same freeze as native KAS. ~0.2 KAS sits in the kaspa:p witness so the covenant can see it. When the timer ends this wallet sweeps both back.</p>
+  `, { confirm: 'Freezing…', cancel: false });
+  const busy = $('sheet-ok');
+  if (busy) { busy.disabled = true; busy.dataset.busy = '1'; }
+  try {
+    await requirePin('Confirm ' + tick + ' freeze');
+    setSheetStatus('Loading Kaspa engine…');
+    await loadKaspaSdk();
+    setSheetStatus('Fetching UTXOs…');
+    const availableUtxos = await fetchAddressUtxos(wallet.address);
+    if (!availableUtxos.length) throw new Error('Need a little native KAS here for the 0.2 witness + fee');
+    setSheetStatus('Connecting to public Kaspa node…');
+    await pingPublicNode();
+    const result = await lockKcc20Timelock({
+      wallet,
+      tick,
+      amountHuman: String(amountToken),
+      decimals: token?.decimals,
+      minutes,
+      utxos: availableUtxos,
+      onStatus: (m) => setSheetStatus(m)
+    });
+    saveVault(result.vault);
+    applyLocalTokenDelta(tick, 'kcc20', '-' + result.tokenAmount);
+    afterTx();
+    renderVault();
+    openSheet(tick + ' frozen', `
+      <div class="kv"><span class="k">Locked</span><span class="v">${esc(formatTokenUnits(result.tokenAmount, result.decimals))} ${esc(tick)}</span></div>
+      <div class="kv"><span class="k">Witness in capsule</span><span class="v">${esc(result.witnessKas)} KAS</span></div>
+      <div class="kv"><span class="k">Network fee</span><span class="v">${Number(result.feeKas || 0).toFixed(6)} KAS</span></div>
+      <div class="kv"><span class="k">Unlock DAA</span><span class="v">${esc(result.vault.unlockDaa)}</span></div>
+      <div class="kv"><span class="k">Capsule</span><span class="v">${esc(result.vault.address)}</span></div>
+      ${txidBlock(result.txId)}
+      <p class="muted" style="text-align:left;">${esc(tick)} cannot move until that DAA. Sweep returns the tokens to this wallet automatically.</p>
+    `, { confirm: 'Done', cancel: false, onConfirm: () => { closeSheet(); refreshAll(); } });
+  } catch (e) {
+    if (errText(e) === 'cancelled') { closeSheet(); return; }
+    setSheetStatus(errText(e), true);
+    toast(errText(e));
+  }
 }
 
 function backendParams(type, params) {
@@ -2245,6 +2342,10 @@ function backendParams(type, params) {
 
 async function buildCovenant(p, explicit) {
   const params = explicit && Object.keys(explicit).length ? { ...explicit } : readProductForm(p.type);
+  if (p.type === 'kcc20lock') {
+    await executeKcc20Freeze(params);
+    return;
+  }
   if (!params.amountKas || !Number.isFinite(Number(params.amountKas))) {
     toast('Enter an amount like 0.15');
     return;
@@ -2361,22 +2462,30 @@ function openLockTimer(vault) {
   haptic();
   const sec = remainingLockSec(vault.unlockDaa);
   const locked = sec == null || sec > 0;
+  const tok = vaultTokenLabel(vault);
+  const kcc = isKcc20Vault(vault);
   openSheet(vault.name || 'Time Capsule', `
-    <div class="kv"><span class="k">Locked</span><span class="v">${formatAmount(vault.fundedSompi || 0)} KAS</span></div>
+    <div class="kv"><span class="k">Locked</span><span class="v">${tok ? esc(tok) : formatAmount(vault.fundedSompi || 0) + ' KAS'}</span></div>
+    ${kcc ? `<div class="kv"><span class="k">Witness dust</span><span class="v">${formatAmount(vault.fundedSompi || 0)} KAS</span></div>` : ''}
     ${vault.fundFeeKas ? `<div class="kv"><span class="k">Lock fee paid</span><span class="v">${Number(vault.fundFeeKas).toFixed(6)} KAS</span></div>` : ''}
     <div class="kv"><span class="k">Time left</span><span class="v" id="lock-timer-live" data-unlock-daa="${esc(vault.unlockDaa || '')}" data-addr="${esc(vault.address || '')}">${esc(formatLockClock(sec))}</span></div>
     <div class="kv"><span class="k">Unlocks (UTC)</span><span class="v" id="lock-timer-utc">${esc(unlockAtUtc(sec))}</span></div>
     ${vault.unlockDaa ? `<div class="kv"><span class="k">Unlock DAA</span><span class="v">${esc(vault.unlockDaa)} (now ${esc(lastDaa || '—')})</span></div>` : ''}
     <div class="kv"><span class="k">Address</span><span class="v">${esc(vault.address)}</span></div>
-    <p class="muted" style="text-align:left;">${locked ? 'Still frozen on-chain. When this timer hits zero, this app Sweeps the KAS back to your kaspa:q… wallet automatically.' : 'Lock has expired. Sweep now, or wait — auto-return is on.'}</p>
+    <p class="muted" style="text-align:left;">${locked
+      ? (kcc
+        ? 'Still frozen on-chain. KCC20 is SCRIPT_HASH-owned by this CLTV capsule. When the timer hits zero, Sweep returns the tokens plus leftover witness KAS.'
+        : 'Still frozen on-chain. When this timer hits zero, this app Sweeps the KAS back to your kaspa:q… wallet automatically.')
+      : 'Lock has expired. Sweep now, or wait — auto-return is on.'}</p>
     <button class="btn btn-gold" id="v-unlock" style="margin-top:14px;">Sweep to wallet</button>
-    <div class="btn-row" style="margin-top:10px;">
+    ${kcc ? '' : `<div class="btn-row" style="margin-top:10px;">
       <button class="btn btn-glass" id="v-copy">Copy</button>
       <button class="btn btn-glass" id="v-fund">Fund more</button>
-    </div>
+    </div>`}
+    ${kcc ? `<div class="btn-row" style="margin-top:10px;"><button class="btn btn-glass" id="v-copy">Copy capsule</button></div>` : ''}
   `, { confirm: 'Close', cancel: false });
   $('v-copy').onclick = async () => { await navigator.clipboard.writeText(vault.address); toast('Copied'); };
-  $('v-fund').onclick = () => fundVault(vault).catch(e => toast(errText(e)));
+  $('v-fund')?.addEventListener('click', () => fundVault(vault).catch(e => toast(errText(e))));
   $('v-unlock').onclick = () => unlockVault(vault).catch(e => { setSheetStatus(errText(e), true); toast(errText(e)); });
 }
 
@@ -2391,26 +2500,39 @@ async function openVaultDetail(address) {
 
 async function unlockVault(vault) {
   autoSweepTried.add(vault.address);
-  openSheet('Sweep vault', `
-    <p class="muted" style="text-align:left;">Returning KAS from this covenant to your wallet.</p>
+  const kcc = isKcc20Vault(vault);
+  openSheet(kcc ? 'Unfreeze KCC20' : 'Sweep vault', `
+    <p class="muted" style="text-align:left;">${kcc ? 'Spending the CLTV witness and returning ' + esc(vault.tick || 'KCC20') + ' to this wallet.' : 'Returning KAS from this covenant to your wallet.'}</p>
     <div class="kv"><span class="k">From</span><span class="v">${esc(vault.address || '')}</span></div>
   `, { confirm: 'Sweeping…', cancel: false });
   const busy = $('sheet-ok');
   if (busy) { busy.disabled = true; busy.dataset.busy = '1'; }
+  try {
+    await requirePin(kcc ? 'Confirm unfreeze' : 'Confirm sweep');
+  } catch (e) {
+    if (errText(e) === 'cancelled') { closeSheet(); return; }
+    throw e;
+  }
   setSheetStatus('Looking up vault UTXOs…');
   const utxosV = await fetchAddressUtxos(vault.address);
-  if (!utxosV.length) throw new Error('Nothing to sweep — this address has 0 UTXOs');
+  if (!utxosV.length && !kcc) throw new Error('Nothing to sweep — this address has 0 UTXOs');
   setSheetStatus('Connecting to public node…');
   await pingPublicNode();
-  setSheetStatus('Signing P2SH redeem (CLTV + CHECKSIG)…');
-  const result = await sweepVault({ wallet, vault, utxos: utxosV });
-  updateVault(vault.address, { status: 'swept', unlockTxId: result.txId, fundedSompi: 0 });
+  setSheetStatus(kcc ? 'Signing SCRIPT_HASH witness + CLTV…' : 'Signing P2SH redeem (CLTV + CHECKSIG)…');
+  const result = kcc
+    ? await sweepKcc20Capsule({ wallet, vault, utxos: utxosV, onStatus: (m) => setSheetStatus(m) })
+    : await sweepVault({ wallet, vault, utxos: utxosV });
+  updateVault(vault.address, { status: 'swept', unlockTxId: result.txId, fundedSompi: 0, tokenAmount: kcc ? '0' : vault.tokenAmount });
+  if (kcc && result.tokenAmount) applyLocalTokenDelta(vault.tick, 'kcc20', result.tokenAmount);
   afterTx();
   openSheet('Swept', `
-    <div class="kv"><span class="k">Returned</span><span class="v">${esc(formatKas(result.amountKas))} KAS</span></div>
+    ${kcc && result.tokenAmount ? `<div class="kv"><span class="k">Returned</span><span class="v">${esc(formatTokenUnits(result.tokenAmount, vault.decimals))} ${esc(vault.tick)}</span></div>` : ''}
+    <div class="kv"><span class="k">${kcc ? 'Witness leftover' : 'Returned'}</span><span class="v">${esc(formatKas(result.amountKas))} KAS</span></div>
     <div class="kv"><span class="k">Sweep fee</span><span class="v">${Number(result.feeKas || 0).toFixed(6)} KAS</span></div>
     ${txidBlock(result.txId)}
-    <p class="muted" style="text-align:left;">The sweep fee is the Toccata compute fee (usually 0.004–0.007 KAS), not a cut of the lock. You should get lock amount minus this fee.</p>
+    <p class="muted" style="text-align:left;">${kcc
+      ? 'Tokens are ADDRESS-owned again on this wallet. The sweep fee came from the 0.2 KAS witness dust.'
+      : 'The sweep fee is the Toccata compute fee (usually 0.004–0.007 KAS), not a cut of the lock. You should get lock amount minus this fee.'}</p>
   `, { confirm: 'Done', cancel: false, onConfirm: () => { closeSheet(); refreshAll(); } });
 }
 
@@ -2426,8 +2548,14 @@ async function sweepAllVaults() {
     try {
       const utxosV = await fetchAddressUtxos(v.address);
       if (!utxosV.length) { skipped++; continue; }
-      await sweepVault({ wallet, vault: v, utxos: utxosV });
-      updateVault(v.address, { status: 'swept', fundedSompi: 0 });
+      if (isKcc20Vault(v)) {
+        const result = await sweepKcc20Capsule({ wallet, vault: v, utxos: utxosV });
+        updateVault(v.address, { status: 'swept', fundedSompi: 0, tokenAmount: '0' });
+        if (result.tokenAmount) applyLocalTokenDelta(v.tick, 'kcc20', result.tokenAmount);
+      } else {
+        await sweepVault({ wallet, vault: v, utxos: utxosV });
+        updateVault(v.address, { status: 'swept', fundedSompi: 0 });
+      }
       ok++;
     } catch (e) {
       errors.push(shortAddr(v.address) + ': ' + errText(e));
@@ -2506,7 +2634,7 @@ async function sendChat() {
   }
 
   if (!intent || intent.error) {
-    appendChat('ai', 'I can lock, escrow, multisig, or send. Example: <em>Lock .15 KAS for 3 minutes</em>');
+    appendChat('ai', 'I can lock KAS or freeze KCC20, escrow, multisig, or send. Example: <em>Lock .15 KAS for 3 minutes</em> or <em>Lock 20 KKDAG for 3 minutes</em>');
     return;
   }
   renderIntentCard(intent);

@@ -1,24 +1,24 @@
 import {
   loadCryptoLibs, generatePrivateKey, createKeypairFromHex,
   isValidKaspaAddress, shortAddr, hexToBytes, privKeyToHex, derivePublicKey, kaspaAddressFromPubkey, bytesToHex
-} from './crypto.js?v=58';
+} from './crypto.js?v=59';
 import {
   NATIVE_KAS, VAULT_PRODUCTS, loadWatchlist, addToken, removeToken,
   loadVaults, saveVault, updateVault, formatAmount, formatTokenUnits, tokenColor,
   fetchKcc20Portfolio, fetchKrc20Portfolio, krc20Logo, toTokenRaw, setVaultOwner
-} from './kcc20.js?v=58';
-import { parseIntent, describeIntent, askFor, parseDurationField } from './intent.js?v=58';
-import { payloadFromAddress } from './script.js?v=58';
-import { explainTransaction, scorpionAnswer } from './scorpion.js?v=58';
+} from './kcc20.js?v=59';
+import { parseIntent, describeIntent, askFor, parseDurationField } from './intent.js?v=59';
+import { payloadFromAddress } from './script.js?v=59';
+import { explainTransaction, scorpionAnswer } from './scorpion.js?v=59';
 import {
   sendKas, fetchAddressUtxos, fetchAddressBalance, loadKaspaSdk,
   buildTimelockCovenant, buildEscrowCovenant, buildMultisigCovenant, currentDaa,
   pingPublicNode, sweepVault, toRpcTransaction, p2shSpendScript, planKasPayment, storageMassOk,
   compoundUtxos, sendKrc20, sendKcc20, loadKrc20Pending, lockKcc20Timelock, sweepKcc20Capsule
-} from './tx.js?v=58';
-import { kronMarkets, quoteKronTrade, executeKronTrade, formatKasSompi, lookupKronTick, tradeCostLines } from './kronTrade.js?v=58';
+} from './tx.js?v=59';
+import { kronMarkets, quoteKronTrade, executeKronTrade, formatKasSompi, lookupKronTick, tradeCostLines } from './kronTrade.js?v=59';
 
-export const BUILD = '58';
+export const BUILD = '59';
 
 function errText(e) {
   if (e == null) return 'Unknown error';
@@ -2724,7 +2724,7 @@ async function executeKcc20Freeze(params) {
     <div class="kv"><span class="k">Duration</span><span class="v">${esc(params.durationLabel || (minutes + ' minutes'))}</span></div>
     <div class="kv"><span class="k">Witness dust</span><span class="v">0.2 KAS</span></div>
     <div class="kv"><span class="k">Network fee</span><span class="v">~0.005 KAS</span></div>
-    <p class="muted" style="text-align:left;">Tokens move to SCRIPT_HASH ownership of a CLTV capsule — the same freeze as native KAS. ~0.2 KAS sits in the kaspa:p witness so the covenant can see it. When the timer ends this wallet sweeps both back.</p>
+    <p class="muted" style="text-align:left;">Same two steps as Time Capsule: first ~0.2 KAS is locked in a CLTV kaspa:p (Vault path), then the tokens move into SCRIPT_HASH ownership of that capsule. When the timer ends, Sweep returns both.</p>
   `, { confirm: 'Freezing…', cancel: false });
   const busy = $('sheet-ok');
   if (busy) { busy.disabled = true; busy.dataset.busy = '1'; }

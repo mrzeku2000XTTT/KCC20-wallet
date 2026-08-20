@@ -991,7 +991,7 @@ function renderHoldings() {
       </div>
     </button>`;
   });
-  const rows = [...kccRows, ...krcRows, ...lockRows].slice(0, 4);
+  const rows = [...kccRows, ...krcRows, ...lockRows];
   $('holdings').innerHTML = rows.join('') || `<div class="empty">No tokens yet — TRADE KCC20 to buy.</div>`;
   const n = Array.isArray(utxos) ? utxos.length : 0;
   if ($('utxo-count')) $('utxo-count').textContent = n === 1 ? '1 UTXO' : `${n} UTXOs`;
@@ -1597,7 +1597,10 @@ function openTrade(prefill = {}) {
   if ($('trade-ticker')) $('trade-ticker').value = tick0;
   if ($('trade-amount')) $('trade-amount').value = prefill.amount || '';
   $('trade-side')?.querySelectorAll('button').forEach(b => b.classList.toggle('on', b.dataset.side === side0));
-  $('trade-go').textContent = side0 === 'sell' ? 'Review sell' : 'Review buy';
+  if ($('trade-go')) {
+    $('trade-go').disabled = false;
+    $('trade-go').onclick = () => reviewTrade();
+  }
   syncTradeLabel();
   lookupTradeTicker();
 }
@@ -1663,34 +1666,28 @@ async function quoteTradePreview() {
 }
 
 async function reviewTrade() {
+  const go = $('trade-go');
   const amount = $('trade-amount')?.value.trim();
   const tick = ($('trade-ticker')?.value || 'KRON').toUpperCase();
   const side = $('trade-side')?.querySelector('.on')?.dataset.side || 'buy';
   if (!amount) { toast('Enter an amount'); return; }
-  let q;
-  try { q = await quoteKronTrade({ tick, side, amount }); }
-  catch (e) { toast(errText(e)); return; }
-  const lines = q.side === 'buy'
-    ? `<div class="kv"><span class="k">Pay</span><span class="v">${esc(formatKasSompi(q.kasIn))} KAS</span></div>
-       <div class="kv"><span class="k">Receive</span><span class="v">${esc(formatTokenUnits(q.tokenOut, q.decimals))} ${esc(q.tick)}</span></div>`
-    : `<div class="kv"><span class="k">Sell</span><span class="v">${esc(formatTokenUnits(q.tokenIn, q.decimals))} ${esc(q.tick)}</span></div>
-       <div class="kv"><span class="k">Receive</span><span class="v">${esc(formatKasSompi(q.net))} KAS</span></div>`;
-  openSheet('Review KRON swap', `
-    <div class="kv"><span class="k">Market</span><span class="v">${esc(q.tick)} · ${esc(q.graduated ? 'Pool' : 'Curve')}</span></div>
-    ${lines}
-    <div class="kv"><span class="k">Protocol fees</span><span class="v">${esc(formatKasSompi(q.fee))} KAS</span></div>
-    <p class="muted" style="text-align:left;padding-top:8px;">Signed in this wallet with the KRON SDK. KRON never holds your key. Keep extra native KAS here for the 0.5 KAS cell and network fee.</p>
-  `, {
-    confirm: 'Swap now',
-    gold: true,
-    onConfirm: () => runTrade({ tick, side, amount, quote: q })
-  });
+  if (go) go.disabled = true;
+  try {
+    const q = await quoteKronTrade({ tick, side, amount });
+    toast(side === 'buy' ? `Confirm ${formatTokenUnits(q.tokenOut, q.decimals)} ${q.tick}` : `Confirm sell ${q.tick}`);
+    await requirePin(side === 'buy' ? 'Confirm buy ' + tick : 'Confirm sell ' + tick);
+    await runTrade({ tick, side, amount, quote: q });
+  } catch (e) {
+    if (errText(e) === 'cancelled') return;
+    toast(errText(e));
+  } finally {
+    if (go) go.disabled = false;
+  }
 }
 
-async function runTrade({ tick, side, amount }) {
+async function runTrade({ tick, side, amount, quote }) {
   toast('Building KRON swap…');
   try {
-    await requirePin('Confirm trade');
     await loadKaspaSdk();
     const utxosNow = await fetchAddressUtxos(wallet.address);
     const result = await executeKronTrade({
@@ -1702,10 +1699,25 @@ async function runTrade({ tick, side, amount }) {
       onStatus: (m) => { toast(m); setSheetStatus(m); }
     });
     hideTradeScreen();
+    const q = result.quote || quote;
+    if (q?.side === 'buy' && q.tokenOut != null) {
+      const tickU = String(q.tick || tick).toUpperCase();
+      const row = kccHoldings.find(t => String(t.ticker).toUpperCase() === tickU);
+      if (row) row.balance = (BigInt(row.balance || '0') + BigInt(q.tokenOut)).toString();
+      else {
+        kccHoldings.unshift({
+          ticker: tickU, name: tickU, protocol: 'kcc20',
+          balance: String(q.tokenOut), decimals: q.decimals || 0
+        });
+      }
+    }
     afterTx();
+    renderHome();
+    if (currentTab === 'tokens') renderTokens();
     openSheet('Swap sent', `
       <div class="kv"><span class="k">Market</span><span class="v">${esc(tick)}</span></div>
       <div class="kv"><span class="k">Side</span><span class="v">${esc(side)}</span></div>
+      ${q?.side === 'buy' ? `<div class="kv"><span class="k">Received</span><span class="v">${esc(formatTokenUnits(q.tokenOut, q.decimals))} ${esc(q.tick)}</span></div>` : ''}
       <div class="kv"><span class="k">Network fee</span><span class="v">${esc(formatKasSompi(result.fee))} KAS</span></div>
       ${txidBlock(result.txId)}
     `, { confirm: 'Done', cancel: false, onConfirm: () => { closeSheet(); refreshAll(); } });

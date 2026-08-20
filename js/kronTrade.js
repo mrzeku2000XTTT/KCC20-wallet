@@ -207,7 +207,7 @@ function txOutValue(tx, index) {
 function lastPush(hex) {
   const b = hexBytes(hex);
   let i = 0;
-  let last = null;
+  let best = null;
   while (i < b.length) {
     const op = b[i++];
     let n = 0;
@@ -216,10 +216,11 @@ function lastPush(hex) {
     else if (op === 77) { n = b[i] | (b[i + 1] << 8); i += 2; }
     else if (op === 78) { n = b[i] | (b[i + 1] << 8) | (b[i + 2] << 16) | (b[i + 3] << 24); i += 4; }
     else continue;
-    last = b.slice(i, i + n);
+    const slice = b.slice(i, i + n);
     i += n;
+    if (!best || slice.length >= best.length) best = slice;
   }
-  return last;
+  return best;
 }
 
 function decodeCurveRedeem(redeem) {
@@ -260,38 +261,50 @@ async function poolHead(tick, tokenCovidHex, poolCovidHex) {
 }
 
 async function curveHead(tick, token, entry) {
-  const trades = await idx('/token/' + encodeURIComponent(tick) + '/trades?limit=1');
-  const row = Array.isArray(trades) ? trades[0] : trades;
-  if (!row?.txid) throw new Error('No curve trades yet — cannot locate the live curve UTXO');
-  const tx = await kaspaTx(row.txid);
-  const ins = tx.inputs || tx.transaction_inputs || [];
-  const redeem = lastPush(ins[0]?.signature_script || ins[0]?.signatureScript || '');
-  if (!redeem || redeem.length < 80) throw new Error('Last curve trade did not reveal a redeem script');
-  const tpl = decodeCurveRedeem(redeem);
-  tpl.params = curveParams(entry);
-  const outs = tx.outputs || tx.transaction_outputs || [];
-  const curveOut = outs[0];
-  const invOut = outs[1];
-  const realKas = BigInt(curveOut?.amount ?? curveOut?.value ?? token.cpState?.realKas ?? 0);
-  const invVal = BigInt(invOut?.amount ?? invOut?.value ?? DUST);
-  const tokenReserve = BigInt(token.cpState?.tokenReserve || token.tokenReserve || 0);
-  const tokenCovid = hexBytes(entry.covenantId);
-  return {
-    tpl,
-    curveCovid: hexBytes(entry.extensions.curveCovenantId),
-    utxo: {
-      transactionId: row.txid,
-      index: 0,
-      realKas,
-      state: { graduated: false, tokenCovid, tokenReserve }
-    },
-    inventory: {
-      transactionId: row.txid,
-      index: 1,
-      value: invVal,
-      amount: tokenReserve
+  const live = await idxToken(tick);
+  const tokenReserve = BigInt(live.cpState?.tokenReserve || live.tokenReserve || token.tokenReserve || 0);
+  const indexerKas = BigInt(live.cpState?.realKas || 0);
+  const trades = await idx('/token/' + encodeURIComponent(tick) + '/trades?limit=5');
+  const rows = Array.isArray(trades) ? trades : (trades ? [trades] : []);
+  let lastErr = new Error('No curve trades yet — cannot locate the live curve');
+  for (const row of rows) {
+    if (!row?.txid) continue;
+    try {
+      const tx = await kaspaTx(row.txid);
+      const ins = tx.inputs || tx.transaction_inputs || [];
+      const sig = ins[0]?.signature_script || ins[0]?.signatureScript || '';
+      const redeem = lastPush(sig);
+      if (!redeem || redeem.length < 80) throw new Error('no redeem');
+      const tpl = decodeCurveRedeem(redeem);
+      tpl.params = curveParams(entry);
+      const outs = tx.outputs || tx.transaction_outputs || [];
+      const curveOut = outs[0];
+      const invOut = outs[1];
+      const realKas = BigInt(curveOut?.amount ?? curveOut?.value ?? indexerKas);
+      const invVal = BigInt(invOut?.amount ?? invOut?.value ?? DUST);
+      const tokenCovid = hexBytes(entry.covenantId || live.covenantId);
+      const curveCovid = hexBytes(entry.extensions?.curveCovenantId || live.curveCovenantId);
+      return {
+        tpl,
+        curveCovid,
+        utxo: {
+          transactionId: row.txid,
+          index: 0,
+          realKas,
+          state: { graduated: false, tokenCovid, tokenReserve }
+        },
+        inventory: {
+          transactionId: row.txid,
+          index: 1,
+          value: invVal,
+          amount: tokenReserve
+        }
+      };
+    } catch (e) {
+      lastErr = e;
     }
-  };
+  }
+  throw lastErr;
 }
 
 function sompiFromKas(human) {
@@ -593,8 +606,12 @@ export async function executeKronTrade({ wallet, tick, side, amount, utxos, onSt
     );
   } else if (quoted.side === 'buy') {
     const head = await curveHead(tick, token, entry);
+    const held = await loadUserTokens(tick, wallet.address).catch(() => []);
+    const merge = held.slice(0, 3);
+    const presence = merge.length ? 2 + merge.length : 0;
+    onStatus?.('Building curve buy…');
     spend = kron.curveCp.buildCpBuy(
-      k, head.tpl, tokenTpl, head.utxo, head.inventory, head.curveCovid, buyer, quoted.kasIn, quoted.tokenOut
+      k, head.tpl, tokenTpl, head.utxo, head.inventory, head.curveCovid, buyer, quoted.kasIn, quoted.tokenOut, merge, presence
     );
   } else {
     const head = await curveHead(tick, token, entry);

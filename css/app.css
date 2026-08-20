@@ -390,10 +390,26 @@ img { display: block; max-width: 100%; }
 #page-home.home-fit .action span { font-size: 11px; }
 #page-home.home-fit .utxo-bar { padding: 8px 12px; margin-bottom: 6px; font-size: 13px; }
 #page-home.home-fit .section-label { padding: 2px 4px 4px; font-size: 11px; }
+#page-home.home-fit .holdings-pills,
 #page-home.home-fit #holdings {
-  flex: 1; min-height: 0; overflow: hidden; margin-bottom: 0;
+  flex: 1; min-height: 0;
+  overflow-x: hidden; overflow-y: auto;
+  margin-bottom: 0;
+  background: transparent;
+  border: 0;
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+  display: flex; flex-direction: column; gap: 8px;
+  padding: 0 0 6px;
+  -webkit-overflow-scrolling: touch;
 }
-#page-home.home-fit #holdings .row { padding: 8px 12px; min-height: 44px; }
+#page-home.home-fit #holdings .row {
+  padding: 8px 12px; min-height: 48px;
+  border-radius: 16px;
+  background: rgba(255,255,255,0.06);
+  border: 0.5px solid var(--hairline);
+}
+#page-home.home-fit #holdings .row:last-child { border-bottom: 0.5px solid var(--hairline); }
 #page-home.home-fit #holdings .dot { width: 28px; height: 28px; }
 #page-home.home-fit #holdings .title { font-size: 14px; }
 #page-home.home-fit #holdings .sub { font-size: 11px; }
@@ -470,7 +486,7 @@ img { display: block; max-width: 100%; }
 }
 
 .sheet-overlay {
-  position: absolute; inset: 0; z-index: 40;
+  position: absolute; inset: 0; z-index: 88;
   background: rgba(0,0,0,0.72);
   display: none; align-items: flex-end;
   pointer-events: none;
@@ -761,7 +777,9 @@ button.tx { width: 100%; text-align: left; color: inherit; }
   background: #050506;
   display: flex; flex-direction: column;
   padding: calc(18px + var(--safe-t)) 18px calc(18px + var(--safe-b));
+  overflow-y: auto;
 }
+#trade-go { position: relative; z-index: 2; flex-shrink: 0; }
 .trade-head {
   display: flex; align-items: center; justify-content: space-between;
   margin-bottom: 16px;

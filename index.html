@@ -11,7 +11,7 @@
   <link rel="apple-touch-icon" href="assets/icon.png">
   <link rel="icon" href="assets/icon.png">
   <title>KCC20 Wallet</title>
-  <link rel="stylesheet" href="css/app.css?v=30">
+  <link rel="stylesheet" href="css/app.css?v=31">
 </head>
 <body>
   <img class="bg-poster" src="assets/bg.jpg" alt="">
@@ -105,32 +105,33 @@
 
         <!-- VAULT -->
         <section class="page" id="page-vault">
-          <div class="glass" style="padding:16px;margin-bottom:16px;">
-            <h3 style="font-size:18px;margin-bottom:6px;">Ask the builder</h3>
-            <p class="muted" style="text-align:left;padding:0 0 10px;">Describe a covenant in plain English.</p>
-            <div class="chat" id="chat-log">
-              <div class="bubble ai">Say it like you mean it: <em>Lock .15 KAS for 3 minutes</em>. That sends KAS to a capsule; when the timer ends this wallet returns it. I also take escrow and send.</div>
+          <div class="seg" id="vault-seg">
+            <button class="on" data-vtab="create" type="button">Create</button>
+            <button data-vtab="mine" type="button">Vaults</button>
+          </div>
+          <div id="vault-create">
+            <div class="glass vault-composer">
+              <div class="chat" id="chat-log">
+                <div class="bubble ai">Lock <em>.15 KAS for 3 minutes</em> — capsule now, auto-sweep when time’s up.</div>
+              </div>
+              <div class="chatbar">
+                <input id="chat-input" placeholder="Describe a vault…" autocomplete="off">
+                <button class="send-orb" id="chat-send">↑</button>
+              </div>
             </div>
-            <div class="chatbar">
-              <input id="chat-input" placeholder="Describe a vault…" autocomplete="off">
-              <button class="send-orb" id="chat-send">↑</button>
+            <div class="section-label">Products</div>
+            <div class="vault-grid" id="vault-products"></div>
+          </div>
+          <div id="vault-mine-wrap" class="hidden">
+            <div class="glass list" id="vault-mine"></div>
+            <div class="glass vault-sweep">
+              <button class="btn btn-gold" id="btn-sweep-now" type="button">Sweep unlocked</button>
+              <div class="field" style="margin:10px 0 0;">
+                <input id="sweep-addr" placeholder="kaspa:p… address" spellcheck="false" autocomplete="off">
+              </div>
+              <button class="btn btn-glass" id="btn-sweep-addr" type="button" style="margin-top:8px;height:44px;">Sweep this address</button>
             </div>
           </div>
-          <div class="glass" id="sweep-panel" style="padding:18px;margin-bottom:16px;">
-            <h3 style="font-size:18px;margin-bottom:6px;">Sweep</h3>
-            <p class="muted" style="text-align:left;padding:0 0 12px;">Time capsules auto-return when the lock expires (keep the app open). Sweep now if you don’t want to wait.</p>
-            <button class="btn btn-gold" id="btn-sweep-now" type="button">Sweep vaults</button>
-            <div class="field" style="margin-top:14px;">
-              <label>Or paste a kaspa:p… vault address</label>
-              <input id="sweep-addr" placeholder="kaspa:p…" spellcheck="false" autocomplete="off">
-            </div>
-            <button class="btn btn-glass" id="btn-sweep-addr" type="button">Sweep this address</button>
-          </div>
-          <div class="section-label">Your vaults</div>
-          <div id="vault-mine"></div>
-          <div class="section-label">Products</div>
-          <div id="vault-products"></div>
-          <div style="height:28px"></div>
         </section>
 
         <!-- ACTIVITY -->
@@ -169,6 +170,6 @@
     </div>
   </div>
 
-  <script type="module" src="js/app.js?v=30"></script>
+  <script type="module" src="js/app.js?v=31"></script>
 </body>
 </html>

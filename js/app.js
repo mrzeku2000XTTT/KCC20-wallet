@@ -5,7 +5,7 @@ import {
 import {
   NATIVE_KAS, VAULT_PRODUCTS, loadWatchlist, addToken, removeToken,
   loadVaults, saveVault, updateVault, formatAmount, formatTokenUnits, tokenColor,
-  fetchKcc20Portfolio, fetchKrc20Portfolio
+  fetchKcc20Portfolio, fetchKrc20Portfolio, krc20Logo
 } from './kcc20.js';
 import { parseIntent, describeIntent, askFor, parseDurationField } from './intent.js';
 import { payloadFromAddress } from './script.js';
@@ -213,8 +213,11 @@ function renderHome() {
 
 function tokenDot(t) {
   const color = t.color || tokenColor(t.ticker);
-  const src = t.image || (t.native || t.ticker === 'KAS' ? 'assets/kas.svg' : '');
-  const img = src ? `<img alt="" src="${esc(src)}">` : esc(String(t.ticker || '?').slice(0, 3));
+  const fb = esc(String(t.ticker || '?').slice(0, 3));
+  const src = t.image || (t.native || t.ticker === 'KAS' ? 'assets/kas.svg' : (t.protocol === 'krc20' ? krc20Logo(t.ticker) : ''));
+  const img = src
+    ? `<img alt="" src="${esc(src)}" data-tick="${esc(t.ticker || '')}" onerror="window.__krcLogo&&window.__krcLogo(this)">`
+    : fb;
   return `<div class="dot" style="background:${esc(color)}22;color:${esc(color)}">${img}</div>`;
 }
 
@@ -311,37 +314,39 @@ function vaultStatusLine(v) {
   return `${v.status || 'funded'} · ${amt}`;
 }
 
+function setVaultTab(tab) {
+  document.querySelectorAll('#vault-seg button').forEach(b => b.classList.toggle('on', b.dataset.vtab === tab));
+  $('vault-create')?.classList.toggle('hidden', tab !== 'create');
+  $('vault-mine-wrap')?.classList.toggle('hidden', tab !== 'mine');
+}
+
 function renderVault() {
   const mine = loadVaults();
   $('vault-products').innerHTML = VAULT_PRODUCTS.map(p => `
-    <button class="glass product" data-product="${esc(p.id)}">
-      <div class="glyph" style="width:42px;height:42px;border-radius:12px;background:var(--gold-dim);display:grid;place-items:center;color:var(--gold-2);font-weight:700;font-size:11px;">${esc(p.tag)}</div>
-      <div style="flex:1">
-        <h4>${esc(p.name)} ${p.status === 'mainnet' ? '<span class="badge live">Mainnet</span>' : '<span class="badge local">Standard</span>'}</h4>
-        <p>${esc(p.blurb)}</p>
-      </div>
+    <button class="glass product" data-product="${esc(p.id)}" title="${esc(p.blurb)}">
+      <div class="glyph">${esc(p.tag)}</div>
+      <h4>${esc(p.name)}</h4>
     </button>
   `).join('');
   $('vault-mine').innerHTML = mine.length
     ? mine.map(v => `
-      <div class="glass" style="padding:14px;margin-bottom:10px;">
-        <div style="display:flex;justify-content:space-between;gap:8px;align-items:flex-start;">
-          <div style="min-width:0;">
-            <div class="title">${esc(v.name || v.type)}</div>
-            <div class="sub" style="margin-top:4px;">${esc(vaultStatusLine(v))}</div>
-            <div class="mono" style="font-size:11px;color:var(--label-2);margin-top:6px;word-break:break-all;">${esc(v.address || '')}</div>
-          </div>
+      <div class="row token-row vault-card">
+        <div class="dot" style="background:rgba(212,176,122,.18);color:var(--gold-2)">⏱</div>
+        <div style="min-width:0;flex:1">
+          <div class="title">${esc(v.name || v.type)}</div>
+          <div class="sub">${vaultStatusLine(v)}</div>
         </div>
-        <div class="btn-row" style="margin-top:12px;">
-          <button class="btn btn-glass" data-vault="${esc(v.address || '')}">Details</button>
-          <button class="btn btn-gold" data-sweep="${esc(v.address || '')}">Sweep</button>
+        <div class="vault-card-actions">
+          <button class="nav-btn ghost" data-vault="${esc(v.address || '')}">Info</button>
+          <button class="nav-btn" data-sweep="${esc(v.address || '')}">Sweep</button>
         </div>
-      </div>`).join('') + `<button class="btn btn-gold" id="sweep-all" style="margin-bottom:16px;">Sweep all unlocked vaults</button>`
-    : `<div class="empty">Vaults you create land here. After you fund one, Sweep appears on the card.</div>`;
-  $('sweep-all')?.addEventListener('click', (e) => {
+      </div>`).join('')
+    : `<div class="empty vault-empty">No vaults yet. Create a time capsule, then Sweep lives on the card.</div>`;
+  if ($('sweep-all')) $('sweep-all').onclick = (e) => {
     e.stopPropagation();
     sweepAllVaults().catch(err => toast(errText(err)));
-  });
+  };
+}
 }
 
 function sompiOf(v) {
@@ -595,7 +600,7 @@ function openTokenSheet(token) {
     ? `https://kas.fyi/krc20-${encodeURIComponent(token.ticker)}`
     : (token.tokenId ? `https://kascov.io/#/mainnet/token/${encodeURIComponent(token.tokenId)}` : 'https://kascov.io/#/tokens');
   openSheet(token.ticker, `
-    ${token.image ? `<div style="display:flex;justify-content:center;padding:8px 0 14px;"><img src="${esc(token.image)}" alt="" style="width:56px;height:56px;border-radius:16px;object-fit:cover;"></div>` : ''}
+    ${token.image || token.protocol === 'krc20' || token.native ? `<div style="display:flex;justify-content:center;padding:8px 0 14px;"><img src="${esc(token.image || (token.native ? 'assets/kas.svg' : krc20Logo(token.ticker)))}" alt="" data-tick="${esc(token.ticker || '')}" onerror="window.__krcLogo&&window.__krcLogo(this)" style="width:56px;height:56px;border-radius:16px;object-fit:cover;"></div>` : ''}
     <div class="kv"><span class="k">Balance</span><span class="v">${esc(amt)} ${esc(token.ticker)}</span></div>
     <div class="kv"><span class="k">Name</span><span class="v">${esc(token.name)}</span></div>
     <div class="kv"><span class="k">Standard</span><span class="v">${esc(proto)}${token.standard ? ' · ' + esc(token.standard) : ''}</span></div>
@@ -1201,6 +1206,10 @@ function bind() {
     const known = loadVaults().find(v => v.address === addr) || { address: addr, type: 'timelock', name: 'Vault' };
     unlockVault(known).catch(err => toast(errText(err)));
   });
+  $('vault-seg')?.addEventListener('click', e => {
+    const btn = e.target.closest('[data-vtab]');
+    if (btn?.dataset.vtab) { haptic(); setVaultTab(btn.dataset.vtab); }
+  });
   $('btn-add-token').onclick = openAddToken;
   $('chat-send').onclick = sendChat;
   $('chat-input').addEventListener('keydown', e => { if (e.key === 'Enter') sendChat(); });
@@ -1280,6 +1289,25 @@ function bind() {
 }
 
 async function init() {
+  window.__krcLogo = (img) => {
+    if (!img) return;
+    const tick = String(img.dataset.tick || '');
+    const step = Number(img.dataset.step || 0);
+    const t = tick.toLowerCase();
+    const next = [
+      `https://krc20data.s3.amazonaws.com/verified/${t}.png`,
+      `https://krc20data.s3.amazonaws.com/verified/${tick}-logo.png`
+    ];
+    if (step < next.length) {
+      img.dataset.step = String(step + 1);
+      img.src = next[step];
+      return;
+    }
+    const fb = (tick || '?').slice(0, 3);
+    const parent = img.parentNode;
+    img.remove();
+    if (parent && !parent.textContent.trim()) parent.append(fb);
+  };
   window.__kcc = { parseIntent, isValidKaspaAddress, describeIntent, pingPublicNode, toRpcTransaction, p2shSpendScript, planKasPayment, storageMassOk };
   window.__kccLoad = loadKaspaSdk;
   setClock();

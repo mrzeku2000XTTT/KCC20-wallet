@@ -151,6 +151,12 @@ export function formatTokenUnits(raw, decimals = 0) {
   return n.toLocaleString(undefined, { maximumFractionDigits: Math.min(d, 8) });
 }
 
+export function krc20Logo(tick) {
+  const t = String(tick || '').toLowerCase();
+  if (!t) return '';
+  return `https://krc20data.s3.amazonaws.com/verified/${t}-logo.png`;
+}
+
 export function tokenColor(ticker) {
   const t = String(ticker || '').toUpperCase();
   if (t === 'KRON' || t === 'KRONS') return '#d4b07a';
@@ -255,7 +261,7 @@ export async function fetchKrc20Portfolio(address) {
         decimals: Number(r.dec || r.decimal || 8),
         balance: String(r.balance || '0'),
         cells: 0,
-        image: '',
+        image: krc20Logo(ticker),
         standard: 'krc-20',
         priceKas: null
       });

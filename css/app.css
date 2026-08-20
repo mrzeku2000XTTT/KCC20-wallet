@@ -756,6 +756,16 @@ button.tx { width: 100%; text-align: left; color: inherit; }
 }
 .scan-btn svg { width: 22px; height: 22px; }
 .scan-btn:active { opacity: 0.8; }
+.max-btn {
+  flex-shrink: 0; min-width: 56px; padding: 0 14px;
+  border-radius: 14px;
+  background: rgba(212,176,122,0.2);
+  border: 0.5px solid var(--hairline);
+  color: var(--gold-2);
+  font-size: 13px; font-weight: 700; letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+.max-btn:active { opacity: 0.8; }
 .qr-scan {
   margin: 0 0 14px;
   border-radius: 16px;

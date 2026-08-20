@@ -1,30 +1,30 @@
 import {
   loadCryptoLibs, generatePrivateKey, createKeypairFromHex,
   isValidKaspaAddress, shortAddr, hexToBytes, privKeyToHex, derivePublicKey, kaspaAddressFromPubkey, bytesToHex
-} from './crypto.js?v=62';
+} from './crypto.js?v=63';
 import {
   NATIVE_KAS, VAULT_PRODUCTS, loadWatchlist, addToken, removeToken,
   loadVaults, saveVault, updateVault, formatAmount, formatTokenUnits, tokenColor,
   fetchKcc20Portfolio, fetchKrc20Portfolio, fetchKcc20PortfolioMany, fetchKrc20PortfolioMany,
   krc20Logo, toTokenRaw, setVaultOwner
-} from './kcc20.js?v=62';
-import { parseIntent, describeIntent, askFor, parseDurationField, interpretVaultChat, normalizeChat } from './intent.js?v=62';
-import { payloadFromAddress } from './script.js?v=62';
-import { explainTransaction, scorpionAnswer } from './scorpion.js?v=62';
+} from './kcc20.js?v=63';
+import { parseIntent, describeIntent, askFor, parseDurationField, interpretVaultChat, normalizeChat } from './intent.js?v=63';
+import { payloadFromAddress } from './script.js?v=63';
+import { explainTransaction, scorpionAnswer } from './scorpion.js?v=63';
 import {
   sendKas, fetchAddressUtxos, fetchAddressBalance, loadKaspaSdk,
   buildTimelockCovenant, buildEscrowCovenant, buildMultisigCovenant, currentDaa,
   pingPublicNode, sweepVault, toRpcTransaction, p2shSpendScript, planKasPayment, storageMassOk,
   compoundUtxos, sendKrc20, sendKcc20, loadKrc20Pending, lockKcc20Timelock, sweepKcc20Capsule,
   fetchOwnedUtxos
-} from './tx.js?v=62';
-import { kronMarkets, quoteKronTrade, executeKronTrade, formatKasSompi, lookupKronTick, tradeCostLines } from './kronTrade.js?v=62';
+} from './tx.js?v=63';
+import { kronMarkets, quoteKronTrade, executeKronTrade, formatKasSompi, lookupKronTick, tradeCostLines } from './kronTrade.js?v=63';
 import {
   migrateReceiveBook, ownedAddresses, deriveFreshReceiveAddress, ensureFreshReceive,
   markAddressUsed, currentReceive
-} from './receive.js?v=62';
+} from './receive.js?v=63';
 
-export const BUILD = '62';
+export const BUILD = '63';
 
 function errText(e) {
   if (e == null) return 'Unknown error';
@@ -2359,9 +2359,61 @@ function assetAvail(a) {
   return formatTokenUnits(a.balance, a.decimals);
 }
 
+function humanFromRaw(raw, decimals) {
+  const d = Math.max(0, Number(decimals) || 0);
+  let n;
+  try { n = BigInt(raw || '0'); } catch { return '0'; }
+  if (n <= 0n) return '0';
+  if (d === 0) return n.toString();
+  const div = 10n ** BigInt(d);
+  const whole = n / div;
+  const frac = (n % div).toString().padStart(d, '0').replace(/0+$/, '');
+  return frac ? `${whole}.${frac}` : whole.toString();
+}
+
+function maxFillForAsset(a) {
+  if (!a) return '0';
+  if (a.native || a.protocol === 'kas') {
+    const feePad = 800_000n;
+    let sompi = 0n;
+    try { sompi = BigInt(a.balance || '0'); } catch { sompi = 0n; }
+    const spend = sompi > feePad ? sompi - feePad : 0n;
+    return humanFromRaw(spend.toString(), 8);
+  }
+  return humanFromRaw(a.balance, a.decimals);
+}
+
+function fillSendMax() {
+  const a = findSendAsset($('send-asset')?.value || 'kas');
+  const v = maxFillForAsset(a);
+  if ($('send-amount')) $('send-amount').value = v;
+  haptic();
+}
+
+function fillTradeMax() {
+  const side = $('trade-side')?.querySelector('.on')?.dataset.side || 'buy';
+  const tick = ($('trade-ticker')?.value || '').toUpperCase();
+  let v = '0';
+  if (side === 'sell') {
+    const t = (kccHoldings || []).find(x => String(x.ticker || '').toUpperCase() === tick)
+      || (krcHoldings || []).find(x => String(x.ticker || '').toUpperCase() === tick);
+    v = t ? humanFromRaw(t.balance, t.decimals) : '0';
+    if (v === '0') toast('No ' + (tick || 'token') + ' to sell in this wallet');
+  } else {
+    const feePad = 150_000_000n;
+    let sompi = 0n;
+    try { sompi = BigInt(balanceSompi || 0); } catch { sompi = 0n; }
+    const spend = sompi > feePad ? sompi - feePad : 0n;
+    v = humanFromRaw(spend.toString(), 8);
+  }
+  if ($('trade-amount')) $('trade-amount').value = v;
+  haptic();
+  quoteTradePreview();
+}
+
 function sendHintFor(a) {
   if (!a || a.native || a.protocol === 'kas') {
-    return `Available ${assetAvail(a)} KAS. Paste a kaspa: address or scan QR. Fee ~0.004–0.007 KAS.`;
+    return `Available ${assetAvail(a)} KAS. Max leaves ~0.008 KAS for the network fee.`;
   }
   const proto = a.protocol === 'krc20' ? 'KRC-20' : 'KCC20';
   if (a.protocol === 'krc20') {
@@ -2452,11 +2504,17 @@ function openSend(prefill) {
       <p class="muted" id="qr-scan-status">Point at a Kaspa QR — works for KAS, KRC-20, and KCC20</p>
       <button type="button" class="btn btn-glass" id="qr-scan-stop">Close camera</button>
     </div>
-    <div class="field"><label>Amount</label><input id="send-amount" type="text" inputmode="decimal" placeholder="0.00" value="${esc(amt0)}"></div>
+    <div class="field"><label>Amount</label>
+      <div class="dest-row">
+        <input id="send-amount" type="text" inputmode="decimal" placeholder="0.00" value="${esc(amt0)}">
+        <button class="max-btn" id="send-max" type="button">Max</button>
+      </div>
+    </div>
     <p class="muted send-hint" id="send-hint">${esc(sendHintFor(chosen))}</p>
   `, { confirm: 'Review', gold: true, onConfirm: () => prepareSend() });
   bindSendAssetPicker();
   bindSendQr();
+  $('send-max')?.addEventListener('click', fillSendMax);
 }
 
 function readSendForm() {
@@ -3234,6 +3292,7 @@ function bind() {
     clearTimeout(openTrade._t);
     openTrade._t = setTimeout(quoteTradePreview, 280);
   });
+  click('trade-max', fillTradeMax);
   $('trade-side')?.addEventListener('click', e => {
     const b = e.target.closest('[data-side]');
     if (!b) return;

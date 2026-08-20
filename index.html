@@ -12,7 +12,7 @@
   <link rel="icon" href="assets/icon.png">
   <title>KCC20 Wallet</title>
   <meta http-equiv="Cache-Control" content="no-store, no-cache, must-revalidate">
-  <link rel="stylesheet" href="css/app.css?v=62">
+  <link rel="stylesheet" href="css/app.css?v=63">
 </head>
 <body>
   <img class="bg-poster" src="assets/bg.jpg" alt="">
@@ -289,7 +289,10 @@
         </div>
         <div class="trade-meta glass hidden" id="trade-meta"></div>
         <div class="field"><label id="trade-amt-label">Pay (KAS)</label>
-          <input id="trade-amount" type="text" inputmode="decimal" placeholder="5">
+          <div class="dest-row">
+            <input id="trade-amount" type="text" inputmode="decimal" placeholder="5">
+            <button class="max-btn" id="trade-max" type="button">Max</button>
+          </div>
         </div>
         <div class="trade-quote" id="trade-quote">
           <p class="muted" style="text-align:left;padding:0;">Type a KRON ticker, look it up, then buy with this wallet. You’ll confirm with this wallet’s PIN.</p>
@@ -359,7 +362,7 @@
     })();
   </script>
   <script type="module">
-    import('./js/app.js?v=62').catch(function (err) {
+    import('./js/app.js?v=63').catch(function (err) {
       console.error(err);
       var phone = document.getElementById('phone');
       var d = document.createElement('div');

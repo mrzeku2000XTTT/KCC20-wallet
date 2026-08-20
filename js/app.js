@@ -1,24 +1,30 @@
 import {
   loadCryptoLibs, generatePrivateKey, createKeypairFromHex,
   isValidKaspaAddress, shortAddr, hexToBytes, privKeyToHex, derivePublicKey, kaspaAddressFromPubkey, bytesToHex
-} from './crypto.js?v=61';
+} from './crypto.js?v=62';
 import {
   NATIVE_KAS, VAULT_PRODUCTS, loadWatchlist, addToken, removeToken,
   loadVaults, saveVault, updateVault, formatAmount, formatTokenUnits, tokenColor,
-  fetchKcc20Portfolio, fetchKrc20Portfolio, krc20Logo, toTokenRaw, setVaultOwner
-} from './kcc20.js?v=61';
-import { parseIntent, describeIntent, askFor, parseDurationField, interpretVaultChat, normalizeChat } from './intent.js?v=61';
-import { payloadFromAddress } from './script.js?v=61';
-import { explainTransaction, scorpionAnswer } from './scorpion.js?v=61';
+  fetchKcc20Portfolio, fetchKrc20Portfolio, fetchKcc20PortfolioMany, fetchKrc20PortfolioMany,
+  krc20Logo, toTokenRaw, setVaultOwner
+} from './kcc20.js?v=62';
+import { parseIntent, describeIntent, askFor, parseDurationField, interpretVaultChat, normalizeChat } from './intent.js?v=62';
+import { payloadFromAddress } from './script.js?v=62';
+import { explainTransaction, scorpionAnswer } from './scorpion.js?v=62';
 import {
   sendKas, fetchAddressUtxos, fetchAddressBalance, loadKaspaSdk,
   buildTimelockCovenant, buildEscrowCovenant, buildMultisigCovenant, currentDaa,
   pingPublicNode, sweepVault, toRpcTransaction, p2shSpendScript, planKasPayment, storageMassOk,
-  compoundUtxos, sendKrc20, sendKcc20, loadKrc20Pending, lockKcc20Timelock, sweepKcc20Capsule
-} from './tx.js?v=61';
-import { kronMarkets, quoteKronTrade, executeKronTrade, formatKasSompi, lookupKronTick, tradeCostLines } from './kronTrade.js?v=61';
+  compoundUtxos, sendKrc20, sendKcc20, loadKrc20Pending, lockKcc20Timelock, sweepKcc20Capsule,
+  fetchOwnedUtxos
+} from './tx.js?v=62';
+import { kronMarkets, quoteKronTrade, executeKronTrade, formatKasSompi, lookupKronTick, tradeCostLines } from './kronTrade.js?v=62';
+import {
+  migrateReceiveBook, ownedAddresses, deriveFreshReceiveAddress, ensureFreshReceive,
+  markAddressUsed, currentReceive
+} from './receive.js?v=62';
 
-export const BUILD = '61';
+export const BUILD = '62';
 
 function errText(e) {
   if (e == null) return 'Unknown error';
@@ -288,6 +294,7 @@ function saveWallet() {
   localStorage.setItem(ACTIVE_KEY, wallet.id);
   const list = loadWalletList();
   const i = list.findIndex(w => w.id === wallet.id || w.address === wallet.address);
+  migrateReceiveBook(wallet);
   const row = {
     id: wallet.id,
     name: wallet.name,
@@ -295,7 +302,8 @@ function saveWallet() {
     privKey: wallet.privKey,
     pubKey: wallet.pubKey || '',
     createdAt: wallet.createdAt || Date.now(),
-    pin: wallet.pin || list[i]?.pin || undefined
+    pin: wallet.pin || list[i]?.pin || undefined,
+    receiveAddrs: wallet.receiveAddrs || []
   };
   if (i >= 0) list[i] = { ...list[i], ...row };
   else list.push(row);
@@ -857,7 +865,7 @@ function resetLiveState() {
 }
 
 async function activateWallet(w, { toastMsg } = {}) {
-  wallet = migratePinOnto(w);
+  wallet = migrateReceiveBook(migratePinOnto(w));
   saveWallet();
   setVaultOwner(w.address);
   resetLiveState();
@@ -1788,17 +1796,20 @@ async function tickLive(full) {
   if (!wallet) return;
   const addr = wallet.address;
   try {
-    const [bRes, uRes] = await Promise.all([
-      fetch(`${API_BASE}/addresses/${addr}/balance`),
-      fetch(`${API_BASE}/addresses/${addr}/utxos`)
+    migrateReceiveBook(wallet);
+    const owned = ownedAddresses(wallet);
+    const home = owned.find(o => o.role === 'home') || owned[0];
+    const [bals, uRes] = await Promise.all([
+      Promise.all(owned.map(o => fetchAddressBalance(o.address).catch(() => 0))),
+      fetch(`${API_BASE}/addresses/${encodeURIComponent(home?.address || addr)}/utxos`)
     ]);
     if (!wallet || wallet.address !== addr) return;
-    let nextBal = balanceSompi;
-    if (bRes.ok) {
-      const data = await bRes.json();
-      nextBal = Number(data.balance ?? data ?? 0);
-    }
+    let nextBal = bals.reduce((a, n) => a + Number(n || 0), 0);
+    owned.forEach((o, i) => {
+      if (o.role !== 'home' && Number(bals[i] || 0) > 0) markAddressUsed(wallet, o.address, true);
+    });
     if (uRes.ok) utxos = await uRes.json() || [];
+    saveWallet();
     const balChanged = seenBalance != null && nextBal !== seenBalance;
     if (seenBalance != null && nextBal > seenBalance) {
       const delta = nextBal - seenBalance;
@@ -1832,7 +1843,7 @@ async function tickLive(full) {
       if (currentTab === 'activity') renderActivity(window.__txs || []);
     }
     const recvBal = $('recv-balance');
-    if (recvBal) recvBal.textContent = `${formatAmount(balanceSompi)} KAS`;
+    if (recvBal) recvBal.textContent = `${formatAmount(balanceSompi)} KAS total`;
     if (full) {
       try {
         const [pRes, tRes] = await Promise.all([
@@ -1879,9 +1890,10 @@ async function refreshTokenHoldings() {
   const addr = wallet.address;
   const before = [...kccHoldings, ...krcHoldings];
   try {
+    const owned = ownedAddresses(wallet);
     const [kcc, krc] = await Promise.allSettled([
-      fetchKcc20Portfolio(addr, wallet.pubKey),
-      fetchKrc20Portfolio(addr)
+      owned.length > 1 ? fetchKcc20PortfolioMany(owned) : fetchKcc20Portfolio(addr, wallet.pubKey),
+      owned.length > 1 ? fetchKrc20PortfolioMany(owned) : fetchKrc20Portfolio(addr)
     ]);
     if (!wallet || wallet.address !== addr) return;
     if (kcc.status === 'fulfilled') kccHoldings = mergeFreshHoldings(kccHoldings, kcc.value);
@@ -1909,6 +1921,9 @@ async function refreshTokenHoldings() {
           label: 'Received'
         });
         attachKcc20ReceiveTxid(ev);
+        const recv = currentReceive(wallet, { tick: t.ticker });
+        if (recv) markAddressUsed(wallet, recv.address, true);
+        saveWallet();
         setLiveFast(true);
         clearTimeout(tokenFastOff);
         tokenFastOff = setTimeout(() => setLiveFast(false), 25000);
@@ -1949,11 +1964,12 @@ function openTokenSheet(token) {
     ${token.cells ? `<div class="kv"><span class="k">Cells</span><span class="v">${esc(token.cells)}</span></div>` : ''}
     ${token.tokenId && token.protocol === 'kcc20' ? `<div class="kv"><span class="k">Token ID</span><span class="v">${esc(token.tokenId)}</span></div>` : ''}
     <p class="muted" style="text-align:left;padding-top:8px;">Live from kascov.io (KRON / KCC20, CORS open). Same holdings KasWare shows for this address.</p>
-    ${token.protocol === 'kcc20' ? `<div class="btn-row" style="margin-top:10px;">
-      <button class="btn btn-gold" id="tk-buy" type="button">Buy</button>
+    <div class="btn-row" style="margin-top:10px;">
+      <button class="btn btn-gold" id="tk-recv" type="button">Receive</button>
+      ${token.protocol === 'kcc20' ? `<button class="btn btn-glass" id="tk-buy" type="button">Buy</button>
       <button class="btn btn-glass" id="tk-sell" type="button">Sell</button>
-      <button class="btn btn-glass" id="tk-freeze" type="button">Freeze</button>
-    </div>` : ''}
+      <button class="btn btn-glass" id="tk-freeze" type="button">Freeze</button>` : ''}
+    </div>
     <p class="muted"><a href="${esc(link)}" target="_blank" rel="noopener" style="color:var(--gold-2)">Open explorer</a></p>
   `, {
     confirm: 'Send ' + token.ticker,
@@ -1961,6 +1977,7 @@ function openTokenSheet(token) {
     cancelLabel: 'Close',
     onConfirm: () => openSend({ token, assetKey: `${token.protocol}:${token.ticker}` })
   });
+  $('tk-recv')?.addEventListener('click', () => { closeSheet(); openReceive({ token }); });
   $('tk-buy')?.addEventListener('click', () => { closeSheet(); openTrade({ tick: token.ticker, side: 'buy' }); });
   $('tk-sell')?.addEventListener('click', () => { closeSheet(); openTrade({ tick: token.ticker, side: 'sell' }); });
   $('tk-freeze')?.addEventListener('click', () => { closeSheet(); openProduct('kcc20freeze', { tick: token.ticker }); });
@@ -2496,7 +2513,9 @@ async function broadcastSend(dest, amount) {
     toast('Connecting to public Kaspa node…');
     await pingPublicNode();
     toast('Signing & broadcasting…');
-    const availableUtxos = await fetchAddressUtxos(wallet.address);
+    const availableUtxos = wallet.receiveAddrs?.length > 1
+      ? await fetchOwnedUtxos(wallet)
+      : await fetchAddressUtxos(wallet.address);
     if (!availableUtxos.length) { toast('No UTXOs yet — receive KAS first'); return; }
     const result = await sendKas({ wallet, dest, amountKas: amount, utxos: availableUtxos });
     pushTokenActivity({
@@ -2529,7 +2548,9 @@ async function broadcastTokenSend(dest, asset, human, raw) {
     await requirePin('Confirm send');
     await loadKaspaSdk();
     await pingPublicNode();
-    const availableUtxos = await fetchAddressUtxos(wallet.address);
+    const availableUtxos = wallet.receiveAddrs?.length > 1
+      ? await fetchOwnedUtxos(wallet)
+      : await fetchAddressUtxos(wallet.address);
     if (!availableUtxos.length) { toast('Need a little KAS in this wallet for fees'); return; }
     const onStatus = (m) => { toast(m); setSheetStatus(m); };
     let result;
@@ -2576,31 +2597,76 @@ async function broadcastTokenSend(dest, asset, human, raw) {
   }
 }
 
-async function openReceive() {
-  haptic();
-  receiveWatch = true;
-  setLiveFast(true);
-  const addr = wallet.address;
-  openSheet('Receive', `
-    <div class="qr-wrap" id="qr-box"></div>
-    <p class="mono" style="text-align:center;font-size:12px;color:var(--label-2);word-break:break-all;padding:0 8px 12px;">${esc(addr)}</p>
-    <p class="muted" id="recv-balance">${formatAmount(balanceSompi)} KAS</p>
-    <p class="muted" id="recv-status">Watching the chain for incoming KAS…</p>
-    <button class="btn btn-gold" id="copy-addr">Copy address</button>
-  `, { confirm: 'Done', cancel: false, onConfirm: () => { receiveWatch = false; setLiveFast(false); closeSheet(); } });
+async function paintReceiveQr(addr) {
   try {
     const QR = await import('https://esm.sh/qrcode@1.5.4');
     const canvas = document.createElement('canvas');
     await QR.toCanvas(canvas, addr, { width: 188, margin: 0, color: { dark: '#111111', light: '#ffffff' } });
-    $('qr-box').innerHTML = '';
-    $('qr-box').appendChild(canvas);
+    if ($('qr-box')) { $('qr-box').innerHTML = ''; $('qr-box').appendChild(canvas); }
   } catch {
-    $('qr-box').innerHTML = `<img alt="QR" src="https://api.qrserver.com/v1/create-qr-code/?size=188x188&data=${encodeURIComponent(addr)}">`;
+    if ($('qr-box')) {
+      $('qr-box').innerHTML = `<img alt="QR" src="https://api.qrserver.com/v1/create-qr-code/?size=188x188&data=${encodeURIComponent(addr)}">`;
+    }
   }
+}
+
+async function openReceive(prefill) {
+  haptic();
+  receiveWatch = true;
+  setLiveFast(true);
+  migrateReceiveBook(wallet);
+  const tick = String(prefill?.token?.ticker || prefill?.tick || '').toUpperCase();
+  const proto = prefill?.token?.protocol || (tick ? 'kcc20' : 'kas');
+  let recv = await ensureFreshReceive(wallet, { tick, role: tick ? 'kcc20' : 'kas', label: tick ? 'Receive ' + tick : 'Receive' });
+  saveWallet();
+  const title = tick ? 'Receive ' + tick : 'Receive KAS';
+  const book = ownedAddresses(wallet).filter(a => a.role !== 'home');
+  const bookHtml = book.length
+    ? book.slice().reverse().slice(0, 8).map(a => `
+        <div class="row token-row" style="padding:8px 0;">
+          <div style="min-width:0;flex:1">
+            <div class="title">${esc(a.label || 'Receive')}</div>
+            <div class="sub">${esc(shortAddr(a.address, 10, 6))} · ${a.used ? 'used' : 'fresh'}</div>
+          </div>
+          <button class="nav-btn ghost" type="button" data-show-recv="${esc(a.address)}">Show</button>
+        </div>`).join('')
+    : `<div class="empty">Fresh addresses appear here. Home stays for spending.</div>`;
+  openSheet(title, `
+    <p class="muted" style="text-align:left;padding:0 0 8px;">KaChing-style privacy: a <strong>new kaspa:q</strong> for this receive. If this one is used, we derive another. ${tick ? esc(tick) + ' cells land on this key.' : 'Native KAS on Layer 1.'}</p>
+    <div class="qr-wrap" id="qr-box"></div>
+    <p class="mono" id="recv-addr" style="text-align:center;font-size:12px;color:var(--label-2);word-break:break-all;padding:0 8px 8px;">${esc(recv.address)}</p>
+    <p class="muted" id="recv-balance">${formatAmount(balanceSompi)} KAS total</p>
+    <p class="muted" id="recv-status">Watching ${esc(shortAddr(recv.address, 8, 6))}…</p>
+    <div class="btn-row" style="margin:8px 0 12px;">
+      <button class="btn btn-gold" id="copy-addr" type="button">Copy</button>
+      <button class="btn btn-glass" id="recv-new" type="button">New address</button>
+    </div>
+    <div class="section-label">Receive book</div>
+    <div id="recv-book">${bookHtml}</div>
+  `, { confirm: 'Done', cancel: false, onConfirm: () => { receiveWatch = false; setLiveFast(false); closeSheet(); } });
+  await paintReceiveQr(recv.address);
+  window.__recvAddr = recv.address;
   $('copy-addr').onclick = async () => {
-    await navigator.clipboard.writeText(addr);
+    await navigator.clipboard.writeText(window.__recvAddr || recv.address);
     toast('Address copied');
   };
+  $('recv-new').onclick = async () => {
+    const row = await deriveFreshReceiveAddress(wallet, { tick, role: tick ? 'kcc20' : 'kas' });
+    saveWallet();
+    window.__recvAddr = row.address;
+    if ($('recv-addr')) $('recv-addr').textContent = row.address;
+    if ($('recv-status')) $('recv-status').textContent = 'Watching ' + shortAddr(row.address, 8, 6) + '…';
+    await paintReceiveQr(row.address);
+    toast('New receive address');
+    openReceive(prefill);
+  };
+  $('recv-book')?.addEventListener('click', e => {
+    const b = e.target.closest('[data-show-recv]');
+    if (!b?.dataset.showRecv) return;
+    window.__recvAddr = b.dataset.showRecv;
+    if ($('recv-addr')) $('recv-addr').textContent = b.dataset.showRecv;
+    paintReceiveQr(b.dataset.showRecv);
+  });
 }
 
 function openSettings() {

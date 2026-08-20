@@ -1,5 +1,5 @@
 /* Official rusty-kaspa WASM: P2SH covenants + signed send/fund. */
-import { hexToBytes, kaspaAddressFromScriptHash } from './crypto.js?v=61';
+import { hexToBytes, kaspaAddressFromScriptHash } from './crypto.js?v=62';
 
 const API = 'https://api.kaspa.org';
 
@@ -392,11 +392,25 @@ function bindCovenantOutputs(k, tx, destStr) {
   return covenantId;
 }
 
-function signP2pkInputs(k, tx, priv) {
+function privForInput(k, tx, i, fallbackPriv, entries) {
+  try {
+    const prev = tx.inputs[i].previousOutpoint;
+    const id = String(prev.transactionId);
+    const idx = Number(prev.index);
+    const hit = (entries || []).find(e =>
+      e.outpoint && String(e.outpoint.transactionId) === id && Number(e.outpoint.index) === idx
+    );
+    if (hit?.privKey) return new k.PrivateKey(hit.privKey);
+  } catch {}
+  return fallbackPriv;
+}
+
+function signP2pkInputs(k, tx, priv, entries) {
   const scripts = [];
   const n = tx.inputs.length;
   for (let i = 0; i < n; i++) {
-    const sig = k.createInputSignature(tx, i, priv, k.SighashType.All);
+    const use = privForInput(k, tx, i, priv, entries);
+    const sig = k.createInputSignature(tx, i, use, k.SighashType.All);
     const hex = hexish(sig);
     if (!hex || hex.length < 20) throw new Error('Signing failed — empty P2PK signature');
     tx.inputs[i].signatureScript = hex;
@@ -503,7 +517,13 @@ export async function sendKas({ wallet, dest, amountKas, utxos, exact = false })
   const k = await loadKaspaSdk();
   const requested = k.kaspaToSompi(String(amountKas));
   if (requested == null) throw new Error('Invalid amount');
-  let entries = restUtxosToEntries(utxos, wallet.address);
+  let entries;
+  if (wallet?.receiveAddrs?.length > 1 && !(utxos && utxos.length && utxos[0]?.privKey)) {
+    entries = await fetchOwnedUtxos(wallet);
+  } else {
+    entries = restUtxosToEntries(utxos || [], wallet.address)
+      .map(e => ({ ...e, privKey: e.privKey || wallet.privKey }));
+  }
   if (!entries.length) throw new Error('No UTXOs yet — receive KAS first');
   entries = [...entries].sort((a, b) => (a.amount < b.amount ? 1 : -1));
 
@@ -588,7 +608,7 @@ export async function sendKas({ wallet, dest, amountKas, utxos, exact = false })
       if (need && need > paid) {
         shrinkOutputsForFee(tx, need - paid + 50_000n, protect);
         if (exact) assertExactDest(k, tx, destStr, requested);
-        scripts = signP2pkInputs(k, tx, priv);
+        scripts = signP2pkInputs(k, tx, priv, plan.entries);
         txId = await submitSignedRpc(k, rpc, url, tx, {
           sigOpCount: 0,
           computeBudget: 10,
@@ -750,15 +770,31 @@ function assertExactDest(k, tx, destStr, requested) {
 }
 
 function meetToccataFee(k, tx, priv, entries, floor = 0n, protectIndex = -1) {
-  let scripts = signP2pkInputs(k, tx, priv);
+  let scripts = signP2pkInputs(k, tx, priv, entries);
   for (let round = 0; round < 3; round++) {
     const need = toccataMinFee(k, tx, floor);
     const paid = txInputSum(tx, entries) - txOutputSum(tx);
     if (paid >= need) return scripts;
     shrinkOutputsForFee(tx, need - paid, protectIndex);
-    scripts = signP2pkInputs(k, tx, priv);
+    scripts = signP2pkInputs(k, tx, priv, entries);
   }
   return scripts;
+}
+
+export async function fetchOwnedUtxos(wallet) {
+  const addrs = (wallet?.receiveAddrs && wallet.receiveAddrs.length)
+    ? wallet.receiveAddrs
+    : [{ address: wallet.address, privateKey: wallet.privKey }];
+  const bags = await Promise.all(addrs.slice(0, 12).map(async a => {
+    try {
+      const raw = await fetchAddressUtxos(a.address);
+      const key = a.privateKey || a.privKey || wallet.privKey;
+      return restUtxosToEntries(raw, a.address).map(e => ({ ...e, privKey: key }));
+    } catch {
+      return [];
+    }
+  }));
+  return bags.flat();
 }
 
 function requiredFeeFromError(e) {
@@ -903,7 +939,7 @@ export async function compoundUtxos({ wallet, utxos }) {
       const paid = txInputSum(tx, entries) - txOutputSum(tx);
       if (need && need > paid) {
         shrinkOutputsForFee(tx, need - paid + 50_000n, -1);
-        scripts = signP2pkInputs(k, tx, priv);
+        scripts = signP2pkInputs(k, tx, priv, entries);
         txId = await submitSignedRpc(k, rpc, url, tx, {
           sigOpCount: 0,
           computeBudget: 10,
@@ -1333,8 +1369,17 @@ export async function sendKcc20({ wallet, dest, token, amountHuman, utxos, onSta
   const tokenCovid = String(meta?.covenantId || token.tokenId || '').replace(/^0x/i, '').toLowerCase();
   if (!/^[0-9a-f]{64}$/.test(tokenCovid)) throw new Error('KRON did not return a covenant id for ' + tick);
 
-  const rawCells = await kronJson(`/v1/kcc20/token/${encodeURIComponent(tick)}/address/${encodeURIComponent(wallet.address)}/utxos`);
-  const cells = Array.isArray(rawCells?.result) ? rawCells.result : [];
+  const scanAddrs = (wallet.receiveAddrs && wallet.receiveAddrs.length)
+    ? wallet.receiveAddrs.map(a => a.address)
+    : [wallet.address];
+  const cellBags = await Promise.all(scanAddrs.slice(0, 12).map(async a => {
+    try {
+      const raw = await kronJson(`/v1/kcc20/token/${encodeURIComponent(tick)}/address/${encodeURIComponent(a)}/utxos`);
+      const list = Array.isArray(raw?.result) ? raw.result : [];
+      return list.map(c => ({ ...c, scanAddr: a }));
+    } catch { return []; }
+  }));
+  const cells = cellBags.flat();
   if (!cells.length) throw new Error('No ' + tick + ' cells on this address (KRON indexer)');
 
   const loaded = await Promise.all(cells.map(async c => {
@@ -1666,8 +1711,16 @@ async function loadKcc20Pieces(wallet, tick) {
   const meta = Array.isArray(info?.result) ? info.result[0] : info?.result;
   const tokenCovid = String(meta?.covenantId || '').replace(/^0x/i, '').toLowerCase();
   if (!/^[0-9a-f]{64}$/.test(tokenCovid)) throw new Error('KRON did not return a covenant id for ' + tick);
-  const rawCells = await kronJson(`/v1/kcc20/token/${encodeURIComponent(tick)}/address/${encodeURIComponent(wallet.address)}/utxos`);
-  const cells = Array.isArray(rawCells?.result) ? rawCells.result : [];
+  const scanAddrs = (wallet.receiveAddrs && wallet.receiveAddrs.length)
+    ? wallet.receiveAddrs.map(a => a.address)
+    : [wallet.address];
+  const cellBags = await Promise.all(scanAddrs.slice(0, 12).map(async a => {
+    try {
+      const raw = await kronJson(`/v1/kcc20/token/${encodeURIComponent(tick)}/address/${encodeURIComponent(a)}/utxos`);
+      return Array.isArray(raw?.result) ? raw.result : [];
+    } catch { return []; }
+  }));
+  const cells = cellBags.flat();
   const pieces = [];
   await Promise.all((cells || []).map(async c => {
     const txid = c.outpoint?.transactionId;

@@ -282,6 +282,45 @@ export async function fetchKcc20Portfolio(address, pubKey) {
   return [];
 }
 
+export async function fetchKcc20PortfolioMany(addrs) {
+  const bags = await Promise.all((addrs || []).slice(0, 12).map(a =>
+    fetchKcc20Portfolio(a.address, a.pubKey).catch(() => [])
+  ));
+  const map = new Map();
+  for (const list of bags) {
+    for (const t of list) {
+      const key = String(t.ticker || '').toUpperCase();
+      const cur = map.get(key);
+      if (!cur) map.set(key, { ...t, balance: String(t.balance || '0') });
+      else {
+        try { cur.balance = (BigInt(cur.balance || '0') + BigInt(t.balance || '0')).toString(); }
+        catch {}
+        cur.cells = Number(cur.cells || 0) + Number(t.cells || 0);
+      }
+    }
+  }
+  return [...map.values()];
+}
+
+export async function fetchKrc20PortfolioMany(addrs) {
+  const bags = await Promise.all((addrs || []).slice(0, 12).map(a =>
+    fetchKrc20Portfolio(a.address).catch(() => [])
+  ));
+  const map = new Map();
+  for (const list of bags) {
+    for (const t of list) {
+      const key = String(t.ticker || '').toUpperCase();
+      const cur = map.get(key);
+      if (!cur) map.set(key, { ...t, balance: String(t.balance || '0') });
+      else {
+        try { cur.balance = (BigInt(cur.balance || '0') + BigInt(t.balance || '0')).toString(); }
+        catch {}
+      }
+    }
+  }
+  return [...map.values()];
+}
+
 export async function fetchKrc20Portfolio(address) {
   if (!address) return [];
   const out = [];

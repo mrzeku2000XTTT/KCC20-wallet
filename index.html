@@ -11,7 +11,7 @@
   <link rel="apple-touch-icon" href="assets/icon.png">
   <link rel="icon" href="assets/icon.png">
   <title>KCC20 Wallet</title>
-  <link rel="stylesheet" href="css/app.css?v=33">
+  <link rel="stylesheet" href="css/app.css?v=34">
 </head>
 <body>
   <img class="bg-poster" src="assets/bg.jpg" alt="">
@@ -170,6 +170,42 @@
     </div>
   </div>
 
-  <script type="module" src="js/app.js?v=33"></script>
+  <script>
+    (function () {
+      function pad(n) { return String(n).padStart(2, '0'); }
+      function tick() {
+        var d = new Date();
+        var el = document.getElementById('clock');
+        if (el) el.textContent = pad(d.getUTCHours()) + ':' + pad(d.getUTCMinutes()) + ':' + pad(d.getUTCSeconds()) + ' UTC';
+      }
+      tick();
+      setInterval(tick, 1000);
+      var show = document.getElementById('btn-show-import');
+      var box = document.getElementById('import-box');
+      if (show && box) {
+        show.addEventListener('click', function () {
+          if (window.__kccBound) return;
+          box.classList.toggle('hidden');
+        });
+      }
+      var create = document.getElementById('btn-create');
+      if (create) {
+        create.addEventListener('click', function () {
+          if (window.__kccBound) return;
+          alert('Wallet script did not load. Run: npx serve -p 4173  in the wallet folder, then open http://127.0.0.1:4173');
+        });
+      }
+    })();
+  </script>
+  <script type="module">
+    import('./js/app.js?v=34').catch(function (err) {
+      console.error(err);
+      var phone = document.getElementById('phone');
+      var d = document.createElement('div');
+      d.textContent = 'Wallet JS failed: ' + (err && err.message ? err.message : String(err)) + ' — open via http://127.0.0.1:4173 not as a file.';
+      d.style.cssText = 'position:absolute;left:12px;right:12px;bottom:20px;z-index:9999;background:#4a1010;color:#ffd6d6;padding:12px;border-radius:14px;font:13px/1.4 -apple-system,sans-serif;border:1px solid #ff453a';
+      if (phone) phone.appendChild(d);
+    });
+  </script>
 </body>
 </html>

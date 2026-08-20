@@ -1184,6 +1184,7 @@ function click(id, fn) {
 }
 
 function bind() {
+  window.__kccBound = true;
   click('btn-create', createWallet);
   click('btn-show-import', () => $('import-box')?.classList.toggle('hidden'));
   click('btn-import', importWallet);
@@ -1309,7 +1310,11 @@ async function init() {
   window.__kccLoad = loadKaspaSdk;
   setClock();
   setInterval(setClock, 1000);
-  try { bind(); } catch (e) { console.error(e); toast('UI failed to bind — hard refresh. ' + errText(e)); }
+  try { bind(); } catch (e) {
+    console.error(e);
+    window.__kccBound = false;
+    toast('UI failed to bind — hard refresh. ' + errText(e));
+  }
   const video = document.getElementById('bg-video');
   video?.play?.().catch(() => {});
   video?.addEventListener('playing', () => document.querySelector('.bg-poster')?.classList.add('hidden'));

@@ -8,6 +8,8 @@ const REG = 'https://api.kron.technology';
 const KASPA = 'https://api.kaspa.org';
 const SCALE = 1_000_000n;
 const DUST = 50_000_000n;
+const NETWORK_EST = 40_000_000n; // ~0.40 KAS typical covenant mass fee
+const PARTNER_REF = 'kcc20wallet';
 
 let listCache = null;
 let listAt = 0;
@@ -264,7 +266,7 @@ async function curveHead(tick, token, entry) {
   const live = await idxToken(tick);
   const tokenReserve = BigInt(live.cpState?.tokenReserve || live.tokenReserve || token.tokenReserve || 0);
   const indexerKas = BigInt(live.cpState?.realKas || 0);
-  const trades = await idx('/token/' + encodeURIComponent(tick) + '/trades?limit=5');
+  const trades = await idx('/token/' + encodeURIComponent(tick) + '/trades?limit=2');
   const rows = Array.isArray(trades) ? trades : (trades ? [trades] : []);
   let lastErr = new Error('No curve trades yet — cannot locate the live curve');
   for (const row of rows) {
@@ -307,6 +309,29 @@ async function curveHead(tick, token, entry) {
   throw lastErr;
 }
 
+function withCost(q) {
+  const protocol = BigInt(q.fee || 0n);
+  const into = BigInt(q.kasIn || 0n);
+  const cell = q.side === 'buy' ? DUST : 0n;
+  q.cellDust = cell;
+  q.networkEst = NETWORK_EST;
+  q.nativeLeave = q.side === 'buy' ? into + protocol + cell + NETWORK_EST : protocol + NETWORK_EST;
+  q.youKeepCell = cell;
+  q.netGone = q.side === 'buy' ? into + protocol + NETWORK_EST : protocol + NETWORK_EST;
+  return q;
+}
+
+export function tradeCostLines(q) {
+  if (!q || q.side !== 'buy') return '';
+  return [
+    `Into the market: ${Number(q.kasIn) / 1e8} KAS buys the tokens.`,
+    `KRON protocol fees: ${Number(q.fee) / 1e8} KAS — paid to the token creator and KRON (covenant-required, not optional). Curve trades pad each fee output to 0.2 KAS.`,
+    `Token cell: 0.5 KAS stays in THIS wallet inside the ${q.tick} cell (not spent).`,
+    `Network fee: ~0.4 KAS because a covenant tx is large (~175 KB).`,
+    `Native KAS leaving the card: ~${Number(q.nativeLeave) / 1e8} KAS. You still hold 0.5 KAS in the token cell.`
+  ].join(' ');
+}
+
 function sompiFromKas(human) {
   const t = String(human || '').trim().replace(',', '.');
   if (!t) throw new Error('Enter an amount');
@@ -329,10 +354,21 @@ export async function quoteKronTrade({ tick, side, amount }) {
     const kasIn = sompiFromKas(amount);
     let q;
     if (graduated) {
-      const live = await poolHead(tick, entry.covenantId, entry.extensions.poolCovenantId);
-      q = kron.poolCpV3.quotePoolV3Buy(live.utxo.state, poolParams(entry), kasIn);
+      const cp = token.cpState || {};
+      const pstate = {
+        kasReserve: BigInt(cp.poolKas || 0),
+        tokenReserve: BigInt(cp.poolTokenReserve || 0),
+        tokenCovid: hexBytes(token.covenantId || entry.covenantId),
+        totalShares: BigInt(cp.poolTotalShares || 1),
+        lpCovid: hexBytes(cp.poolLpCovid || '00'.repeat(32))
+      };
+      q = kron.poolCpV3.quotePoolV3Buy(pstate, poolParams(entry), kasIn);
+      if (!q && (pstate.kasReserve <= 0n || pstate.tokenReserve <= 0n)) {
+        const live = await poolHead(tick, entry.covenantId, entry.extensions.poolCovenantId);
+        q = kron.poolCpV3.quotePoolV3Buy(live.utxo.state, poolParams(entry), kasIn);
+      }
       if (!q) throw new Error('Amount too small for this pool');
-      return {
+      return withCost({
         tick: String(tick).toUpperCase(),
         side: 'buy',
         graduated: true,
@@ -343,11 +379,11 @@ export async function quoteKronTrade({ tick, side, amount }) {
         total: q.total,
         price: token.price,
         raw: q
-      };
+      });
     }
     q = kron.curve.quoteCpBuy(curveQuoteState(token, entry), kasIn);
     if (!q) throw new Error('Amount too small for this curve');
-    return {
+    return withCost({
       tick: String(tick).toUpperCase(),
       side: 'buy',
       graduated: false,
@@ -358,7 +394,7 @@ export async function quoteKronTrade({ tick, side, amount }) {
       total: q.total,
       price: token.price,
       raw: q
-    };
+    });
   }
   const tokenIn = BigInt(String(amount).trim());
   if (tokenIn <= 0n) throw new Error('Enter a token amount');
@@ -511,7 +547,7 @@ function assembleSpend(k, spend, fundingEntries, changeAddress, networkFee) {
     outputs,
     lockTime: 0n,
     gas: 0n,
-    payload: '',
+    payload: kron.partnerTag.encodePartnerTag(PARTNER_REF) || '',
     subnetworkId: '0000000000000000000000000000000000000000'
   });
   return {
@@ -522,36 +558,28 @@ function assembleSpend(k, spend, fundingEntries, changeAddress, networkFee) {
 }
 
 async function connectTradeNode(k) {
-  try {
-    const url = 'wss://node.kron.technology';
-    const rpc = new k.RpcClient({ url, encoding: k.Encoding.Borsh, networkId: 'mainnet' });
-    await rpc.connect();
-    await rpc.getServerInfo();
-    return { rpc, url };
-  } catch {
-    return connectPublicNode();
-  }
+  return connectPublicNode();
 }
 
-async function loadUserTokens(tick, address) {
+async function loadUserTokens(tick, address, { limit = 4, withKas = true } = {}) {
   const utxos = await idx(`/token/${encodeURIComponent(tick)}/address/${encodeURIComponent(address)}/utxos`);
-  const rows = Array.isArray(utxos) ? utxos : [];
-  const out = [];
-  for (const u of rows) {
-    if (!u?.redeemScriptHex) continue;
+  const rows = (Array.isArray(utxos) ? utxos : []).filter(u => u?.redeemScriptHex).slice(0, limit);
+  const out = await Promise.all(rows.map(async u => {
     const decoded = kron.kcc20.decodeKcc20Redeem(hexBytes(u.redeemScriptHex));
     const txid = u.outpoint.transactionId;
     const index = Number(u.outpoint.index);
     let value = DUST;
-    try { value = await cellKas(txid, index); } catch {}
-    out.push({
+    if (withKas) {
+      try { value = await cellKas(txid, index); } catch {}
+    }
+    return {
       transactionId: txid,
       index,
       value,
       state: decoded.state,
       template: decoded.template
-    });
-  }
+    };
+  }));
   return out.sort((a, b) => (a.state.amount < b.state.amount ? 1 : -1));
 }
 
@@ -587,35 +615,36 @@ export async function executeKronTrade({ wallet, tick, side, amount, utxos, onSt
 
   let spend;
   if (quoted.side === 'buy' && quoted.graduated) {
+    onStatus?.('Loading pool…');
     const live = await poolHead(tick, entry.covenantId, entry.extensions.poolCovenantId);
     const poolTpl = templateFromPart(desc.pool);
-    const held = await loadUserTokens(tick, wallet.address).catch(() => []);
-    const merge = held.slice(0, 3);
-    const presence = merge.length ? 2 + merge.length : 0;
     spend = kron.poolCpV3.buildPoolV3SwapKasForToken(
-      k, poolTpl, tokenTpl, poolParams(entry), live.utxo, live.poolCovid, buyer, quoted.raw, merge, presence
+      k, poolTpl, tokenTpl, poolParams(entry), live.utxo, live.poolCovid, buyer, quoted.raw, [], 0
     );
   } else if (quoted.side === 'sell' && quoted.graduated) {
-    const live = await poolHead(tick, entry.covenantId, entry.extensions.poolCovenantId);
+    onStatus?.('Loading pool…');
+    const [live, held] = await Promise.all([
+      poolHead(tick, entry.covenantId, entry.extensions.poolCovenantId),
+      loadUserTokens(tick, wallet.address, { limit: 4, withKas: true })
+    ]);
     const poolTpl = templateFromPart(desc.pool);
-    const held = await loadUserTokens(tick, wallet.address);
     const picked = pickTokens(held, quoted.tokenIn, 3);
     const presence = 2 + picked.length;
     spend = kron.poolCpV3.buildPoolV3SwapTokenForKas(
       k, poolTpl, tokenTpl, poolParams(entry), live.utxo, live.poolCovid, buyer, picked, quoted.raw, presence
     );
   } else if (quoted.side === 'buy') {
+    onStatus?.('Loading curve…');
     const head = await curveHead(tick, token, entry);
-    const held = await loadUserTokens(tick, wallet.address).catch(() => []);
-    const merge = held.slice(0, 3);
-    const presence = merge.length ? 2 + merge.length : 0;
-    onStatus?.('Building curve buy…');
     spend = kron.curveCp.buildCpBuy(
-      k, head.tpl, tokenTpl, head.utxo, head.inventory, head.curveCovid, buyer, quoted.kasIn, quoted.tokenOut, merge, presence
+      k, head.tpl, tokenTpl, head.utxo, head.inventory, head.curveCovid, buyer, quoted.kasIn, quoted.tokenOut, [], 0
     );
   } else {
-    const head = await curveHead(tick, token, entry);
-    const held = await loadUserTokens(tick, wallet.address);
+    onStatus?.('Loading curve…');
+    const [head, held] = await Promise.all([
+      curveHead(tick, token, entry),
+      loadUserTokens(tick, wallet.address, { limit: 4, withKas: true })
+    ]);
     const picked = pickTokens(held, quoted.tokenIn, 3);
     const presence = 2 + picked.length;
     spend = kron.curveCp.buildCpSell(

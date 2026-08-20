@@ -16,7 +16,7 @@ import {
   pingPublicNode, sweepVault, toRpcTransaction, p2shSpendScript, planKasPayment, storageMassOk,
   compoundUtxos, sendKrc20, sendKcc20, loadKrc20Pending
 } from './tx.js';
-import { kronMarkets, quoteKronTrade, executeKronTrade, formatKasSompi, lookupKronTick } from './kronTrade.js';
+import { kronMarkets, quoteKronTrade, executeKronTrade, formatKasSompi, lookupKronTick, tradeCostLines } from './kronTrade.js';
 
 function errText(e) {
   if (e == null) return 'Unknown error';
@@ -1357,6 +1357,23 @@ function applyLocalTokenDelta(ticker, protocol, deltaRaw) {
   if (currentTab === 'you') renderProfile();
 }
 
+function mergeFreshHoldings(local, remote) {
+  const rem = Array.isArray(remote) ? remote : [];
+  if (Date.now() > hushTokenToastsUntil) return rem;
+  const map = new Map(rem.map(t => [String(t.ticker || '').toUpperCase(), t]));
+  for (const t of local || []) {
+    const key = String(t.ticker || '').toUpperCase();
+    if (!key) continue;
+    const r = map.get(key);
+    try {
+      if (!r || BigInt(t.balance || '0') > BigInt(r.balance || '0')) map.set(key, r ? { ...r, ...t } : t);
+    } catch {
+      if (!r) map.set(key, t);
+    }
+  }
+  return [...map.values()];
+}
+
 function afterTx() {
   hushTokenToastsUntil = Date.now() + 25000;
   setLiveFast(true);
@@ -1485,8 +1502,8 @@ async function refreshTokenHoldings() {
       fetchKrc20Portfolio(addr)
     ]);
     if (!wallet || wallet.address !== addr) return;
-    if (kcc.status === 'fulfilled') kccHoldings = kcc.value;
-    if (krc.status === 'fulfilled') krcHoldings = krc.value;
+    if (kcc.status === 'fulfilled') kccHoldings = mergeFreshHoldings(kccHoldings, kcc.value);
+    if (krc.status === 'fulfilled') krcHoldings = mergeFreshHoldings(krcHoldings, krc.value);
     tokenLoadErr = kcc.status === 'rejected' ? 'KCC20 indexer unreachable — retrying…' : '';
   } catch (e) {
     tokenLoadErr = errText(e);
@@ -1603,6 +1620,8 @@ function openTrade(prefill = {}) {
   }
   syncTradeLabel();
   lookupTradeTicker();
+  loadKaspaSdk().catch(() => {});
+  pingPublicNode().catch(() => {});
 }
 
 async function lookupTradeTicker() {
@@ -1649,10 +1668,13 @@ async function quoteTradePreview() {
     const q = await quoteKronTrade({ tick, side, amount });
     if (q.side === 'buy') {
       box.innerHTML = `
-        <div class="kv"><span class="k">You pay</span><span class="v">${esc(formatKasSompi(q.kasIn))} KAS</span></div>
+        <div class="kv"><span class="k">Into market</span><span class="v">${esc(formatKasSompi(q.kasIn))} KAS</span></div>
         <div class="kv"><span class="k">You get</span><span class="v">${esc(formatTokenUnits(q.tokenOut, q.decimals))} ${esc(q.tick)}</span></div>
         <div class="kv"><span class="k">Protocol fees</span><span class="v">${esc(formatKasSompi(q.fee))} KAS</span></div>
-        <p class="muted" style="text-align:left;padding:8px 0 0;">Plus ~0.5 KAS cell dust and a network fee (~0.3–0.4 KAS). Built with the KRON SDK.</p>`;
+        <div class="kv"><span class="k">Token cell (yours)</span><span class="v">0.50 KAS</span></div>
+        <div class="kv"><span class="k">Network (est.)</span><span class="v">~0.40 KAS</span></div>
+        <div class="kv"><span class="k">Native KAS leaving</span><span class="v">~${esc(formatKasSompi(q.nativeLeave))} KAS</span></div>
+        <p class="muted" style="text-align:left;padding:8px 0 0;">${esc(tradeCostLines(q))} Tokens arrive in this wallet.</p>`;
     } else {
       box.innerHTML = `
         <div class="kv"><span class="k">You sell</span><span class="v">${esc(formatTokenUnits(q.tokenIn, q.decimals))} ${esc(q.tick)}</span></div>
@@ -1672,17 +1694,35 @@ async function reviewTrade() {
   const side = $('trade-side')?.querySelector('.on')?.dataset.side || 'buy';
   if (!amount) { toast('Enter an amount'); return; }
   if (go) go.disabled = true;
-  try {
-    const q = await quoteKronTrade({ tick, side, amount });
-    toast(side === 'buy' ? `Confirm ${formatTokenUnits(q.tokenOut, q.decimals)} ${q.tick}` : `Confirm sell ${q.tick}`);
-    await requirePin(side === 'buy' ? 'Confirm buy ' + tick : 'Confirm sell ' + tick);
-    await runTrade({ tick, side, amount, quote: q });
-  } catch (e) {
-    if (errText(e) === 'cancelled') return;
-    toast(errText(e));
-  } finally {
-    if (go) go.disabled = false;
-  }
+  let q;
+  try { q = await quoteKronTrade({ tick, side, amount }); }
+  catch (e) { if (go) go.disabled = false; toast(errText(e)); return; }
+  if (go) go.disabled = false;
+  const buyBits = q.side === 'buy' ? `
+    <div class="kv"><span class="k">Into ${esc(q.tick)}</span><span class="v">${esc(formatKasSompi(q.kasIn))} KAS</span></div>
+    <div class="kv"><span class="k">You receive</span><span class="v">${esc(formatTokenUnits(q.tokenOut, q.decimals))} ${esc(q.tick)}</span></div>
+    <div class="kv"><span class="k">Protocol fees</span><span class="v">${esc(formatKasSompi(q.fee))} KAS</span></div>
+    <div class="kv"><span class="k">Cell stays yours</span><span class="v">0.50 KAS</span></div>
+    <div class="kv"><span class="k">Network (est.)</span><span class="v">~0.40 KAS</span></div>
+    <div class="kv"><span class="k">Native KAS leaving</span><span class="v">~${esc(formatKasSompi(q.nativeLeave))} KAS</span></div>
+    <p class="muted" style="text-align:left;padding-top:8px;">${esc(tradeCostLines(q))} Protocol fees go to KRON and the token creator on-chain (the covenant requires it). The 0.5 KAS cell and the tokens land in this wallet. This app tags the trade so integrator volume can be paid.</p>`
+    : `<div class="kv"><span class="k">Sell</span><span class="v">${esc(formatTokenUnits(q.tokenIn, q.decimals))} ${esc(q.tick)}</span></div>
+       <div class="kv"><span class="k">You receive</span><span class="v">${esc(formatKasSompi(q.net))} KAS</span></div>
+       <div class="kv"><span class="k">Protocol fees</span><span class="v">${esc(formatKasSompi(q.fee))} KAS</span></div>`;
+  openSheet('Review ' + q.tick + ' ' + q.side, buyBits, {
+    confirm: 'Pay with PIN',
+    gold: true,
+    onConfirm: async () => {
+      try {
+        await requirePin(q.side === 'buy' ? 'Confirm buy ' + tick : 'Confirm sell ' + tick);
+        await runTrade({ tick, side, amount, quote: q });
+      } catch (e) {
+        if (errText(e) === 'cancelled') return;
+        toast(errText(e));
+        setSheetStatus(errText(e), true);
+      }
+    }
+  });
 }
 
 async function runTrade({ tick, side, amount, quote }) {

@@ -1032,6 +1032,7 @@ async function revealKrc20({ k, wallet, priv, script, p2shAddr, revealUtxos }) {
 
 const KRON_IDX = 'https://idx.kron.technology';
 const MIN_CELL_KAS = 5_000_000n;
+const CHANGE_CELL_KAS = 8_000_000n; // leftover token cell — distinct from the send cell (KIP-9)
 const P2PK_RE = /^20([0-9a-f]{64})ac$/i;
 const NATIVE_SUBNET = '0000000000000000000000000000000000000000';
 
@@ -1043,6 +1044,36 @@ function kasNeedError(moreSompi) {
     `Token cells have to carry enough KAS or Kaspa rejects the send (storage mass). ` +
     `Receive a bit of KAS here, then tap Send again.`
   );
+}
+
+function massSplitError() {
+  return new Error(
+    'Kaspa storage mass rejected this token split — not a missing-KAS problem (this wallet has funds). ' +
+    'Tap Send now again; leftover tokens will sit in a differently sized KAS cell.'
+  );
+}
+
+function layoutSendKas(k, inAmts, inCellKas, nTok, feeGuess) {
+  const inSum = inAmts.reduce((a, b) => a + b, 0n);
+  const keep = inCellKas >= MIN_CELL_KAS ? inCellKas : MIN_CELL_KAS;
+  const keepOpts = [keep, keep + 5_000_000n, 50_000_000n];
+  const changeOpts = nTok > 1
+    ? [CHANGE_CELL_KAS, 12_000_000n, 7_000_000n, 15_000_000n, 9_000_000n, 6_000_000n, 11_000_000n]
+    : [0n];
+  const dust = 200_000n;
+  for (const sendKasAmt of keepOpts) {
+    for (const ch of changeOpts) {
+      if (nTok > 1 && (ch === sendKasAmt || ch < MIN_CELL_KAS || sendKasAmt < MIN_CELL_KAS)) continue;
+      const tokenKas = nTok > 1 ? [sendKasAmt, ch] : [sendKasAmt];
+      const tokenOutSum = tokenKas.reduce((a, b) => a + b, 0n);
+      const leftover = inSum - tokenOutSum - feeGuess;
+      if (leftover < 0n) continue;
+      const kasChange = leftover >= dust ? leftover : 0n;
+      const outs = kasChange > 0n ? [...tokenKas, kasChange] : tokenKas;
+      if (storageMassOk(k, inAmts, outs)) return { tokenKas, kasChange, tokenOutSum };
+    }
+  }
+  return null;
 }
 
 function hexToU8(hex) {
@@ -1288,17 +1319,10 @@ export async function sendKcc20({ wallet, dest, token, amountHuman, utxos, onSta
   const witnesses = selected.map(() => presenceIdx);
   const inCellKas = selected.reduce((a, p) => a + p.value, 0n);
   const nTok = next.length;
-  let tokenKas;
-  if (nTok === 1) tokenKas = [inCellKas >= MIN_CELL_KAS ? inCellKas : MIN_CELL_KAS];
-  else {
-    const a = inCellKas * 3n / 5n;
-    const b = inCellKas - a;
-    tokenKas = a >= MIN_CELL_KAS && b >= MIN_CELL_KAS ? [a, b] : [MIN_CELL_KAS, MIN_CELL_KAS];
-  }
-  let tokenOutSum = tokenKas.reduce((a, v) => a + v, 0n);
-  const extraForCells = tokenOutSum > inCellKas ? tokenOutSum - inCellKas : 0n;
   const feeGuess = 500_000n;
-  const walletNeed = extraForCells + feeGuess + 200_000n;
+  // Keep the send cell's own KAS (cancels in KIP-9). Leftover tokens get a
+  // differently sized cell from wallet KAS — never 0.2/0.2 or 0.05/0.05 splits.
+  const walletNeed = (nTok > 1 ? CHANGE_CELL_KAS : 0n) + feeGuess + 200_000n;
 
   onStatus?.('Connecting to Kaspa…');
   const { rpc, url } = await connectPublicNode();
@@ -1316,12 +1340,18 @@ export async function sendKcc20({ wallet, dest, token, amountHuman, utxos, onSta
   if (feeSum < walletNeed) throw kasNeedError(walletNeed - feeSum);
 
   const inAmts = [...selected.map(p => p.value), ...picked.map(e => e.amount)];
-  let kasChange = inCellKas + feeSum - tokenOutSum - feeGuess;
-  if (kasChange < 200_000n) kasChange = 0n;
-  const outAmts = kasChange > 0n ? [...tokenKas, kasChange] : tokenKas;
-  if (!storageMassOk(k, inAmts, outAmts)) {
-    throw kasNeedError(50_000_000n);
+  let layout = layoutSendKas(k, inAmts, inCellKas, nTok, feeGuess);
+  if (!layout) {
+    const keep = inCellKas >= MIN_CELL_KAS ? inCellKas : MIN_CELL_KAS;
+    const tokenKasFallback = nTok > 1 ? [keep, CHANGE_CELL_KAS] : [keep];
+    const tokenOutSumFb = tokenKasFallback.reduce((a, b) => a + b, 0n);
+    let kasChangeFb = inCellKas + feeSum - tokenOutSumFb - feeGuess;
+    if (kasChangeFb < 200_000n) kasChangeFb = 0n;
+    layout = { tokenKas: tokenKasFallback, kasChange: kasChangeFb, tokenOutSum: tokenOutSumFb };
   }
+  const tokenKas = layout.tokenKas;
+  const kasChange = layout.kasChange;
+  const tokenOutSum = layout.tokenOutSum;
   const tokenOuts = next.map((st, i) => ({
     value: tokenKas[i],
     spk: k.payToScriptHashScript(materializeKcc20Script(tpl, st))
@@ -1436,7 +1466,7 @@ export async function sendKcc20({ wallet, dest, token, amountHuman, utxos, onSta
       scripts
     });
   } catch (e) {
-    if (isMassError(e)) throw kasNeedError(50_000_000n);
+    if (isMassError(e)) throw massSplitError();
     const need = requiredFeeFromError(e);
     if (!need) throw e;
     const paid = inSum - [...tx.outputs].reduce((a, o) => a + BigInt(o.value), 0n);
@@ -1464,7 +1494,6 @@ export async function sendKcc20({ wallet, dest, token, amountHuman, utxos, onSta
 }
 
 const WITNESS_KAS = 20_000_000n; // 0.2 KAS co-present CLTV UTXO — SCRIPT_HASH witness + sweep fee
-const CHANGE_CELL_KAS = 8_000_000n; // 0.08 — must not match witness or the frozen cell (KIP-9)
 
 function layoutFreezeKas(k, inAmts, inCellKas, nTok, feeGuess) {
   const inSum = inAmts.reduce((a, b) => a + b, 0n);

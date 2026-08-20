@@ -29,7 +29,7 @@ export const VAULT_PRODUCTS = [
     type: 'timelock',
     tag: 'XMSS',
     status: 'mainnet',
-    blurb: 'Hash-based post-quantum lock. Spend only with an XMSS signature.'
+    blurb: 'XMSS story from this repo. Today this tile funds a mainnet CLTV Time Capsule you can actually sweep — same path as Time Capsule.'
   },
   {
     id: 'timelock',
@@ -45,7 +45,7 @@ export const VAULT_PRODUCTS = [
     type: 'kcc20lock',
     tag: 'CLTV+',
     status: 'mainnet',
-    blurb: 'Same CLTV as native KAS, for KCC20. Tokens move to SCRIPT_HASH ownership of the capsule; ~0.2 KAS sits in the P2SH as witness. Auto-sweeps back when the timer ends.'
+    blurb: 'Same two steps as Time Capsule: fund ~0.2 KAS CLTV, then move KCC20 into SCRIPT_HASH. Auto-sweeps tokens + leftover KAS when the timer ends.'
   },
   {
     id: 'escrow',
@@ -69,7 +69,7 @@ export const VAULT_PRODUCTS = [
     type: 'timelock',
     tag: 'DMS',
     status: 'mainnet',
-    blurb: 'Dead-man switch. Check in, or the vault releases on timeout.'
+    blurb: 'Dead-man style timer. Today this builds a CLTV capsule — rebuild to check in. Sweep when the timer ends.'
   },
   {
     id: 'kcc20',

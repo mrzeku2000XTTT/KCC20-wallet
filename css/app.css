@@ -556,10 +556,36 @@ img { display: block; max-width: 100%; }
 }
 .seg button.on { background: rgba(255,255,255,0.14); color: var(--label); }
 
-.chat { display: flex; flex-direction: column; gap: 8px; min-height: 56px; max-height: 104px; overflow-y: auto; margin-bottom: 8px; }
+.chat { display: flex; flex-direction: column; gap: 8px; min-height: 0; overflow-y: auto; -webkit-overflow-scrolling: touch; }
 .vault-composer { padding: 12px 12px 10px; margin-bottom: 12px; }
 .vault-grid {
-  display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-bottom: 8px;
+  display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-bottom: 8px; flex-shrink: 0;
+}
+#page-vault.active {
+  display: flex; flex-direction: column; height: 100%; overflow: hidden;
+}
+#vault-create {
+  flex: 1; display: flex; flex-direction: column; min-height: 0;
+}
+#vault-mine-wrap { flex: 1; min-height: 0; overflow-y: auto; -webkit-overflow-scrolling: touch; }
+.vault-chat {
+  flex: 1; display: flex; flex-direction: column; min-height: 0;
+  margin: 0 0 4px; padding: 0; overflow: hidden;
+}
+.chat-head {
+  display: flex; align-items: baseline; justify-content: space-between; gap: 8px;
+  padding: 10px 12px 6px; flex-shrink: 0;
+}
+.chat-agent { font-size: 13px; font-weight: 700; color: var(--gold-2); }
+.chat-ready { font-size: 11px; color: var(--label-2); }
+#chat-log.chat {
+  flex: 1; padding: 4px 12px 10px; max-height: none;
+}
+.vault-chat .chatbar {
+  flex-shrink: 0;
+  padding: 8px 10px 10px;
+  border-top: 0.5px solid var(--hairline);
+  background: rgba(8,8,10,0.35);
 }
 .vault-sweep { padding: 12px; margin-top: 12px; }
 .vault-card-actions { display: flex; flex-direction: column; align-items: flex-end; gap: 2px; flex-shrink: 0; }
@@ -568,21 +594,24 @@ img { display: block; max-width: 100%; }
 .vault-card.history { opacity: 0.55; }
 .vault-card.history .title { text-decoration: none; }
 .bubble {
-  max-width: 84%; padding: 12px 14px; border-radius: 18px; font-size: 15px; line-height: 1.4;
+  max-width: 88%; padding: 10px 12px; border-radius: 18px; font-size: 15px; line-height: 1.4;
+  word-break: break-word; overflow-wrap: anywhere;
 }
 .bubble.me { align-self: flex-end; background: var(--blue); border-bottom-right-radius: 5px; }
 .bubble.ai { align-self: flex-start; background: rgba(255,255,255,0.08); border-bottom-left-radius: 5px; }
-.chatbar { display: flex; gap: 8px; }
-.chatbar input { flex: 1; border-radius: 22px; padding: 12px 16px; background: rgba(0,0,0,0.35); border: 0.5px solid var(--hairline); font-size: 16px; outline: none; }
+.bubble .btn { width: 100%; max-width: 100%; }
+.chatbar { display: flex; gap: 8px; align-items: flex-end; }
+.chatbar input { flex: 1; border-radius: 22px; padding: 12px 16px; background: rgba(0,0,0,0.35); border: 0.5px solid var(--hairline); font-size: 16px; outline: none; min-width: 0; }
 .send-orb {
   width: 44px; height: 44px; border-radius: 50%; background: var(--blue);
   display: grid; place-items: center; flex-shrink: 0; color: #fff; font-size: 18px;
 }
 
 .product {
-  display: flex; flex-direction: column; align-items: flex-start; gap: 8px;
-  padding: 12px; margin: 0; text-align: left; width: 100%; min-height: 86px;
+  display: flex; flex-direction: column; align-items: flex-start; gap: 6px;
+  padding: 10px; margin: 0; text-align: left; width: 100%; min-height: 72px;
 }
+#page-vault .vault-grid { max-height: 34vh; overflow-y: auto; -webkit-overflow-scrolling: touch; }
 .product .glyph {
   width: 32px; height: 32px; border-radius: 10px; background: var(--gold-dim);
   display: grid; place-items: center; color: var(--gold-2); font-weight: 700; font-size: 10px;

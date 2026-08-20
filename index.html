@@ -12,7 +12,7 @@
   <link rel="icon" href="assets/icon.png">
   <title>KCC20 Wallet</title>
   <meta http-equiv="Cache-Control" content="no-store, no-cache, must-revalidate">
-  <link rel="stylesheet" href="css/app.css?v=60">
+  <link rel="stylesheet" href="css/app.css?v=61">
 </head>
 <body>
   <img class="bg-poster" src="assets/bg.jpg" alt="">
@@ -125,17 +125,21 @@
             <button data-vtab="mine" type="button">Vaults</button>
           </div>
           <div id="vault-create">
-            <div class="glass vault-composer">
-              <div class="chat" id="chat-log">
-                <div class="bubble ai">Lock <em>.15 KAS for 3 minutes</em> — capsule now, auto-sweep when time’s up.</div>
-              </div>
-              <div class="chatbar">
-                <input id="chat-input" placeholder="Describe a vault…" autocomplete="off">
-                <button class="send-orb" id="chat-send">↑</button>
-              </div>
-            </div>
             <div class="section-label">Products</div>
             <div class="vault-grid" id="vault-products"></div>
+            <div class="glass vault-chat">
+              <div class="chat-head">
+                <span class="chat-agent">Argent</span>
+                <span class="chat-ready">getting ready for DAGKnight</span>
+              </div>
+              <div class="chat" id="chat-log">
+                <div class="bubble ai">I’m <strong>Argent</strong> — this wallet’s vault agent. Typos are fine. Try <em>lock .15 kas for 3 minutes</em> or <em>freeze 10 kdag 1 min</em>. I map messy English onto Time Capsule, KCC20 Freeze, escrow, and 2-of-2.</div>
+              </div>
+              <div class="chatbar">
+                <input id="chat-input" placeholder="Tell Argent what to lock…" autocomplete="off" enterkeyhint="send">
+                <button class="send-orb" id="chat-send" type="button" aria-label="Send">↑</button>
+              </div>
+            </div>
           </div>
           <div id="vault-mine-wrap" class="hidden">
             <div class="seg" id="vault-hist-seg">
@@ -355,7 +359,7 @@
     })();
   </script>
   <script type="module">
-    import('./js/app.js?v=60').catch(function (err) {
+    import('./js/app.js?v=61').catch(function (err) {
       console.error(err);
       var phone = document.getElementById('phone');
       var d = document.createElement('div');

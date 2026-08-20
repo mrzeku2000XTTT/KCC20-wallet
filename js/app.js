@@ -1,24 +1,24 @@
 import {
   loadCryptoLibs, generatePrivateKey, createKeypairFromHex,
   isValidKaspaAddress, shortAddr, hexToBytes, privKeyToHex, derivePublicKey, kaspaAddressFromPubkey, bytesToHex
-} from './crypto.js?v=60';
+} from './crypto.js?v=61';
 import {
   NATIVE_KAS, VAULT_PRODUCTS, loadWatchlist, addToken, removeToken,
   loadVaults, saveVault, updateVault, formatAmount, formatTokenUnits, tokenColor,
   fetchKcc20Portfolio, fetchKrc20Portfolio, krc20Logo, toTokenRaw, setVaultOwner
-} from './kcc20.js?v=60';
-import { parseIntent, describeIntent, askFor, parseDurationField } from './intent.js?v=60';
-import { payloadFromAddress } from './script.js?v=60';
-import { explainTransaction, scorpionAnswer } from './scorpion.js?v=60';
+} from './kcc20.js?v=61';
+import { parseIntent, describeIntent, askFor, parseDurationField, interpretVaultChat, normalizeChat } from './intent.js?v=61';
+import { payloadFromAddress } from './script.js?v=61';
+import { explainTransaction, scorpionAnswer } from './scorpion.js?v=61';
 import {
   sendKas, fetchAddressUtxos, fetchAddressBalance, loadKaspaSdk,
   buildTimelockCovenant, buildEscrowCovenant, buildMultisigCovenant, currentDaa,
   pingPublicNode, sweepVault, toRpcTransaction, p2shSpendScript, planKasPayment, storageMassOk,
   compoundUtxos, sendKrc20, sendKcc20, loadKrc20Pending, lockKcc20Timelock, sweepKcc20Capsule
-} from './tx.js?v=60';
-import { kronMarkets, quoteKronTrade, executeKronTrade, formatKasSompi, lookupKronTick, tradeCostLines } from './kronTrade.js?v=60';
+} from './tx.js?v=61';
+import { kronMarkets, quoteKronTrade, executeKronTrade, formatKasSompi, lookupKronTick, tradeCostLines } from './kronTrade.js?v=61';
 
-export const BUILD = '60';
+export const BUILD = '61';
 
 function errText(e) {
   if (e == null) return 'Unknown error';
@@ -196,7 +196,7 @@ function tickLockLabels() {
 
 function showPage(id) {
   document.querySelectorAll('.page').forEach(p => p.classList.toggle('active', p.id === 'page-' + id));
-  $('scroll')?.classList.toggle('home-noscroll', id === 'home');
+  $('scroll')?.classList.toggle('home-noscroll', id === 'home' || id === 'vault');
   currentTab = id;
   document.querySelectorAll('.tab').forEach(t => t.classList.toggle('active', t.dataset.tab === id));
   const titles = { home: 'KCC20', tokens: 'Tokens', vault: 'Vault', activity: 'Activity', you: 'Profile' };
@@ -3044,41 +3044,103 @@ function renderIntentCard(intent) {
   `);
 }
 
+let chatTurns = [];
+
+function resolveWalletAlias(text, intent) {
+  if (!intent || intent.type !== 'send') return intent;
+  if (intent.params?.destination) return intent;
+  const m = String(text || '').match(/\bwallet\s*([12]|one|two)\b/i);
+  if (!m) return intent;
+  const n = /2|two/i.test(m[1]) ? 2 : 1;
+  const list = loadWalletList();
+  const w = list.find(x => String(x.name || '').toLowerCase() === 'wallet ' + n) || list[n - 1];
+  if (w?.address && w.address !== wallet?.address) {
+    intent.params = { ...(intent.params || {}), destination: w.address };
+    intent.missing = (intent.missing || []).filter(x => !String(x).includes('destination'));
+    intent.complete = !intent.missing.length;
+  }
+  return intent;
+}
+
+async function argentRemote(message) {
+  const ticks = (kccHoldings || []).map(t => t.ticker).filter(Boolean);
+  const payload = {
+    action: 'chat',
+    agent: 'argent',
+    message,
+    history: chatTurns.slice(-8),
+    context: {
+      products: VAULT_PRODUCTS.map(p => ({ id: p.id, name: p.name, type: p.type })),
+      ticks,
+      wallets: loadWalletList().map(w => ({ name: w.name, address: w.address }))
+    }
+  };
+  const res = await fetch(`${BACKEND_URL}/kccApi`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload)
+  });
+  if (!res.ok) throw new Error('Argent HTTP ' + res.status);
+  return res.json();
+}
+
 async function sendChat() {
   const input = $('chat-input');
   const text = input.value.trim();
   if (!text) return;
   input.value = '';
   appendChat('me', esc(text));
-  const typing = appendChat('ai', '<span style="opacity:0.55">Reading that…</span>');
+  chatTurns.push({ role: 'user', content: text });
+  const typing = appendChat('ai', '<span style="opacity:0.55">Argent is reading that…</span>');
 
-  const local = parseIntent(text, lastIntent);
-  if (!local.error) lastIntent = { ...local, params: { ...(lastIntent?.params || {}), ...local.params } };
-
+  const localView = interpretVaultChat(text, lastIntent);
   let remote = null;
   try {
-    const normalized = text.replace(/(?:^|[^\d])(\.\d+)/g, (m, d) => m.replace(d, '0' + d));
-    const res = await fetch(`${BACKEND_URL}/kccApi`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ action: 'parseIntent', message: normalized })
-    });
-    remote = await res.json();
-  } catch { /* local parser is enough */ }
+    remote = await argentRemote(normalizeChat(text));
+  } catch {
+    try {
+      const res = await fetch(`${BACKEND_URL}/kccApi`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'parseIntent', message: normalizeChat(text) })
+      });
+      remote = await res.json();
+    } catch { /* local Argent is enough */ }
+  }
 
   typing.remove();
 
-  let intent = local.error ? null : local;
-  if (remote && !remote.error && remote.type) {
-    const merged = parseIntent(text, {
-      type: remote.type,
+  if (localView.kind === 'talk' && !(remote && (remote.type || remote.params))) {
+    appendChat('ai', esc(localView.text));
+    chatTurns.push({ role: 'assistant', content: localView.text });
+    return;
+  }
+
+  let intent = localView.kind === 'intent' && !localView.intent?.error ? localView.intent : null;
+  if (remote && !remote.error && (remote.type || remote.params)) {
+    const merged = parseIntent(normalizeChat(text), {
+      type: remote.type || intent?.type,
       params: { ...(intent?.params || {}), ...(remote.params || {}) }
     });
     if (!merged.error) intent = merged;
   }
+  if (intent) intent = resolveWalletAlias(text, intent);
+  if (intent && !intent.error) lastIntent = { ...intent, params: { ...(lastIntent?.params || {}), ...intent.params } };
+
+  if (remote?.reply || remote?.text) {
+    const talk = String(remote.reply || remote.text);
+    appendChat('ai', esc(talk));
+    chatTurns.push({ role: 'assistant', content: talk });
+  }
 
   if (!intent || intent.error) {
-    appendChat('ai', 'I can lock KAS or freeze KCC20, escrow, multisig, or send. Example: <em>Lock .15 KAS for 3 minutes</em> or <em>Lock 20 KKDAG for 3 minutes</em>');
+    if (!(remote?.reply || remote?.text)) {
+      const fallback = localView.kind === 'talk'
+        ? localView.text
+        : 'Argent here. I can lock KAS, freeze KCC20, escrow, 2-of-2, or send to wallet 2. Example: <em>lock .15 kas for 3 minutes</em>';
+      appendChat('ai', fallback);
+      chatTurns.push({ role: 'assistant', content: fallback.replace(/<[^>]+>/g, '') });
+    }
     return;
   }
   renderIntentCard(intent);
@@ -3165,6 +3227,9 @@ function bind() {
   click('btn-add-token', openAddToken);
   click('chat-send', sendChat);
   $('chat-input')?.addEventListener('keydown', e => { if (e.key === 'Enter') sendChat(); });
+  $('chat-input')?.addEventListener('focus', () => {
+    setTimeout(() => { const log = $('chat-log'); if (log) log.scrollTop = log.scrollHeight; }, 350);
+  });
   $('chat-log')?.addEventListener('click', e => {
     const buildBtn = e.target.closest('[data-build-intent]');
     const sendBtn = e.target.closest('[data-send-intent]');

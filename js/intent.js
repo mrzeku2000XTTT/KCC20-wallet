@@ -85,7 +85,7 @@ function detectType(text, prev) {
 }
 
 export function parseIntent(text, prev = null) {
-  const raw = String(text || '').trim();
+  const raw = normalizeChat(String(text || '').trim());
   if (!raw) return { error: 'empty' };
 
   const tokenAmt = parseTokenAmount(raw);
@@ -181,4 +181,84 @@ export function parseDurationField(raw) {
     return days ? { days, minutes: Math.max(1, Math.round(days * 1440)), label: `${days} days` } : null;
   }
   return parseDuration(raw);
+}
+
+const WORD_FIX = {
+  loc: 'lock', lok: 'lock', locck: 'lock', lokc: 'lock',
+  freezee: 'freeze', freze: 'freeze', frreze: 'freeze', frze: 'freeze',
+  capusle: 'capsule', capsle: 'capsule', capsul: 'capsule',
+  minuts: 'minutes', minuite: 'minutes', minuets: 'minutes', mins: 'minutes',
+  ours: 'hours', hr: 'hours', hrs: 'hours',
+  escroww: 'escrow', escro: 'escrow',
+  sentinal: 'sentinel',
+  mutlisig: 'multisig', multisgn: 'multisig',
+  kdag: 'KKDAG', kkdag: 'KKDAG', kasnight: 'KKDAG', kknight: 'KKDAG',
+  kronn: 'KRON',
+  kaspa: 'KAS',
+  transfert: 'transfer'
+};
+
+function editDist(a, b) {
+  a = String(a); b = String(b);
+  if (Math.abs(a.length - b.length) > 2) return 9;
+  const dp = Array.from({ length: a.length + 1 }, (_, i) => {
+    const row = new Array(b.length + 1);
+    row[0] = i;
+    return row;
+  });
+  for (let j = 0; j <= b.length; j++) dp[0][j] = j;
+  for (let i = 1; i <= a.length; i++) {
+    for (let j = 1; j <= b.length; j++) {
+      dp[i][j] = Math.min(
+        dp[i - 1][j] + 1,
+        dp[i][j - 1] + 1,
+        dp[i - 1][j - 1] + (a[i - 1] === b[j - 1] ? 0 : 1)
+      );
+    }
+  }
+  return dp[a.length][b.length];
+}
+
+const KNOWN = ['lock', 'freeze', 'send', 'pay', 'escrow', 'multisig', 'sentinel', 'capsule', 'minutes', 'hours', 'days', 'kas', 'kkdag', 'kron', 'kpulse', 'vault', 'hold'];
+
+export function normalizeChat(text) {
+  let t = String(text || '').trim();
+  t = t.replace(/(?:^|[^\d])(\.\d+)/g, (m, d) => m.replace(d, '0' + d));
+  t = t.replace(/\b([A-Za-z][A-Za-z0-9]{1,11})\b/g, (w) => {
+    const k = w.toLowerCase();
+    if (WORD_FIX[k]) return WORD_FIX[k];
+    if (k.length < 4) return w;
+    let best = null, bestD = 2;
+    for (const n of KNOWN) {
+      const d = editDist(k, n);
+      if (d < bestD) { bestD = d; best = n; }
+    }
+    if (best && bestD <= 1) return best === 'kkdag' ? 'KKDAG' : best;
+    return w;
+  });
+  t = t.replace(/\bwallet\s*([12]|one|two)\b/ig, (_, n) => {
+    const i = /2|two/i.test(n) ? 2 : 1;
+    return 'wallet ' + i;
+  });
+  return t;
+}
+
+export function interpretVaultChat(text, prev = null) {
+  const raw = String(text || '').trim();
+  const norm = normalizeChat(raw);
+  const low = norm.toLowerCase();
+  if (/\b(dag.?knight|argent|covenant\+\+|getting ready|michael sutton|kip-?2)\b/i.test(low)) {
+    return {
+      kind: 'talk',
+      text: 'Argent — vault agent for this wallet, getting ready for DAGKnight. I turn messy English into covenant actions this app can actually fund on mainnet: Time Capsule (KAS CLTV), KCC20 Freeze (SCRIPT_HASH + CLTV), escrow, 2-of-2. XMSS / Sentinel tiles use the same CLTV path today. Say what to lock.'
+    };
+  }
+  if (/^(hi|hey|hello|yo|sup|help|what can you do|\?)\b/i.test(low) || low.length < 3) {
+    return {
+      kind: 'talk',
+      text: 'Tell me in plain words. Examples: “lock 0.15 kas for 3 minutes”, “freeze 10 kdag 1 min”, “send 2 kas to wallet 2”. I fix typos.'
+    };
+  }
+  const intent = parseIntent(norm, prev);
+  return { kind: 'intent', intent, normalized: norm };
 }

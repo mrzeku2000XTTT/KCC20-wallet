@@ -75,6 +75,42 @@ export const VAULT_PRODUCTS = [
 
 const WATCH_KEY = 'kcc20_watchlist_v1';
 const VAULTS_KEY = 'kcc20_vaults_v1';
+let vaultOwner = '';
+
+export function setVaultOwner(addr) {
+  vaultOwner = String(addr || '');
+  if (!vaultOwner) return;
+  const scoped = VAULTS_KEY + ':' + vaultOwner;
+  try {
+    const already = JSON.parse(localStorage.getItem(scoped) || 'null');
+    if (Array.isArray(already)) return;
+    const legacy = JSON.parse(localStorage.getItem(VAULTS_KEY) || '[]');
+    if (Array.isArray(legacy) && legacy.length) {
+      localStorage.setItem(scoped, JSON.stringify(legacy));
+    }
+  } catch {}
+}
+
+function vaultStoreKey() {
+  return vaultOwner ? VAULTS_KEY + ':' + vaultOwner : VAULTS_KEY;
+}
+
+/** Human amount → raw integer string (Kasplex / KCC20 units). */
+export function toTokenRaw(human, decimals) {
+  const d = Math.max(0, Number(decimals) || 0);
+  const t = String(human ?? '').trim().replace(',', '.');
+  if (!t || t === '.') throw new Error('Enter an amount');
+  if (t.startsWith('-')) throw new Error('Amount must be > 0');
+  const parts = t.split('.');
+  if (parts.length > 2) throw new Error('Invalid amount');
+  const w = parts[0] || '0';
+  const f = parts[1] || '';
+  if (!/^\d+$/.test(w) || (f && !/^\d+$/.test(f))) throw new Error('Invalid amount');
+  const frac = (f + '0'.repeat(d)).slice(0, d);
+  const raw = BigInt(w) * (10n ** BigInt(d)) + BigInt(frac || '0');
+  if (raw <= 0n) throw new Error('Amount must be > 0');
+  return raw.toString();
+}
 
 export function loadWatchlist() {
   try {
@@ -115,7 +151,7 @@ export function removeToken(ticker) {
 
 export function loadVaults() {
   try {
-    const raw = JSON.parse(localStorage.getItem(VAULTS_KEY) || '[]');
+    const raw = JSON.parse(localStorage.getItem(vaultStoreKey()) || '[]');
     return Array.isArray(raw) ? raw : [];
   } catch {
     return [];
@@ -124,13 +160,13 @@ export function loadVaults() {
 
 export function saveVault(vault) {
   const list = loadVaults();
-  list.unshift({ ...vault, createdAt: Date.now() });
-  localStorage.setItem(VAULTS_KEY, JSON.stringify(list.slice(0, 40)));
+  list.unshift({ ...vault, createdAt: Date.now(), walletAddress: vaultOwner || vault.walletAddress || '' });
+  localStorage.setItem(vaultStoreKey(), JSON.stringify(list.slice(0, 40)));
 }
 
 export function updateVault(address, patch) {
   const list = loadVaults().map(v => v.address === address ? { ...v, ...patch } : v);
-  localStorage.setItem(VAULTS_KEY, JSON.stringify(list));
+  localStorage.setItem(vaultStoreKey(), JSON.stringify(list));
 }
 
 export function formatAmount(sompi, decimals = 8) {

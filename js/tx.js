@@ -831,3 +831,199 @@ export async function fetchAddressBalance(address) {
   const data = await res.json();
   return Number(data.balance ?? data ?? 0);
 }
+
+function sleep(ms) {
+  return new Promise(r => setTimeout(r, ms));
+}
+
+async function waitAddressUtxos(address, ms = 90000) {
+  const start = Date.now();
+  while (Date.now() - start < ms) {
+    try {
+      const u = await fetchAddressUtxos(address);
+      if (Array.isArray(u) && u.length) return u;
+    } catch {}
+    await sleep(1500);
+  }
+  throw new Error('Commit UTXO did not land yet. Wait a few seconds and tap Send again — we will finish the reveal.');
+}
+
+function buildKrc20Script(k, xonlyHex, json) {
+  const sb = new k.ScriptBuilder();
+  sb.addData(xonlyHex);
+  sb.addOp(k.Opcodes.OpCheckSig);
+  sb.addOp(k.Opcodes.OpFalse);
+  sb.addOp(k.Opcodes.OpIf);
+  sb.addData(new TextEncoder().encode('kasplex'));
+  sb.addI64(0n);
+  sb.addData(new TextEncoder().encode(json));
+  sb.addOp(k.Opcodes.OpEndIf);
+  return sb;
+}
+
+function krcPendingKey(addr) {
+  return 'kcc20_krc20_pending_v1:' + (addr || '');
+}
+
+export function loadKrc20Pending(address) {
+  try {
+    const raw = JSON.parse(localStorage.getItem(krcPendingKey(address)) || 'null');
+    return raw && raw.p2shAddr ? raw : null;
+  } catch {
+    return null;
+  }
+}
+
+export function clearKrc20Pending(address) {
+  localStorage.removeItem(krcPendingKey(address));
+}
+
+/**
+ * Kasplex KRC-20 transfer (KasWare / coinchimp commit-reveal).
+ * JSON: {"p":"krc-20","op":"transfer","tick","amt","to"}
+ * Script: <xonly> CHECKSIG FALSE IF "kasplex" 0 <json> ENDIF
+ */
+export async function sendKrc20({ wallet, dest, tick, amtRaw, utxos, onStatus }) {
+  if (!isKrcDest(dest)) throw new Error('Destination must be a kaspa: address');
+  const ticker = String(tick || '').toUpperCase().trim();
+  if (!ticker) throw new Error('Missing ticker');
+  const amt = String(amtRaw || '');
+  if (!amt || amt === '0') throw new Error('Missing token amount');
+
+  const k = await loadKaspaSdk();
+  const priv = new k.PrivateKey(wallet.privKey);
+  const xonly = priv.toPublicKey().toXOnlyPublicKey().toString();
+  const json = JSON.stringify({ p: 'krc-20', op: 'transfer', tick: ticker, amt, to: dest });
+  const script = buildKrc20Script(k, xonly, json);
+  const p2sh = script.createPayToScriptHashScript();
+  const p2shAddr = String(k.addressFromScriptPublicKey(p2sh, 'mainnet'));
+  if (!p2shAddr.startsWith('kaspa:p')) throw new Error('Failed to build Kasplex P2SH');
+
+  const pending = loadKrc20Pending(wallet.address);
+  let commitTxId = pending && pending.p2shAddr === p2shAddr ? pending.commitTxId : '';
+  if (!commitTxId) {
+    onStatus?.('Commit: parking the Kasplex inscription…');
+    const available = utxos && utxos.length ? utxos : await fetchAddressUtxos(wallet.address);
+    const commit = await sendKas({
+      wallet,
+      dest: p2shAddr,
+      amountKas: 0.1,
+      utxos: available,
+      exact: true
+    });
+    commitTxId = commit.txId;
+    localStorage.setItem(krcPendingKey(wallet.address), JSON.stringify({
+      p2shAddr, tick: ticker, amt, dest, commitTxId, json, at: Date.now()
+    }));
+  }
+
+  onStatus?.('Waiting for the commit UTXO…');
+  const revealUtxos = await waitAddressUtxos(p2shAddr, 90000);
+  onStatus?.('Reveal: publishing the transfer on-chain…');
+  const revealId = await revealKrc20({
+    k, wallet, priv, script, p2shAddr, revealUtxos
+  });
+  clearKrc20Pending(wallet.address);
+  return { commitTxId, revealId, txId: revealId, tick: ticker, amt, dest, p2shAddr };
+}
+
+function isKrcDest(dest) {
+  return typeof dest === 'string' && /^kaspa:[a-z0-9]{20,}$/i.test(dest.trim());
+}
+
+async function revealKrc20({ k, wallet, priv, script, p2shAddr, revealUtxos }) {
+  const { rpc, url } = await connectPublicNode();
+  const feeRate = await nodeFeeRate(rpc);
+  const p2shEntries = restUtxosToEntries(revealUtxos, p2shAddr);
+  if (!p2shEntries.length) throw new Error('No commit UTXO to reveal');
+  const walletUtxos = await fetchAddressUtxos(wallet.address);
+  const feeEntries = restUtxosToEntries(walletUtxos, wallet.address);
+  const p2shKeys = new Set(p2shEntries.map(e => `${e.outpoint.transactionId}:${e.outpoint.index}`));
+
+  let pendingList = [];
+  try {
+    const built = await k.createTransactions({
+      priorityEntries: p2shEntries,
+      entries: feeEntries,
+      outputs: [],
+      changeAddress: wallet.address,
+      priorityFee: 0n,
+      feeRate,
+      sigOpCount: 1,
+      networkId: 'mainnet'
+    });
+    pendingList = built.transactions || [];
+  } catch (e) {
+    throw new Error('Could not build reveal: ' + errText(e));
+  }
+  if (!pendingList.length) throw new Error('Reveal builder returned no transaction');
+
+  let txId = null;
+  for (let p = 0; p < pendingList.length; p++) {
+    const pending = pendingList[p];
+    const tx = pending.transaction;
+    tx.version = 1;
+    prepInputs(tx, { sigOpCount: 0, computeBudget: 40 });
+    try { k.updateTransactionMass('mainnet', tx); } catch {}
+    const scripts = [];
+    for (let i = 0; i < tx.inputs.length; i++) {
+      const prev = tx.inputs[i].previousOutpoint;
+      const key = `${prev.transactionId}:${prev.index}`;
+      let sig;
+      try { sig = pending.createInputSignature(i, priv); }
+      catch { sig = k.createInputSignature(tx, i, priv, k.SighashType.All); }
+      if (p2shKeys.has(key)) {
+        const wrapped = script.encodePayToScriptHashSignatureScript(sig);
+        tx.inputs[i].signatureScript = wrapped;
+        scripts.push(hexish(wrapped));
+      } else {
+        tx.inputs[i].signatureScript = hexish(sig);
+        scripts.push(hexish(sig));
+      }
+    }
+    txId = await submitSignedRpc(k, rpc, url, tx, {
+      sigOpCount: 0,
+      computeBudget: 40,
+      lockTime: 0,
+      scripts
+    });
+  }
+  if (!txId) throw new Error('Reveal did not return a txid');
+  return txId;
+}
+
+export async function sendKcc20({ wallet, dest, token, amountHuman, utxos, onStatus }) {
+  const tick = String(token?.ticker || '').toUpperCase();
+  if (!tick) throw new Error('Missing KCC20 ticker');
+  if (!isKrcDest(dest)) throw new Error('Destination must be a kaspa: address');
+  try {
+    const res = await fetch(`https://api.kasplex.org/v1/krc20/token/${encodeURIComponent(tick)}`);
+    if (res.ok) {
+      const data = await res.json();
+      const row = Array.isArray(data?.result) ? data.result[0] : data;
+      const live = row && String(row.state || '').toLowerCase() !== 'unused' && Number(row.max || 0) > 0;
+      if (live) {
+        const dec = Number(token.decimals ?? row.dec ?? 8);
+        const amtRaw = toRawLocal(amountHuman, dec);
+        onStatus?.('This ticker is also on Kasplex — sending as KRC-20…');
+        return sendKrc20({ wallet, dest, tick, amtRaw, utxos, onStatus });
+      }
+    }
+  } catch {}
+  throw new Error(
+    `${tick} is a KCC20 covenant token (KRON / KasKnight cells), not a Kasplex inscription. ` +
+    `This wallet sends KRC-20 (Pacman, NACHO, …) to any kaspa: address. ` +
+    `KCC20 cell transfers need the published SilverScript descriptor — we show the balance from kascov, and will send cells once that template is public.`
+  );
+}
+
+function toRawLocal(human, decimals) {
+  const d = Math.max(0, Number(decimals) || 0);
+  const t = String(human ?? '').trim().replace(',', '.');
+  if (!t) throw new Error('Enter an amount');
+  const [w, f = ''] = t.split('.');
+  const frac = (f + '0'.repeat(d)).slice(0, d);
+  const raw = BigInt(w || '0') * (10n ** BigInt(d)) + BigInt(frac || '0');
+  if (raw <= 0n) throw new Error('Amount must be > 0');
+  return raw.toString();
+}

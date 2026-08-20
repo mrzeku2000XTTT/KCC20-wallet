@@ -5,7 +5,7 @@ import {
 import {
   NATIVE_KAS, VAULT_PRODUCTS, loadWatchlist, addToken, removeToken,
   loadVaults, saveVault, updateVault, formatAmount, formatTokenUnits, tokenColor,
-  fetchKcc20Portfolio, fetchKrc20Portfolio, krc20Logo
+  fetchKcc20Portfolio, fetchKrc20Portfolio, krc20Logo, toTokenRaw, setVaultOwner
 } from './kcc20.js';
 import { parseIntent, describeIntent, askFor, parseDurationField } from './intent.js';
 import { payloadFromAddress } from './script.js';
@@ -14,7 +14,7 @@ import {
   sendKas, fetchAddressUtxos, fetchAddressBalance, loadKaspaSdk,
   buildTimelockCovenant, buildEscrowCovenant, buildMultisigCovenant, currentDaa,
   pingPublicNode, sweepVault, toRpcTransaction, p2shSpendScript, planKasPayment, storageMassOk,
-  compoundUtxos
+  compoundUtxos, sendKrc20, sendKcc20, loadKrc20Pending
 } from './tx.js';
 
 function errText(e) {
@@ -33,6 +33,8 @@ const API_BASE = 'https://api.kaspa.org';
 const BACKEND_URL = 'https://base44.app/api/apps/6a444b036408e68ec8d6f2a6/functions';
 const STORE_KEY = 'kcc20_wallet_v1';
 const LEGACY_KEY = 'scorpion_wallet';
+const WALLETS_KEY = 'kcc20_wallets_v2';
+const ACTIVE_KEY = 'kcc20_active_id';
 
 const $ = (id) => document.getElementById(id);
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
@@ -149,23 +151,103 @@ function showPage(id) {
   }
 }
 
-function saveWallet() {
-  localStorage.setItem(STORE_KEY, JSON.stringify(wallet));
+function uid() {
+  try { return crypto.randomUUID(); } catch { return String(Date.now()) + Math.random().toString(16).slice(2); }
 }
 
-function loadStoredWallet() {
+function loadWalletList() {
+  try {
+    const raw = JSON.parse(localStorage.getItem(WALLETS_KEY) || '[]');
+    if (Array.isArray(raw) && raw.length) return raw;
+  } catch {}
+  const one = loadStoredWalletRaw();
+  if (one?.address && one?.privKey) {
+    const w = {
+      id: uid(),
+      name: 'Wallet 1',
+      address: one.address,
+      privKey: one.privKey,
+      pubKey: one.pubKey || '',
+      createdAt: Date.now()
+    };
+    localStorage.setItem(WALLETS_KEY, JSON.stringify([w]));
+    localStorage.setItem(ACTIVE_KEY, w.id);
+    return [w];
+  }
+  return [];
+}
+
+function saveWalletList(list) {
+  localStorage.setItem(WALLETS_KEY, JSON.stringify(list));
+}
+
+function loadStoredWalletRaw() {
   const raw = localStorage.getItem(STORE_KEY) || localStorage.getItem(LEGACY_KEY);
   if (!raw) return null;
   try { return JSON.parse(raw); } catch { return null; }
 }
 
+function loadStoredWallet() {
+  const list = loadWalletList();
+  if (!list.length) return null;
+  const id = localStorage.getItem(ACTIVE_KEY);
+  return list.find(w => w.id === id) || list[0];
+}
+
+function saveWallet() {
+  if (!wallet) return;
+  if (!wallet.id) wallet.id = uid();
+  if (!wallet.name) wallet.name = 'Wallet ' + (loadWalletList().length || 1);
+  localStorage.setItem(STORE_KEY, JSON.stringify({
+    address: wallet.address, privKey: wallet.privKey, pubKey: wallet.pubKey
+  }));
+  localStorage.setItem(ACTIVE_KEY, wallet.id);
+  const list = loadWalletList();
+  const i = list.findIndex(w => w.id === wallet.id || w.address === wallet.address);
+  const row = {
+    id: wallet.id,
+    name: wallet.name,
+    address: wallet.address,
+    privKey: wallet.privKey,
+    pubKey: wallet.pubKey || '',
+    createdAt: wallet.createdAt || Date.now()
+  };
+  if (i >= 0) list[i] = { ...list[i], ...row };
+  else list.push(row);
+  saveWalletList(list);
+}
+
+function resetLiveState() {
+  utxos = [];
+  balanceSompi = 0;
+  seenBalance = null;
+  kccHoldings = [];
+  krcHoldings = [];
+  seenTokens = false;
+  tokenLoadErr = '';
+  window.__txs = [];
+  autoSweepTried.clear();
+}
+
+async function activateWallet(w, { toastMsg } = {}) {
+  wallet = w;
+  saveWallet();
+  setVaultOwner(w.address);
+  resetLiveState();
+  await unlockToHome();
+  if (toastMsg) toast(toastMsg);
+}
+
 async function unlockToHome() {
+  if (wallet?.address) setVaultOwner(wallet.address);
   $('page-lock').classList.remove('active');
   showPage('home');
   $('tabbar').classList.add('show');
   renderHome();
   startLiveSync();
   loadKaspaSdk().catch(() => {});
+  const pend = wallet?.address ? loadKrc20Pending(wallet.address) : null;
+  if (pend) toast('Unfinished KRC-20 reveal — open Send to finish it');
 }
 
 async function createWallet() {
@@ -174,13 +256,18 @@ async function createWallet() {
   try {
     await loadCryptoLibs();
     const priv = await generatePrivateKey();
-    wallet = await createKeypairFromHex(priv);
-    saveWallet();
-    await unlockToHome();
-    toast('Wallet created');
+    const kp = await createKeypairFromHex(priv);
+    const list = loadWalletList();
+    const w = {
+      ...kp,
+      id: uid(),
+      name: 'Wallet ' + (list.length + 1),
+      createdAt: Date.now()
+    };
+    await activateWallet(w, { toastMsg: list.length ? 'New wallet added' : 'Wallet created' });
     openSheet('Your new wallet', `
-      <p class="muted" style="text-align:left;padding:0 0 12px;">This is the only copy of your private key. Store it offline. We never send it to our servers except when you confirm a send (to build the transaction).</p>
-      <div class="glass mono" style="padding:14px;word-break:break-all;color:var(--gold-2);font-size:13px;">${esc(wallet.privKey)}</div>
+      <p class="muted" style="text-align:left;padding:0 0 12px;">This is the only copy of this wallet’s private key. Store it offline. You can add more wallets from the You tab.</p>
+      <div class="glass mono" style="padding:14px;word-break:break-all;color:var(--gold-2);font-size:13px;">${esc(w.privKey)}</div>
     `, { confirm: 'I saved it', cancel: false });
   } catch (e) {
     toast(e.message);
@@ -192,10 +279,15 @@ async function importWallet() {
   const hex = $('import-key').value.trim().replace(/^0x/, '');
   if (!/^[0-9a-fA-F]{64}$/.test(hex)) { toast('Need a 64-character hex key'); return; }
   try {
-    wallet = await createKeypairFromHex(hex);
-    saveWallet();
-    await unlockToHome();
-    toast('Wallet imported');
+    const kp = await createKeypairFromHex(hex);
+    const list = loadWalletList();
+    const existing = list.find(w => w.address === kp.address);
+    if (existing) {
+      await activateWallet({ ...existing, ...kp }, { toastMsg: 'Switched to imported wallet' });
+      return;
+    }
+    const w = { ...kp, id: uid(), name: 'Wallet ' + (list.length + 1), createdAt: Date.now() };
+    await activateWallet(w, { toastMsg: 'Wallet imported' });
   } catch (e) {
     toast(e.message);
   }
@@ -203,7 +295,14 @@ async function importWallet() {
 
 function logout() {
   stopLiveSync();
+  const list = loadWalletList().filter(w => w.id !== wallet?.id && w.address !== wallet?.address);
+  saveWalletList(list);
+  if (list.length) {
+    activateWallet(list[0], { toastMsg: 'Wallet removed' }).catch(e => toast(errText(e)));
+    return;
+  }
   localStorage.removeItem(STORE_KEY);
+  localStorage.removeItem(ACTIVE_KEY);
   wallet = null;
   location.reload();
 }
@@ -446,16 +545,55 @@ function renderProfile() {
   if ($('profile-addr')) $('profile-addr').textContent = addr;
   if ($('profile-bal')) $('profile-bal').textContent = formatAmount(balanceSompi) + ' KAS';
   if ($('profile-script')) $('profile-script').textContent = String(addr).startsWith('kaspa:p') ? 'P2SH covenant' : 'P2PK Schnorr key';
+  if ($('profile-name')) $('profile-name').textContent = wallet.name || 'Wallet';
   if ($('profile-utxos')) {
     const n = Array.isArray(utxos) ? utxos.length : 0;
     $('profile-utxos').textContent = n === 1 ? '1' : String(n);
   }
   const ex = $('profile-explorer');
   if (ex && addr) ex.href = 'https://kas.fyi/address/' + encodeURIComponent(addr);
+  const box = $('wallet-list');
+  if (box) {
+    const list = loadWalletList();
+    box.innerHTML = list.map(w => `
+      <button class="row" type="button" data-switch-wallet="${esc(w.id)}">
+        <div class="glyph" style="background:${w.id === wallet.id ? 'rgba(48,209,88,.16)' : 'rgba(255,255,255,.08)'};color:${w.id === wallet.id ? 'var(--green)' : 'var(--label-2)'}">${w.id === wallet.id ? '●' : '○'}</div>
+        <div style="min-width:0;flex:1">
+          <div class="title">${esc(w.name || 'Wallet')}</div>
+          <div class="sub">${esc(shortAddr(w.address, 12, 8))}</div>
+        </div>
+        <span class="chev">${w.id === wallet.id ? 'Now' : 'Use'}</span>
+      </button>
+    `).join('') || `<div class="empty">No wallets</div>`;
+  }
   const log = $('scorpion-log');
   if (log && !log.childElementCount) {
     log.innerHTML = `<div class="bubble ai">I am Scorpion. I translate any Kaspa tx into plain English — lock vs send vs sweep vs KRC-20. Paste a txid or ask <em>what was my last lock?</em></div>`;
   }
+}
+
+function openImportAnother() {
+  haptic();
+  openSheet('Import wallet', `
+    <p class="muted" style="text-align:left;padding:0 0 10px;">Paste a 64-character hex private key. It is added next to your current wallets — nothing is overwritten.</p>
+    <div class="field"><label>Private key</label><input id="more-key" placeholder="6d3af702…" spellcheck="false" autocomplete="off"></div>
+  `, {
+    confirm: 'Import', gold: true, onConfirm: async () => {
+      const hex = $('more-key')?.value.trim().replace(/^0x/, '');
+      if (!/^[0-9a-fA-F]{64}$/.test(hex)) throw new Error('Need a 64-character hex key');
+      const kp = await createKeypairFromHex(hex);
+      const list = loadWalletList();
+      const existing = list.find(w => w.address === kp.address);
+      if (existing) {
+        closeSheet();
+        await activateWallet({ ...existing, ...kp }, { toastMsg: 'Already in the list — switched' });
+        return;
+      }
+      const w = { ...kp, id: uid(), name: 'Wallet ' + (list.length + 1), createdAt: Date.now() };
+      closeSheet();
+      await activateWallet(w, { toastMsg: 'Wallet imported' });
+    }
+  });
 }
 
 function explHtml(expl) {
@@ -716,7 +854,12 @@ function openTokenSheet(token) {
     ${token.tokenId && token.protocol === 'kcc20' ? `<div class="kv"><span class="k">Token ID</span><span class="v">${esc(token.tokenId)}</span></div>` : ''}
     <p class="muted" style="text-align:left;padding-top:8px;">Live from kascov.io (KRON / KCC20, CORS open). Same holdings KasWare shows for this address.</p>
     <p class="muted"><a href="${esc(link)}" target="_blank" rel="noopener" style="color:var(--gold-2)">Open explorer</a></p>
-  `, { confirm: 'Done', cancel: false });
+  `, {
+    confirm: 'Send ' + token.ticker,
+    gold: true,
+    cancelLabel: 'Close',
+    onConfirm: () => openSend({ token, assetKey: `${token.protocol}:${token.ticker}` })
+  });
 }
 
 function openCompound() {
@@ -851,30 +994,83 @@ function closeSheet() {
   if (receiveWatch) { receiveWatch = false; setLiveFast(false); }
 }
 
+function sendAssets() {
+  const kas = { key: 'kas', protocol: 'kas', ticker: 'KAS', name: 'Kaspa', decimals: 8, balance: String(balanceSompi), native: true };
+  const kcc = (kccHoldings || []).map(t => ({ ...t, key: `kcc20:${t.ticker}` }));
+  const krc = (krcHoldings || []).map(t => ({ ...t, key: `krc20:${t.ticker}` }));
+  return [kas, ...kcc, ...krc];
+}
+
+function findSendAsset(key) {
+  return sendAssets().find(a => a.key === key) || sendAssets()[0];
+}
+
 function openSend(prefill) {
   haptic();
   const dest0 = prefill?.destination || '';
-  const amt0 = prefill?.amountKas || '';
-  openSheet('Send KAS', `
-    <div class="field"><label>To</label><input id="send-dest" placeholder="kaspa:q…" value="${esc(dest0)}" spellcheck="false" autocomplete="off"></div>
-    <div class="field"><label>Amount</label><input id="send-amount" type="number" inputmode="decimal" min="0" step="0.0001" placeholder="0.00" value="${esc(amt0)}"></div>
-    <p class="muted" style="text-align:left;padding:0 0 8px;">Available ${formatAmount(balanceSompi)} KAS. Network fee is usually 0.004–0.007 KAS (Toccata compute mass), shown before you confirm.</p>
+  const amt0 = prefill?.amountKas || prefill?.amount || '';
+  const prefKey = prefill?.assetKey || (prefill?.token
+    ? `${prefill.token.protocol}:${prefill.token.ticker}`
+    : 'kas');
+  const assets = sendAssets();
+  const opts = assets.map(a => {
+    const avail = a.native ? formatAmount(a.balance) : formatTokenUnits(a.balance, a.decimals);
+    return `<option value="${esc(a.key)}" ${a.key === prefKey ? 'selected' : ''}>${esc(a.ticker)} · ${esc(avail)}</option>`;
+  }).join('');
+  openSheet('Send', `
+    <div class="field"><label>Asset</label>
+      <select id="send-asset">${opts}</select>
+    </div>
+    <div class="field"><label>To</label><input id="send-dest" placeholder="kaspa:q… or kaspa:p…" value="${esc(dest0)}" spellcheck="false" autocomplete="off"></div>
+    <div class="field"><label>Amount</label><input id="send-amount" type="text" inputmode="decimal" placeholder="0.00" value="${esc(amt0)}"></div>
+    <p class="muted" style="text-align:left;padding:0 0 8px;" id="send-hint">KAS goes to any kaspa address. KRC-20 (Pacman…) uses Kasplex commit-reveal (~0.1 KAS parked then returned minus fee). KCC20 (KasKnight) shows here from kascov.</p>
   `, { confirm: 'Review', gold: true, onConfirm: () => prepareSend() });
 }
 
+function readSendForm() {
+  const dest = $('send-dest')?.value.trim();
+  const amount = $('send-amount')?.value.trim();
+  const key = $('send-asset')?.value || 'kas';
+  return { dest, amount, asset: findSendAsset(key) };
+}
+
 async function prepareSend(prefill) {
-  const dest = (prefill && prefill.destination) || $('send-dest')?.value.trim();
-  const amount = Number((prefill && prefill.amountKas) || $('send-amount')?.value);
-  if (!isValidKaspaAddress(dest)) { toast('Invalid Kaspa address'); return; }
-  if (!amount || amount <= 0) { toast('Enter an amount'); return; }
-  const feeEst = 0.0045;
+  const form = prefill?.destination
+    ? { dest: prefill.destination, amount: String(prefill.amountKas || prefill.amount || ''), asset: findSendAsset(prefill.assetKey || 'kas') }
+    : readSendForm();
+  const dest = form.dest;
+  const asset = form.asset;
+  if (!isValidKaspaAddress(dest)) { toast('Invalid Kaspa address — use kaspa:q… or kaspa:p…'); return; }
+  if (!form.amount) { toast('Enter an amount'); return; }
+  if (asset.native || asset.protocol === 'kas') {
+    const amount = Number(form.amount);
+    if (!amount || amount <= 0) { toast('Enter an amount'); return; }
+    const feeEst = 0.0045;
+    openSheet('Review send', `
+      <div class="kv"><span class="k">Asset</span><span class="v">KAS</span></div>
+      <div class="kv"><span class="k">To</span><span class="v">${esc(shortAddr(dest, 14, 8))}</span></div>
+      <div class="kv"><span class="k">Amount</span><span class="v">${esc(formatKas(amount))} KAS</span></div>
+      <div class="kv"><span class="k">Network fee</span><span class="v">~${feeEst.toFixed(4)} KAS</span></div>
+      <div class="kv"><span class="k">Leaves wallet</span><span class="v">~${formatKas(amount + feeEst, 4)} KAS</span></div>
+      <p class="muted" style="text-align:left;padding-top:8px;">Change stays in this wallet. Works for any kaspa:q or kaspa:p address.</p>
+    `, { confirm: 'Send now', gold: true, onConfirm: () => broadcastSend(dest, amount) });
+    return;
+  }
+  let raw;
+  try { raw = toTokenRaw(form.amount, asset.decimals); }
+  catch (e) { toast(errText(e)); return; }
+  if (BigInt(raw) > BigInt(asset.balance || '0')) { toast('More than you hold'); return; }
+  const proto = asset.protocol === 'krc20' ? 'KRC-20' : 'KCC20';
+  const extra = asset.protocol === 'krc20'
+    ? 'Kasplex commit-reveal: ~0.1 KAS is parked in a P2SH then returned minus Toccata fees. Recipient can be any kaspa: wallet.'
+    : 'KCC20 cells (KRON / KasKnight). If this ticker is also on Kasplex we send that path; otherwise we need the published covenant descriptor.';
   openSheet('Review send', `
+    <div class="kv"><span class="k">Asset</span><span class="v">${esc(asset.ticker)} · ${esc(proto)}</span></div>
     <div class="kv"><span class="k">To</span><span class="v">${esc(shortAddr(dest, 14, 8))}</span></div>
-    <div class="kv"><span class="k">Amount</span><span class="v">${esc(formatKas(amount))} KAS</span></div>
-    <div class="kv"><span class="k">Network fee</span><span class="v">~${feeEst.toFixed(4)} KAS</span></div>
-    <div class="kv"><span class="k">Leaves wallet</span><span class="v">~${formatKas(amount + feeEst, 4)} KAS</span></div>
-    <p class="muted" style="text-align:left;padding-top:8px;">The node sets the real fee from compute mass (usually 0.004–0.007 KAS). Change stays in this wallet.</p>
-  `, { confirm: 'Send now', gold: true, onConfirm: () => broadcastSend(dest, amount) });
+    <div class="kv"><span class="k">Amount</span><span class="v">${esc(form.amount)} ${esc(asset.ticker)}</span></div>
+    <div class="kv"><span class="k">Raw units</span><span class="v">${esc(raw)}</span></div>
+    <p class="muted" style="text-align:left;padding-top:8px;">${esc(extra)}</p>
+  `, { confirm: 'Send now', gold: true, onConfirm: () => broadcastTokenSend(dest, asset, form.amount, raw) });
 }
 
 async function broadcastSend(dest, amount) {
@@ -899,6 +1095,37 @@ async function broadcastSend(dest, amount) {
     `, { confirm: 'Done', cancel: false, onConfirm: () => { closeSheet(); refreshAll(); } });
   } catch (e) {
     toast(e.message || 'Broadcast failed');
+  }
+}
+
+async function broadcastTokenSend(dest, asset, human, raw) {
+  toast('Connecting to Kaspa…');
+  try {
+    await loadKaspaSdk();
+    await pingPublicNode();
+    const availableUtxos = await fetchAddressUtxos(wallet.address);
+    if (!availableUtxos.length) { toast('Need a little KAS in this wallet for fees'); return; }
+    const onStatus = (m) => { toast(m); setSheetStatus(m); };
+    let result;
+    if (asset.protocol === 'krc20') {
+      result = await sendKrc20({ wallet, dest, tick: asset.ticker, amtRaw: raw, utxos: availableUtxos, onStatus });
+    } else {
+      result = await sendKcc20({ wallet, dest, token: asset, amountHuman: human, utxos: availableUtxos, onStatus });
+    }
+    setLiveFast(true);
+    setTimeout(() => setLiveFast(false), 30000);
+    const id = result.revealId || result.txId;
+    openSheet('Sent ' + asset.ticker, `
+      <div class="kv"><span class="k">Asset</span><span class="v">${esc(asset.ticker)}</span></div>
+      <div class="kv"><span class="k">Amount</span><span class="v">${esc(human)} ${esc(asset.ticker)}</span></div>
+      <div class="kv"><span class="k">To</span><span class="v">${esc(shortAddr(dest, 14, 8))}</span></div>
+      ${result.commitTxId ? `<div class="kv"><span class="k">Commit</span><span class="v">${esc(result.commitTxId)}</span></div>` : ''}
+      <div class="kv"><span class="k">Reveal / TX</span><span class="v">${esc(id)}</span></div>
+      <p class="muted"><a href="https://kas.fyi/transaction/${esc(id)}" target="_blank" rel="noopener" style="color:var(--gold-2)">View on explorer</a></p>
+    `, { confirm: 'Done', cancel: false, onConfirm: () => { closeSheet(); refreshAll(); } });
+  } catch (e) {
+    toast(errText(e));
+    setSheetStatus(errText(e), true);
   }
 }
 
@@ -1364,6 +1591,15 @@ function bind() {
   click('profile-compound', openCompound);
   click('profile-keys', openSettings);
   click('profile-wipe', logout);
+  click('profile-new-wallet', () => createWallet());
+  click('profile-import-wallet', openImportAnother);
+  $('wallet-list')?.addEventListener('click', e => {
+    const btn = e.target.closest('[data-switch-wallet]');
+    if (!btn?.dataset.switchWallet) return;
+    const w = loadWalletList().find(x => x.id === btn.dataset.switchWallet);
+    if (!w || w.id === wallet?.id) return;
+    activateWallet(w, { toastMsg: 'Switched wallet' }).catch(err => toast(errText(err)));
+  });
   click('scorpion-send', () => sendScorpion().catch(err => toast(errText(err))));
   $('scorpion-input')?.addEventListener('keydown', e => {
     if (e.key === 'Enter') sendScorpion().catch(err => toast(errText(err)));

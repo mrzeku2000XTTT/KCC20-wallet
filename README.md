@@ -27,6 +27,8 @@ Import this repo. Framework: Other. No build command. Root directory: `.`
 - Live KAS balance, USD, UTXOs, activity from api.kaspa.org
 - Send / receive (QR)
 - KCC20 watchlist
+- Send KAS, KRC-20 (Pacman, NACHO, … via Kasplex commit-reveal) to any kaspa:q / kaspa:p address
+- Multiple wallets: New / Import / switch on the You tab (KasWare-style)
 - Profile tab (bottom right): full Kaspa address, QR, keys, compound, wipe
 - Scorpion AI: covenant++ translator — tap any tx or paste a txid for plain-English kind, amount, fee, P2SH vs P2PK, vault product, KRC-20/KCC20 payload
 - AI + manual covenant builder (existing `kccApi` backend)

@@ -12,7 +12,7 @@
   <link rel="icon" href="assets/icon.png">
   <title>KCC20 Wallet</title>
   <meta http-equiv="Cache-Control" content="no-store, no-cache, must-revalidate">
-  <link rel="stylesheet" href="css/app.css?v=36">
+  <link rel="stylesheet" href="css/app.css?v=37">
 </head>
 <body>
   <img class="bg-poster" src="assets/bg.jpg" alt="">
@@ -151,6 +151,7 @@
         <section class="page" id="page-you">
           <div class="glass profile-card">
             <div class="profile-avatar">K</div>
+            <div class="card-label" id="profile-name">Wallet</div>
             <div class="card-label">Your Kaspa address</div>
             <p class="profile-addr" id="profile-addr">kaspa:…</p>
             <div class="btn-row" style="margin-top:12px;">
@@ -161,6 +162,13 @@
             <div class="kv"><span class="k">Script</span><span class="v" id="profile-script">P2PK</span></div>
             <div class="kv"><span class="k">UTXOs</span><span class="v" id="profile-utxos">0</span></div>
             <a class="profile-link" id="profile-explorer" href="#" target="_blank" rel="noopener">Open on kas.fyi</a>
+          </div>
+
+          <div class="section-label">Wallets</div>
+          <div class="glass list" id="wallet-list"></div>
+          <div class="btn-row" style="margin:0 0 16px;">
+            <button class="btn btn-gold" id="profile-new-wallet" type="button">New wallet</button>
+            <button class="btn btn-glass" id="profile-import-wallet" type="button">Import</button>
           </div>
 
           <div class="section-label">Scorpion AI</div>
@@ -269,7 +277,7 @@
     })();
   </script>
   <script type="module">
-    import('./js/app.js?v=36').catch(function (err) {
+    import('./js/app.js?v=37').catch(function (err) {
       console.error(err);
       var phone = document.getElementById('phone');
       var d = document.createElement('div');

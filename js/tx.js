@@ -1,5 +1,5 @@
 /* Official rusty-kaspa WASM: P2SH covenants + signed send/fund. */
-import { hexToBytes } from './crypto.js';
+import { hexToBytes, kaspaAddressFromScriptHash } from './crypto.js';
 
 const API = 'https://api.kaspa.org';
 
@@ -20,7 +20,7 @@ export async function loadKaspaSdk() {
     return await _sdkLoading;
   } catch (e) {
     _sdkLoading = null;
-    throw new Error('Kaspa engine failed to load: ' + (e.message || e));
+    throw new Error('Kaspa engine failed to load: ' + netFail('Kaspa WASM', e));
   }
 }
 
@@ -47,6 +47,41 @@ function errText(e) {
   if (e == null) return 'Unknown error';
   if (typeof e === 'string') return e;
   return e.message || e.toString?.() || String(e);
+}
+
+function netFail(label, e) {
+  const m = errText(e);
+  if (/abort/i.test(m)) return label + ' timed out — tap Send now again';
+  if (/failed to fetch|networkerror|load failed|network request/i.test(m)) {
+    return 'Could not reach ' + label + '. Check the network and tap Send now again.';
+  }
+  return m;
+}
+
+async function fetchJsonRetry(url, { tries = 3, timeout = 14000, label = 'Network' } = {}) {
+  let last = 'Could not reach ' + label;
+  for (let i = 0; i < tries; i++) {
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), timeout);
+    try {
+      const res = await fetch(url, { cache: 'no-store', signal: ctrl.signal });
+      clearTimeout(timer);
+      if (!res.ok) {
+        last = label + ' HTTP ' + res.status;
+        if (res.status >= 500 || res.status === 429) {
+          await sleep(400 * (i + 1));
+          continue;
+        }
+        throw new Error(last);
+      }
+      return await res.json();
+    } catch (e) {
+      clearTimeout(timer);
+      last = netFail(label, e);
+      if (i + 1 < tries) await sleep(400 * (i + 1));
+    }
+  }
+  throw new Error(last);
 }
 
 function hexish(v) {
@@ -820,15 +855,18 @@ export async function compoundUtxos({ wallet, utxos }) {
 }
 
 export async function fetchAddressUtxos(address) {
-  const res = await fetch(`${API}/addresses/${encodeURIComponent(address)}/utxos`);
-  if (!res.ok) throw new Error('UTXO fetch failed');
-  return res.json();
+  const data = await fetchJsonRetry(
+    `${API}/addresses/${encodeURIComponent(address)}/utxos`,
+    { label: 'Kaspa UTXOs' }
+  );
+  return Array.isArray(data) ? data : [];
 }
 
 export async function fetchAddressBalance(address) {
-  const res = await fetch(`${API}/addresses/${encodeURIComponent(address)}/balance`);
-  if (!res.ok) throw new Error('Balance fetch failed');
-  const data = await res.json();
+  const data = await fetchJsonRetry(
+    `${API}/addresses/${encodeURIComponent(address)}/balance`,
+    { label: 'Kaspa balance' }
+  );
   return Number(data.balance ?? data ?? 0);
 }
 
@@ -1100,28 +1138,64 @@ function destXOnly(k, dest) {
 }
 
 async function kronJson(path) {
-  const res = await fetch(KRON_IDX + path, { cache: 'no-store' });
-  if (!res.ok) throw new Error('KRON indexer HTTP ' + res.status);
-  return res.json();
+  return fetchJsonRetry(KRON_IDX + path, { label: 'KRON indexer', timeout: 16000 });
 }
 
-async function cellKasValue(txid, index) {
-  const res = await fetch(`${API}/transactions/${txid}`);
-  if (!res.ok) throw new Error('Could not load cell UTXO');
-  const tx = await res.json();
-  const o = (tx.outputs || [])[index];
-  if (!o) throw new Error('Cell output missing');
-  return BigInt(o.amount);
+function indexerSompi(c) {
+  const v = c?.value ?? c?.kasValue ?? c?.amountSompi ?? c?.utxoEntry?.amount ?? c?.entry?.amount;
+  if (v == null || v === '') return null;
+  try {
+    const n = BigInt(v);
+    if (n < MIN_CELL_KAS) return null;
+    return n;
+  } catch {
+    return null;
+  }
+}
+
+function p2shAddrFromSpk(spk) {
+  const h = hexish(spk);
+  const m = /^aa20([0-9a-f]{64})87$/i.exec(h);
+  if (!m) return '';
+  try {
+    return kaspaAddressFromScriptHash(hexToU8(m[1]));
+  } catch {
+    return '';
+  }
+}
+
+async function cellKasValue(txid, index, hint) {
+  const hinted = indexerSompi(hint);
+  if (hinted != null) return hinted;
+  try {
+    const tx = await fetchJsonRetry(`${API}/transactions/${txid}`, { label: 'Kaspa tx', tries: 3 });
+    const o = (tx.outputs || [])[index];
+    if (o && o.amount != null) return BigInt(o.amount);
+  } catch {}
+  const addr = p2shAddrFromSpk(hint?.scriptPublicKey || hint?.spk);
+  if (addr) {
+    try {
+      const utxos = await fetchAddressUtxos(addr);
+      const hit = (utxos || []).find(u => {
+        const id = u.outpoint?.transactionId || u.outpoint?.transaction_id;
+        const idx = Number(u.outpoint?.index ?? -1);
+        return id === txid && idx === Number(index);
+      });
+      const amt = hit?.utxoEntry?.amount ?? hit?.amount;
+      if (amt != null) return BigInt(amt);
+    } catch {}
+  }
+  throw new Error('Could not load the KAS sitting in this ' + (hint?.tick || 'token') + ' cell. Tap Send now again.');
 }
 
 export async function sendKcc20({ wallet, dest, token, amountHuman, utxos, onStatus }) {
   const tick = String(token?.ticker || '').toUpperCase();
   if (!tick) throw new Error('Missing KCC20 ticker');
   if (!isKrcDest(dest)) throw new Error('Destination must be a kaspa: address');
-  try {
-    const res = await fetch(`https://api.kasplex.org/v1/krc20/token/${encodeURIComponent(tick)}`);
-    if (res.ok) {
-      const data = await res.json();
+  const forceKcc = String(token?.protocol || 'kcc20') === 'kcc20';
+  if (!forceKcc) {
+    try {
+      const data = await fetchJsonRetry(`https://api.kasplex.org/v1/krc20/token/${encodeURIComponent(tick)}`, { label: 'Kasplex', tries: 2 });
       const row = Array.isArray(data?.result) ? data.result[0] : data;
       const live = row && String(row.state || '').toLowerCase() !== 'unused' && Number(row.max || 0) > 0;
       if (live) {
@@ -1130,8 +1204,8 @@ export async function sendKcc20({ wallet, dest, token, amountHuman, utxos, onSta
         onStatus?.('This ticker is also on Kasplex — sending as KRC-20…');
         return sendKrc20({ wallet, dest, tick, amtRaw, utxos, onStatus });
       }
-    }
-  } catch {}
+    } catch {}
+  }
 
   const k = await loadKaspaSdk();
   const sendAmt = BigInt(toRawLocal(amountHuman, token.decimals ?? 0));
@@ -1143,7 +1217,13 @@ export async function sendKcc20({ wallet, dest, token, amountHuman, utxos, onSta
   if (u8ToHex(destPk) === u8ToHex(selfPk)) throw new Error('That is this wallet’s own address');
 
   onStatus?.('Loading KRON KCC20 cells…');
-  const info = await kronJson(`/v1/kcc20/token/${encodeURIComponent(tick)}`);
+  let info;
+  try {
+    info = await kronJson(`/v1/kcc20/token/${encodeURIComponent(tick)}`);
+  } catch (e) {
+    if (!/^[0-9a-f]{64}$/i.test(String(token?.tokenId || '').replace(/^0x/i, ''))) throw e;
+    info = { result: [{ covenantId: token.tokenId, maxIns: 4 }] };
+  }
   const meta = Array.isArray(info?.result) ? info.result[0] : info?.result;
   const tokenCovid = String(meta?.covenantId || token.tokenId || '').replace(/^0x/i, '').toLowerCase();
   if (!/^[0-9a-f]{64}$/.test(tokenCovid)) throw new Error('KRON did not return a covenant id for ' + tick);
@@ -1152,22 +1232,30 @@ export async function sendKcc20({ wallet, dest, token, amountHuman, utxos, onSta
   const cells = Array.isArray(rawCells?.result) ? rawCells.result : [];
   if (!cells.length) throw new Error('No ' + tick + ' cells on this address (KRON indexer)');
 
-  const pieces = [];
-  for (const c of cells) {
+  const loaded = await Promise.all(cells.map(async c => {
     const txid = c.outpoint?.transactionId;
     const index = Number(c.outpoint?.index ?? 0);
     const redeem = c.redeemScriptHex || c.redeem;
-    if (!txid || !redeem) continue;
-    const parsed = parseKcc20Redeem(redeem);
-    const kasValue = await cellKasValue(txid, index);
-    pieces.push({
-      transactionId: txid,
-      index,
-      tokenAmount: BigInt(c.amount ?? parsed.amount),
-      value: kasValue,
-      redeem: parsed,
-      spk: c.scriptPublicKey
-    });
+    if (!txid || !redeem) return null;
+    try {
+      const parsed = parseKcc20Redeem(redeem);
+      if (parsed.identifierType === 1) return null;
+      const kasValue = await cellKasValue(txid, index, c);
+      return {
+        transactionId: txid,
+        index,
+        tokenAmount: BigInt(c.amount ?? parsed.amount),
+        value: kasValue,
+        redeem: parsed,
+        spk: c.scriptPublicKey
+      };
+    } catch {
+      return null;
+    }
+  }));
+  const pieces = loaded.filter(Boolean);
+  if (!pieces.length) {
+    throw new Error('Found ' + tick + ' on the indexer but could not load the cell UTXOs. Tap Send now again.');
   }
   pieces.sort((a, b) => (a.tokenAmount < b.tokenAmount ? 1 : -1));
   const totalTok = pieces.reduce((a, p) => a + p.tokenAmount, 0n);

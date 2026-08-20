@@ -2382,8 +2382,12 @@ async function broadcastTokenSend(dest, asset, human, raw) {
     `, { confirm: 'Done', cancel: false, onConfirm: () => { closeSheet(); refreshAll(); } });
   } catch (e) {
     if (errText(e) === 'cancelled') return;
-    toast(errText(e));
-    setSheetStatus(errText(e), true);
+    let msg = errText(e);
+    if (/failed to fetch|networkerror|load failed/i.test(msg)) {
+      msg = 'Network blip reaching Kaspa or KRON. Keep this sheet open and tap Send now again.';
+    }
+    toast(msg);
+    setSheetStatus(msg, true);
   }
 }
 

@@ -355,8 +355,9 @@ img { display: block; max-width: 100%; }
   position: absolute; inset: 0; z-index: 40;
   background: rgba(0,0,0,0.72);
   display: none; align-items: flex-end;
+  pointer-events: none;
 }
-.sheet-overlay.open { display: flex; }
+.sheet-overlay.open { display: flex; pointer-events: auto; }
 .sheet {
   width: 100%; max-height: 88%;
   background: #141416;

@@ -1,20 +1,20 @@
 import {
   loadCryptoLibs, generatePrivateKey, createKeypairFromHex,
   isValidKaspaAddress, shortAddr, hexToBytes, privKeyToHex, derivePublicKey, kaspaAddressFromPubkey, bytesToHex
-} from './crypto.js';
+} from './crypto.js?v=32';
 import {
   NATIVE_KAS, VAULT_PRODUCTS, loadWatchlist, addToken, removeToken,
   loadVaults, saveVault, updateVault, formatAmount, formatTokenUnits, tokenColor,
   fetchKcc20Portfolio, fetchKrc20Portfolio, krc20Logo
-} from './kcc20.js';
-import { parseIntent, describeIntent, askFor, parseDurationField } from './intent.js';
-import { payloadFromAddress } from './script.js';
+} from './kcc20.js?v=32';
+import { parseIntent, describeIntent, askFor, parseDurationField } from './intent.js?v=32';
+import { payloadFromAddress } from './script.js?v=32';
 import {
   sendKas, fetchAddressUtxos, fetchAddressBalance, loadKaspaSdk,
   buildTimelockCovenant, buildEscrowCovenant, buildMultisigCovenant, currentDaa,
   pingPublicNode, sweepVault, toRpcTransaction, p2shSpendScript, planKasPayment, storageMassOk,
   compoundUtxos
-} from './tx.js';
+} from './tx.js?v=32';
 
 function errText(e) {
   if (e == null) return 'Unknown error';
@@ -1187,16 +1187,21 @@ async function sendChat() {
   renderIntentCard(intent);
 }
 
+function click(id, fn) {
+  const el = $(id);
+  if (el) el.onclick = fn;
+}
+
 function bind() {
-  $('btn-create').onclick = createWallet;
-  $('btn-show-import').onclick = () => $('import-box').classList.toggle('hidden');
-  $('btn-import').onclick = importWallet;
-  $('btn-send').onclick = openSend;
-  $('btn-receive').onclick = openReceive;
-  $('btn-copy-addr').onclick = async () => { await navigator.clipboard.writeText(wallet.address); toast('Copied'); };
-  $('btn-refresh').onclick = () => { haptic(); refreshAll(); toast('Refreshing'); };
+  click('btn-create', createWallet);
+  click('btn-show-import', () => $('import-box')?.classList.toggle('hidden'));
+  click('btn-import', importWallet);
+  click('btn-send', openSend);
+  click('btn-receive', openReceive);
+  click('btn-copy-addr', async () => { await navigator.clipboard.writeText(wallet.address); toast('Copied'); });
+  click('btn-refresh', () => { haptic(); refreshAll(); toast('Refreshing'); });
   $('btn-compound')?.addEventListener('click', openCompound);
-  $('btn-vault-short').onclick = () => showPage('vault');
+  click('btn-vault-short', () => showPage('vault'));
   $('btn-sweep-now')?.addEventListener('click', () => {
     sweepAllVaults().catch(err => toast(errText(err)));
   });
@@ -1210,10 +1215,10 @@ function bind() {
     const btn = e.target.closest('[data-vtab]');
     if (btn?.dataset.vtab) { haptic(); setVaultTab(btn.dataset.vtab); }
   });
-  $('btn-add-token').onclick = openAddToken;
-  $('chat-send').onclick = sendChat;
-  $('chat-input').addEventListener('keydown', e => { if (e.key === 'Enter') sendChat(); });
-  $('chat-log').addEventListener('click', e => {
+  click('btn-add-token', openAddToken);
+  click('chat-send', sendChat);
+  $('chat-input')?.addEventListener('keydown', e => { if (e.key === 'Enter') sendChat(); });
+  $('chat-log')?.addEventListener('click', e => {
     const buildBtn = e.target.closest('[data-build-intent]');
     const sendBtn = e.target.closest('[data-send-intent]');
     const intent = window.__intents?.[buildBtn?.dataset.buildIntent || sendBtn?.dataset.sendIntent];
@@ -1226,7 +1231,7 @@ function bind() {
     const p = productForIntent(intent);
     buildCovenant(p, intent.params);
   });
-  $('sheet-overlay').addEventListener('click', e => { if (e.target === $('sheet-overlay')) closeSheet(); });
+  $('sheet-overlay')?.addEventListener('click', e => { if (e.target === $('sheet-overlay')) closeSheet(); });
   document.querySelectorAll('.tab').forEach(t => t.onclick = () => {
     haptic();
     const tab = t.dataset.tab;
@@ -1236,7 +1241,7 @@ function bind() {
     if (tab === 'activity') renderActivity(window.__txs || []);
     if (tab === 'home') refreshAll();
   });
-  $('holdings').addEventListener('click', e => {
+  $('holdings')?.addEventListener('click', e => {
     const lock = e.target.closest('[data-lock-holding]');
     if (lock?.dataset.lockHolding) {
       const vault = loadVaults().find(v => v.address === lock.dataset.lockHolding);
@@ -1266,11 +1271,11 @@ function bind() {
     const rm = e.target.closest('[data-remove]');
     if (rm) { removeToken(rm.dataset.remove); renderTokens(); renderHome(); }
   });
-  $('vault-products').addEventListener('click', e => {
+  $('vault-products')?.addEventListener('click', e => {
     const btn = e.target.closest('[data-product]');
     if (btn) openProduct(btn.dataset.product);
   });
-  $('vault-mine').addEventListener('click', e => {
+  $('vault-mine')?.addEventListener('click', e => {
     const sweepBtn = e.target.closest('[data-sweep]');
     if (sweepBtn?.dataset.sweep) {
       e.preventDefault();
@@ -1312,7 +1317,7 @@ async function init() {
   window.__kccLoad = loadKaspaSdk;
   setClock();
   setInterval(setClock, 1000);
-  bind();
+  try { bind(); } catch (e) { console.error(e); toast('UI failed to bind — hard refresh. ' + errText(e)); }
   const video = document.getElementById('bg-video');
   video?.play?.().catch(() => {});
   video?.addEventListener('playing', () => document.querySelector('.bg-poster')?.classList.add('hidden'));

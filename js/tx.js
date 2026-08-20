@@ -734,6 +734,91 @@ export async function sweepVault({ wallet, vault, utxos }) {
   throw new Error(lastErr);
 }
 
+export async function compoundUtxos({ wallet, utxos }) {
+  const k = await loadKaspaSdk();
+  let entries = restUtxosToEntries(utxos, wallet.address);
+  if (entries.length < 2) throw new Error('Already one UTXO — nothing to compound');
+  entries = [...entries].sort((a, b) => (a.amount < b.amount ? 1 : -1));
+  const total = entries.reduce((a, e) => a + e.amount, 0n);
+  const { rpc, url } = await connectPublicNode();
+  const feeRate = await nodeFeeRate(rpc);
+  const feeGuess = BigInt(Math.min(2_000_000, 450_000 + entries.length * 15_000));
+  if (total <= feeGuess + 10_000n) throw new Error('Balance too small to cover the compound fee');
+
+  let pendingList = [];
+  let lastErr = '';
+  try {
+    const built = await k.createTransactions({
+      entries,
+      outputs: [{ address: wallet.address, amount: total - feeGuess }],
+      changeAddress: wallet.address,
+      priorityFee: 0n,
+      feeRate,
+      sigOpCount: 1,
+      networkId: 'mainnet'
+    });
+    pendingList = built.transactions || [];
+  } catch (e) {
+    lastErr = errText(e);
+  }
+  if (!pendingList.length) {
+    const tx = k.createTransaction(
+      entries,
+      [{ address: wallet.address, amount: total - feeGuess }],
+      0n,
+      undefined,
+      1
+    );
+    pendingList = [{ transaction: tx }];
+  }
+
+  const priv = new k.PrivateKey(wallet.privKey);
+  let txId = null;
+  let paidFee = 0n;
+  let kept = 0n;
+  for (let p = 0; p < pendingList.length; p++) {
+    const tx = pendingList[p].transaction;
+    tx.version = 1;
+    prepInputs(tx, { sigOpCount: 0, computeBudget: 10 });
+    try { k.updateTransactionMass('mainnet', tx); } catch {}
+    let scripts = meetToccataFee(k, tx, priv, entries, 0n, -1);
+    try {
+      txId = await submitSignedRpc(k, rpc, url, tx, {
+        sigOpCount: 0,
+        computeBudget: 10,
+        lockTime: 0,
+        scripts
+      });
+    } catch (e) {
+      const need = requiredFeeFromError(e);
+      const paid = txInputSum(tx, entries) - txOutputSum(tx);
+      if (need && need > paid) {
+        shrinkOutputsForFee(tx, need - paid + 50_000n, -1);
+        scripts = signP2pkInputs(k, tx, priv);
+        txId = await submitSignedRpc(k, rpc, url, tx, {
+          sigOpCount: 0,
+          computeBudget: 10,
+          lockTime: 0,
+          scripts
+        });
+      } else {
+        throw e;
+      }
+    }
+    paidFee = txInputSum(tx, entries) - txOutputSum(tx);
+    kept = txOutputSum(tx);
+  }
+  if (!txId) throw new Error(lastErr || 'Compound broadcast failed');
+  return {
+    txId,
+    feeKas: Number(paidFee) / 1e8,
+    amountKas: Number(kept) / 1e8,
+    inputs: entries.length,
+    txs: pendingList.length,
+    node: url
+  };
+}
+
 export async function fetchAddressUtxos(address) {
   const res = await fetch(`${API}/addresses/${encodeURIComponent(address)}/utxos`);
   if (!res.ok) throw new Error('UTXO fetch failed');

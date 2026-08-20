@@ -139,3 +139,94 @@ export function formatAmount(sompi, decimals = 8) {
   if (n >= 1000) return n.toLocaleString(undefined, { maximumFractionDigits: 2 });
   return n.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 4 });
 }
+
+export function formatTokenUnits(raw, decimals = 0) {
+  const d = Math.max(0, Number(decimals) || 0);
+  const n = Number(raw || 0) / (10 ** d);
+  if (!Number.isFinite(n) || n === 0) return '0';
+  if (n >= 1_000_000) return n.toLocaleString(undefined, { maximumFractionDigits: 2 });
+  if (d === 0) return n.toLocaleString(undefined, { maximumFractionDigits: 0 });
+  if (n >= 1) return n.toLocaleString(undefined, { maximumFractionDigits: Math.min(d, 4) });
+  return n.toLocaleString(undefined, { maximumFractionDigits: Math.min(d, 8) });
+}
+
+export function tokenColor(ticker) {
+  const t = String(ticker || '').toUpperCase();
+  if (t === 'KRON' || t === 'KRONS') return '#d4b07a';
+  if (t === 'NACHO') return '#e8a54b';
+  if (t === 'KAS') return '#49eacb';
+  let h = 0;
+  for (const c of t) h = (h * 33 + c.charCodeAt(0)) >>> 0;
+  const hues = ['#70c7ba', '#7aa2f7', '#bb9af7', '#9ece6a', '#ff9e64', '#f7768e', '#e0af68'];
+  return hues[h % hues.length];
+}
+
+const KCC20_API = 'https://kcc20.info';
+const KASPLEX_API = 'https://api.kasplex.org/v1/krc20';
+
+function asList(v) {
+  if (Array.isArray(v)) return v;
+  if (Array.isArray(v?.result)) return v.result;
+  if (Array.isArray(v?.balances)) return v.balances;
+  if (Array.isArray(v?.portfolio)) return v.portfolio;
+  return [];
+}
+
+export async function fetchKcc20Portfolio(address) {
+  if (!address) return [];
+  const url = `${KCC20_API}/v1/addresses/${address}/analysis?activity_limit=1&counterparty_limit=1`;
+  const res = await fetch(url);
+  if (res.status === 404) return [];
+  if (!res.ok) throw new Error('KCC20 indexer failed');
+  const data = await res.json();
+  return asList(data.portfolio || data).filter(p => Number(p.balance) > 0).map(p => {
+    const ticker = String(p.ticker || p.fallback_name || 'TOKEN').toUpperCase();
+    const imageApi = p.image || (p.image_api ? (String(p.image_api).startsWith('http') ? p.image_api : KCC20_API + p.image_api) : '');
+    return {
+      protocol: 'kcc20',
+      tokenId: p.token_id || '',
+      ticker,
+      name: p.display_name || p.name || ticker,
+      decimals: Number(p.decimals || 0),
+      balance: String(p.balance || '0'),
+      cells: Number(p.cells || 0),
+      image: imageApi,
+      standard: p.standard || 'kcc20',
+      priceKas: p.price_kas != null ? Number(p.price_kas) : null
+    };
+  });
+}
+
+export async function fetchKrc20Portfolio(address) {
+  if (!address) return [];
+  const out = [];
+  let next = '';
+  for (let page = 0; page < 8; page++) {
+    const q = next ? `?next=${encodeURIComponent(next)}` : '';
+    const res = await fetch(`${KASPLEX_API}/address/${address}/tokenlist${q}`);
+    if (res.status === 404) break;
+    if (!res.ok) break;
+    const data = await res.json();
+    const rows = asList(data);
+    for (const r of rows) {
+      if (!(Number(r.balance) > 0)) continue;
+      const ticker = String(r.tick || r.ticker || '').toUpperCase();
+      if (!ticker) continue;
+      out.push({
+        protocol: 'krc20',
+        tokenId: ticker,
+        ticker,
+        name: ticker,
+        decimals: Number(r.dec || r.decimal || 8),
+        balance: String(r.balance || '0'),
+        cells: 0,
+        image: '',
+        standard: 'krc-20',
+        priceKas: null
+      });
+    }
+    if (!data.next || data.next === next || !rows.length) break;
+    next = data.next;
+  }
+  return out;
+}

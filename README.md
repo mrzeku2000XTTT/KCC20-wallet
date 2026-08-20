@@ -28,7 +28,9 @@ Import this repo. Framework: Other. No build command. Root directory: `.`
 - Send / receive (QR)
 - Time capsule locks the exact KAS you type (leftover stays as change; it is not absorbed into the vault)
 - Network fees shown on lock, send, sweep, and Activity (Toccata compute fee, usually 0.004–0.007 KAS)
-- KCC20 watchlist
+- Live KCC20 balances (KRON and other covenant tokens) from kcc20.info
+- Live KRC-20 balances from Kasplex (same indexer KasWare uses)
+- UTXO compounder (merge coins into one UTXO)
 - AI + manual covenant builder (existing `kccApi` backend)
 
 Keys stay in `localStorage`. Confirmed sends still use the proven covenant builder to assemble the transaction.

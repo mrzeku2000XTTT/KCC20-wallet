@@ -11,7 +11,7 @@
   <link rel="apple-touch-icon" href="assets/icon.png">
   <link rel="icon" href="assets/icon.png">
   <title>KCC20 Wallet</title>
-  <link rel="stylesheet" href="css/app.css?v=27">
+  <link rel="stylesheet" href="css/app.css?v=28">
 </head>
 <body>
   <img class="bg-poster" src="assets/bg.jpg" alt="">
@@ -81,6 +81,10 @@
             <button class="action" id="btn-vault-short"><div class="orb"><svg viewBox="0 0 24 24" fill="none" stroke="var(--gold-2)" stroke-width="1.8"><rect x="5" y="11" width="14" height="10" rx="2"/><path d="M8 11V8a4 4 0 018 0v3"/></svg></div><span>Vault</span></button>
             <button class="action" id="btn-refresh"><div class="orb"><svg viewBox="0 0 24 24" fill="none" stroke="var(--gold-2)" stroke-width="1.8"><path d="M21 12a9 9 0 11-3-6.7"/><path d="M21 4v6h-6"/></svg></div><span>Refresh</span></button>
           </div>
+          <button class="glass utxo-bar" id="btn-compound" type="button">
+            <span id="utxo-count">0 UTXOs</span>
+            <span class="utxo-go">Compound</span>
+          </button>
           <div class="section-label">Holdings</div>
           <div class="glass list" id="holdings"></div>
         </section>
@@ -89,10 +93,14 @@
         <section class="page" id="page-tokens">
           <div class="section-label">Native</div>
           <div class="glass list" id="token-native"></div>
-          <div class="section-label">KCC20</div>
+          <div class="section-label">KCC20 · KRON</div>
           <div class="glass list" id="token-list"></div>
-          <button class="btn btn-gold" id="btn-add-token" style="margin-top:8px;">Watch a KCC20</button>
-          <p class="muted">KCC20 is Kaspa’s fungible-token covenant. Watch an instance by ticker and covenant address. Native KAS is always first.</p>
+          <div class="section-label">KRC-20 · KasWare / Kasplex</div>
+          <div class="glass list" id="token-krc20"></div>
+          <div class="section-label">Watchlist</div>
+          <div class="glass list" id="token-watch"></div>
+          <button class="btn btn-gold" id="btn-add-token" style="margin-top:8px;">Watch a token</button>
+          <p class="muted">KCC20 (KRON and other covenant tokens) loads from kcc20.info. KRC-20 loads from Kasplex, the same indexer KasWare uses. Native KAS is always first.</p>
         </section>
 
         <!-- VAULT -->
@@ -161,6 +169,6 @@
     </div>
   </div>
 
-  <script type="module" src="js/app.js?v=27"></script>
+  <script type="module" src="js/app.js?v=28"></script>
 </body>
 </html>

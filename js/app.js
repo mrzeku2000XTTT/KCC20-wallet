@@ -4,14 +4,16 @@ import {
 } from './crypto.js';
 import {
   NATIVE_KAS, VAULT_PRODUCTS, loadWatchlist, addToken, removeToken,
-  loadVaults, saveVault, updateVault, formatAmount
+  loadVaults, saveVault, updateVault, formatAmount, formatTokenUnits, tokenColor,
+  fetchKcc20Portfolio, fetchKrc20Portfolio
 } from './kcc20.js';
 import { parseIntent, describeIntent, askFor, parseDurationField } from './intent.js';
 import { payloadFromAddress } from './script.js';
 import {
   sendKas, fetchAddressUtxos, fetchAddressBalance, loadKaspaSdk,
   buildTimelockCovenant, buildEscrowCovenant, buildMultisigCovenant, currentDaa,
-  pingPublicNode, sweepVault, toRpcTransaction, p2shSpendScript, planKasPayment, storageMassOk
+  pingPublicNode, sweepVault, toRpcTransaction, p2shSpendScript, planKasPayment, storageMassOk,
+  compoundUtxos
 } from './tx.js';
 
 function errText(e) {
@@ -51,6 +53,9 @@ let lastDaaAt = 0;
 let lastAutoSweep = 0;
 let autoSweepBusy = false;
 const autoSweepTried = new Set();
+let kccHoldings = [];
+let krcHoldings = [];
+let tokenLoadErr = '';
 
 function haptic() { try { navigator.vibrate?.(12); } catch {} }
 
@@ -200,25 +205,40 @@ function renderHome() {
   renderHoldings();
 }
 
-function renderHoldings() {
-  const watched = loadWatchlist();
-  const items = [
-    { ...NATIVE_KAS, sompi: balanceSompi, usd: usd(kas()) },
-    ...watched.map(t => ({ ...t, sompi: 0, usd: '—' }))
-  ];
-  const nativeRows = items.map(t => `
-    <button class="row token-row" data-ticker="${esc(t.ticker)}">
-      <div class="dot" style="background:${esc(t.color)}22;color:${esc(t.color)}">${esc(t.ticker.slice(0, 3))}</div>
+function tokenDot(t) {
+  const color = t.color || tokenColor(t.ticker);
+  const img = t.image ? `<img alt="" src="${esc(t.image)}">` : esc(String(t.ticker || '?').slice(0, 3));
+  return `<div class="dot" style="background:${esc(color)}22;color:${esc(color)}">${img}</div>`;
+}
+
+function tokenRow(t, extra = '') {
+  const proto = t.protocol === 'krc20' ? 'KRC-20' : (t.native ? 'Native' : 'KCC20');
+  const amt = t.native ? formatAmount(t.sompi) : formatTokenUnits(t.balance, t.decimals);
+  const em = t.native ? (t.usd || '') : (Number(t.priceKas) && price ? usd(Number(t.balance) / (10 ** (t.decimals || 0)) * t.priceKas) : proto);
+  const key = `${t.protocol || 'watch'}:${t.ticker}`;
+  return `
+    <button class="row token-row" data-token-key="${esc(key)}" ${extra}>
+      ${tokenDot(t)}
       <div>
-        <div class="title">${esc(t.name)}</div>
-        <div class="sub">${esc(t.ticker)}${t.native ? ' · Native' : ' · KCC20'}</div>
+        <div class="title">${esc(t.name || t.ticker)}</div>
+        <div class="sub">${esc(t.ticker)} · ${esc(proto)}</div>
       </div>
       <div class="amt">
-        <b>${t.native ? formatAmount(t.sompi) : '—'}</b>
-        <em>${t.native ? t.usd : 'Watching'}</em>
+        <b>${esc(amt)}</b>
+        <em>${esc(em)}</em>
       </div>
-    </button>
-  `);
+    </button>`;
+}
+
+function renderHoldings() {
+  const watched = loadWatchlist();
+  const liveTickers = new Set([...kccHoldings, ...krcHoldings].map(t => t.ticker));
+  const native = tokenRow({ ...NATIVE_KAS, sompi: balanceSompi, usd: usd(kas()), protocol: 'native' }, 'data-ticker="KAS"');
+  const kccRows = kccHoldings.map(t => tokenRow(t));
+  const krcRows = krcHoldings.map(t => tokenRow(t));
+  const watchRows = watched.filter(t => t.ticker && !liveTickers.has(t.ticker.toUpperCase())).map(t =>
+    tokenRow({ ...t, protocol: 'watch', balance: 0, decimals: t.decimals || 8 })
+  );
   const locked = loadVaults().filter(v => v.address && Number(v.fundedSompi) > 0);
   const lockRows = locked.map(v => {
     const sec = remainingLockSec(v.unlockDaa);
@@ -236,28 +256,40 @@ function renderHoldings() {
       </div>
     </button>`;
   });
-  $('holdings').innerHTML = [...nativeRows, ...lockRows].join('') || `<div class="empty">No holdings yet.</div>`;
+  $('holdings').innerHTML = [native, ...kccRows, ...krcRows, ...watchRows, ...lockRows].join('') || `<div class="empty">No holdings yet.</div>`;
+  const n = Array.isArray(utxos) ? utxos.length : 0;
+  if ($('utxo-count')) $('utxo-count').textContent = n === 1 ? '1 UTXO' : `${n} UTXOs`;
 }
 
 function renderTokens() {
   const watched = loadWatchlist();
-  $('token-native').innerHTML = `
-    <div class="row token-row">
-      <div class="dot" style="background:#49eacb22;color:#49eacb">KAS</div>
-      <div><div class="title">Kaspa</div><div class="sub">Native L1</div></div>
-      <div class="amt"><b>${formatAmount(balanceSompi)}</b><em>${price ? usd(kas()) : ''}</em></div>
-    </div>`;
-  $('token-list').innerHTML = watched.length
-    ? watched.map(t => `
+  $('token-native').innerHTML = tokenRow({ ...NATIVE_KAS, sompi: balanceSompi, usd: usd(kas()), protocol: 'native' }, 'data-ticker="KAS"');
+  const kcc = $('token-list');
+  if (kcc) {
+    kcc.innerHTML = kccHoldings.length
+      ? kccHoldings.map(t => tokenRow(t)).join('')
+      : `<div class="empty">${tokenLoadErr || 'No KCC20 on this address yet. KRON and other covenant tokens show here from kcc20.info.'}</div>`;
+  }
+  const krc = $('token-krc20');
+  if (krc) {
+    krc.innerHTML = krcHoldings.length
+      ? krcHoldings.map(t => tokenRow(t)).join('')
+      : `<div class="empty">No KRC-20 (Kasplex / KasWare) tokens on this address.</div>`;
+  }
+  const watch = $('token-watch');
+  if (watch) {
+    watch.innerHTML = watched.length
+      ? watched.map(t => `
       <div class="row token-row">
-        <div class="dot" style="background:${esc(t.color)}22;color:${esc(t.color)}">${esc(t.ticker.slice(0,3))}</div>
+        ${tokenDot({ ...t, ticker: t.ticker })}
         <div style="flex:1;min-width:0">
           <div class="title">${esc(t.name)}</div>
-          <div class="sub">${esc(t.covenantAddress ? shortAddr(t.covenantAddress) : 'No instance yet')}</div>
+          <div class="sub">${esc(t.covenantAddress ? shortAddr(t.covenantAddress) : 'Manual watch')}</div>
         </div>
         <button class="nav-btn ghost" data-remove="${esc(t.ticker)}">Remove</button>
       </div>`).join('')
-    : `<div class="empty">Watch a KCC20 by ticker and covenant address. KCC20 balances appear once an indexer or instance address is added.</div>`;
+      : `<div class="empty">Optional: watch a ticker that the indexer has not listed yet.</div>`;
+  }
 }
 
 function vaultStatusLine(v) {
@@ -450,6 +482,7 @@ async function tickLive(full) {
         }
       } catch {}
       refreshVaultBalances();
+      refreshTokenHoldings();
     }
     const now = Date.now();
     if (full || now - lastAutoSweep > 8000) {
@@ -463,6 +496,87 @@ async function tickLive(full) {
 
 async function refreshAll() {
   await tickLive(true);
+}
+
+async function refreshTokenHoldings() {
+  if (!wallet?.address) return;
+  try {
+    const [kcc, krc] = await Promise.allSettled([
+      fetchKcc20Portfolio(wallet.address),
+      fetchKrc20Portfolio(wallet.address)
+    ]);
+    kccHoldings = kcc.status === 'fulfilled' ? kcc.value : [];
+    krcHoldings = krc.status === 'fulfilled' ? krc.value : [];
+    const fails = [];
+    if (kcc.status === 'rejected') fails.push('KCC20');
+    if (krc.status === 'rejected') fails.push('KRC-20');
+    tokenLoadErr = fails.length ? `Could not load ${fails.join(' / ')} right now.` : '';
+  } catch (e) {
+    tokenLoadErr = errText(e);
+  }
+  if (currentTab === 'home') renderHome();
+  if (currentTab === 'tokens') renderTokens();
+}
+
+function findToken(key) {
+  const all = [...kccHoldings, ...krcHoldings];
+  return all.find(t => `${t.protocol}:${t.ticker}` === key);
+}
+
+function openTokenSheet(token) {
+  if (!token) { showPage('tokens'); return; }
+  haptic();
+  const proto = token.protocol === 'krc20' ? 'KRC-20' : 'KCC20';
+  const amt = formatTokenUnits(token.balance, token.decimals);
+  const link = token.protocol === 'krc20'
+    ? `https://kas.fyi/krc20-${encodeURIComponent(token.ticker)}`
+    : (token.tokenId ? `https://kcc20.info/tokens/${encodeURIComponent(token.tokenId)}` : 'https://kcc20.info/');
+  openSheet(token.ticker, `
+    ${token.image ? `<div style="display:flex;justify-content:center;padding:8px 0 14px;"><img src="${esc(token.image)}" alt="" style="width:56px;height:56px;border-radius:16px;object-fit:cover;"></div>` : ''}
+    <div class="kv"><span class="k">Balance</span><span class="v">${esc(amt)} ${esc(token.ticker)}</span></div>
+    <div class="kv"><span class="k">Name</span><span class="v">${esc(token.name)}</span></div>
+    <div class="kv"><span class="k">Standard</span><span class="v">${esc(proto)}${token.standard ? ' · ' + esc(token.standard) : ''}</span></div>
+    ${token.cells ? `<div class="kv"><span class="k">Cells</span><span class="v">${esc(token.cells)}</span></div>` : ''}
+    ${token.tokenId && token.protocol === 'kcc20' ? `<div class="kv"><span class="k">Token ID</span><span class="v">${esc(token.tokenId)}</span></div>` : ''}
+    <p class="muted" style="text-align:left;padding-top:8px;">Balances come from ${token.protocol === 'krc20' ? 'Kasplex (same indexer KasWare uses)' : 'kcc20.info (Kron / covenant tokens)'}.</p>
+    <p class="muted"><a href="${esc(link)}" target="_blank" rel="noopener" style="color:var(--gold-2)">Open explorer</a></p>
+  `, { confirm: 'Done', cancel: false });
+}
+
+function openCompound() {
+  haptic();
+  const n = Array.isArray(utxos) ? utxos.length : 0;
+  if (n < 2) { toast('Already one UTXO'); return; }
+  const feeEst = 0.0045 + n * 0.00015;
+  openSheet('Compound UTXOs', `
+    <div class="kv"><span class="k">UTXOs now</span><span class="v">${n}</span></div>
+    <div class="kv"><span class="k">Balance</span><span class="v">${formatAmount(balanceSompi)} KAS</span></div>
+    <div class="kv"><span class="k">Network fee</span><span class="v">~${feeEst.toFixed(4)} KAS</span></div>
+    <p class="muted" style="text-align:left;">Merges your coins into one UTXO. That makes the next lock/send cheaper and avoids storage-mass splits. Change stays in this wallet.</p>
+  `, { confirm: 'Compound now', gold: true, onConfirm: () => runCompound() });
+}
+
+async function runCompound() {
+  toast('Connecting to Kaspa…');
+  try {
+    await loadKaspaSdk();
+    await pingPublicNode();
+    const available = await fetchAddressUtxos(wallet.address);
+    setSheetStatus(`Merging ${available.length} UTXOs…`);
+    const result = await compoundUtxos({ wallet, utxos: available });
+    setLiveFast(true);
+    setTimeout(() => setLiveFast(false), 25000);
+    openSheet('Compounded', `
+      <div class="kv"><span class="k">Merged</span><span class="v">${esc(result.inputs)} → 1 UTXO</span></div>
+      <div class="kv"><span class="k">Held</span><span class="v">${esc(formatKas(result.amountKas))} KAS</span></div>
+      <div class="kv"><span class="k">Network fee</span><span class="v">${Number(result.feeKas || 0).toFixed(6)} KAS</span></div>
+      <div class="kv"><span class="k">TX</span><span class="v">${esc(result.txId)}</span></div>
+      <p class="muted"><a href="https://kas.fyi/transaction/${esc(result.txId)}" target="_blank" rel="noopener" style="color:var(--gold-2)">View on explorer</a></p>
+    `, { confirm: 'Done', cancel: false, onConfirm: () => { closeSheet(); refreshAll(); } });
+  } catch (e) {
+    toast(errText(e));
+    setSheetStatus(errText(e), true);
+  }
 }
 
 async function refreshVaultBalances() {
@@ -649,6 +763,7 @@ function openSettings() {
       <button class="btn btn-glass" id="reveal-pk">Reveal</button>
       <button class="btn btn-glass" id="copy-pk">Copy</button>
     </div>
+    <button class="btn btn-gold" id="settings-compound" style="margin-bottom:10px;">Compound UTXOs</button>
     <button class="btn btn-danger" id="wipe">Remove wallet from this device</button>
   `, { confirm: 'Close', cancel: false });
   $('reveal-pk').onclick = () => {
@@ -656,6 +771,7 @@ function openSettings() {
     i.type = i.type === 'password' ? 'text' : 'password';
   };
   $('copy-pk').onclick = async () => { await navigator.clipboard.writeText(wallet.privKey); toast('Key copied'); };
+  $('settings-compound').onclick = () => { closeSheet(); openCompound(); };
   $('wipe').onclick = logout;
 }
 
@@ -1011,6 +1127,7 @@ function bind() {
   $('btn-receive').onclick = openReceive;
   $('btn-copy-addr').onclick = async () => { await navigator.clipboard.writeText(wallet.address); toast('Copied'); };
   $('btn-refresh').onclick = () => { haptic(); refreshAll(); toast('Refreshing'); };
+  $('btn-compound')?.addEventListener('click', openCompound);
   $('btn-vault-short').onclick = () => showPage('vault');
   $('btn-sweep-now')?.addEventListener('click', () => {
     sweepAllVaults().catch(err => toast(errText(err)));
@@ -1054,11 +1171,26 @@ function bind() {
       openLockTimer(vault);
       return;
     }
-    const row = e.target.closest('[data-ticker]');
-    if (row?.dataset.ticker === 'KAS') openReceive();
-    else if (row) showPage('tokens');
+    const row = e.target.closest('[data-token-key], [data-ticker]');
+    if (!row) return;
+    if (row.dataset.ticker === 'KAS') { openReceive(); return; }
+    const token = findToken(row.dataset.tokenKey);
+    if (token) openTokenSheet(token);
+    else showPage('tokens');
   });
-  $('token-list').addEventListener('click', e => {
+  $('token-list')?.addEventListener('click', e => {
+    const rm = e.target.closest('[data-remove]');
+    if (rm) return;
+    const row = e.target.closest('[data-token-key]');
+    const token = findToken(row?.dataset.tokenKey);
+    if (token) openTokenSheet(token);
+  });
+  $('token-krc20')?.addEventListener('click', e => {
+    const row = e.target.closest('[data-token-key]');
+    const token = findToken(row?.dataset.tokenKey);
+    if (token) openTokenSheet(token);
+  });
+  $('token-watch')?.addEventListener('click', e => {
     const rm = e.target.closest('[data-remove]');
     if (rm) { removeToken(rm.dataset.remove); renderTokens(); renderHome(); }
   });

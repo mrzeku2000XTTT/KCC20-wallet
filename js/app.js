@@ -56,6 +56,7 @@ const WALLETS_KEY = 'kcc20_wallets_v2';
 const ACTIVE_KEY = 'kcc20_active_id';
 const PIN_KEY = 'kcc20_pin_v1';
 const SNAPS_KEY = 'kcc20_snaps_v1';
+const ACT_KEY = 'kcc20_activity_v1';
 
 const $ = (id) => document.getElementById(id);
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
@@ -107,6 +108,7 @@ let tokenLoadErr = '';
 let lastTokenFetch = 0;
 let tokenBusy = false;
 let tokenPending = false;
+let tokenActBackfill = false;
 let seenTokens = false;
 let tokenStream = null;
 let tokenFastOff = 0;
@@ -788,6 +790,7 @@ function resetLiveState() {
   tokenLoadErr = '';
   window.__txs = [];
   autoSweepTried.clear();
+  tokenActBackfill = false;
 }
 
 async function activateWallet(w, { toastMsg } = {}) {
@@ -1141,6 +1144,87 @@ function outputAddr(o) {
   return o.script_public_key_address || o.scriptPublicKeyAddress || '';
 }
 
+function actStoreKey(addr) {
+  return ACT_KEY + ':' + (addr || wallet?.address || '');
+}
+
+function loadTokenActivity(addr) {
+  try {
+    const raw = JSON.parse(localStorage.getItem(actStoreKey(addr)) || '[]');
+    return Array.isArray(raw) ? raw : [];
+  } catch {
+    return [];
+  }
+}
+
+function saveTokenActivity(list, addr) {
+  localStorage.setItem(actStoreKey(addr), JSON.stringify((list || []).slice(0, 80)));
+}
+
+function pushTokenActivity(ev) {
+  if (!wallet?.address || !ev) return null;
+  const list = loadTokenActivity();
+  const row = {
+    id: ev.id || ('ta-' + Date.now().toString(36) + Math.random().toString(16).slice(2, 8)),
+    time: Number(ev.time || Date.now()),
+    dir: ev.dir === 'out' ? 'out' : 'in',
+    tick: String(ev.tick || '').toUpperCase(),
+    protocol: ev.protocol || 'kcc20',
+    amount: String(ev.amount || '0'),
+    decimals: Number(ev.decimals || 0),
+    txId: ev.txId || '',
+    label: ev.label || (ev.dir === 'out' ? 'Sent' : 'Received')
+  };
+  const dup = list.find(x =>
+    x.tick === row.tick && x.dir === row.dir && x.amount === row.amount &&
+    ((row.txId && x.txId === row.txId) || Math.abs((x.time || 0) - row.time) < 180000)
+  );
+  if (dup) {
+    if (row.txId && !dup.txId) {
+      dup.txId = row.txId;
+      if (ev.time) dup.time = Number(ev.time);
+      saveTokenActivity(list);
+    }
+    if (currentTab === 'activity') renderActivity(window.__txs || []);
+    return dup;
+  }
+  list.unshift(row);
+  saveTokenActivity(list);
+  if (currentTab === 'activity') renderActivity(window.__txs || []);
+  return row;
+}
+
+async function attachKcc20ReceiveTxid(ev) {
+  if (!ev || ev.txId || ev.protocol === 'krc20' || !wallet?.address) return;
+  try {
+    const res = await fetch(
+      'https://idx.kron.technology/v1/kcc20/token/' +
+      encodeURIComponent(ev.tick) + '/address/' +
+      encodeURIComponent(wallet.address) + '/utxos',
+      { cache: 'no-store' }
+    );
+    if (!res.ok) return;
+    const data = await res.json();
+    const cells = Array.isArray(data?.result) ? data.result : [];
+    const ids = [...new Set(cells.map(c => c.outpoint?.transactionId).filter(Boolean))].slice(0, 5);
+    let best = null;
+    for (const id of ids) {
+      const tx = await fetchKaspaTx(id).catch(() => null);
+      if (!tx) continue;
+      const t = Number(tx.block_time || tx.blockTime || 0);
+      if (!best || t > best.t) best = { id, t };
+    }
+    if (!best) return;
+    const list = loadTokenActivity();
+    const row = list.find(x => x.id === ev.id);
+    if (!row) return;
+    row.txId = best.id;
+    if (best.t) row.time = best.t;
+    saveTokenActivity(list);
+    if (currentTab === 'activity') renderActivity(window.__txs || []);
+  } catch {}
+}
+
 function summarizeTx(tx, myAddr) {
   const inputs = tx.inputs || [];
   const outputs = tx.outputs || [];
@@ -1170,31 +1254,62 @@ function summarizeTx(tx, myAddr) {
 function renderActivity(txs = []) {
   const box = $('activity-list');
   if (!box) return;
-  if (!txs.length) {
-    box.innerHTML = `<div class="empty">No recent transactions on this address. Scorpion can still decode a pasted txid on the You tab.</div>`;
+  const tokenActs = loadTokenActivity();
+  const chain = Array.isArray(txs) ? txs : [];
+  const chainIds = new Set(chain.map(t => t.transaction_id || t.transactionId).filter(Boolean));
+  const rows = [];
+  for (const tx of chain) {
+    const id = tx.transaction_id || tx.transactionId || '';
+    const tok = tokenActs.find(a => a.txId && a.txId === id);
+    const row = summarizeTx(tx, wallet.address);
+    if (tok) {
+      row.label = (tok.dir === 'in' ? 'Received ' : 'Sent ') + tok.tick;
+      row.tokenLabel = (tok.dir === 'in' ? '+' : '−') + formatTokenUnits(tok.amount, tok.decimals) + ' ' + tok.tick;
+    }
+    const expl = explainTransaction(tx, { address: wallet.address, vaults: loadVaults() });
+    rows.push({
+      kind: 'chain',
+      id,
+      time: Number(tx.block_time || tx.blockTime || 0),
+      dir: row.dir,
+      title: row.label,
+      sub: [tok ? (tok.protocol === 'krc20' ? 'KRC-20' : 'KCC20') : expl.title, id ? id.slice(0, 10) + '…' : '', new Date(tx.block_time || Date.now()).toLocaleString()].filter(Boolean).join(' · '),
+      val: row.tokenLabel || ((row.dir === 'in' ? '+' : '−') + formatAmount(row.amount || 0)),
+      feeLine: row.fee > 0 ? `fee ${formatAmount(row.fee)} KAS` : (row.note || ''),
+      tokId: tok?.id || ''
+    });
+  }
+  for (const a of tokenActs) {
+    if (a.txId && chainIds.has(a.txId)) continue;
+    rows.push({
+      kind: 'token',
+      id: a.txId || '',
+      actId: a.id,
+      time: Number(a.time || 0),
+      dir: a.dir,
+      title: (a.label || (a.dir === 'in' ? 'Received' : 'Sent')) + ' ' + a.tick,
+      sub: [a.protocol === 'krc20' ? 'KRC-20' : 'KCC20', a.txId ? a.txId.slice(0, 10) + '…' : 'cell credit', new Date(a.time || Date.now()).toLocaleString()].filter(Boolean).join(' · '),
+      val: (a.dir === 'in' ? '+' : '−') + formatTokenUnits(a.amount, a.decimals) + ' ' + a.tick,
+      feeLine: a.txId ? '' : 'Indexed to this wallet',
+      tokId: a.id
+    });
+  }
+  rows.sort((a, b) => (b.time || 0) - (a.time || 0));
+  if (!rows.length) {
+    box.innerHTML = `<div class="empty">No recent transactions on this address. Incoming KCC20 will show here when the indexer credits it. Scorpion can still decode a pasted txid on the You tab.</div>`;
     return;
   }
-  box.innerHTML = txs.slice(0, 25).map(tx => {
-    const id = tx.transaction_id || tx.transactionId || '';
-    const row = summarizeTx(tx, wallet.address);
-    const expl = explainTransaction(tx, { address: wallet.address, vaults: loadVaults() });
-    const feeLine = row.fee > 0
-      ? `<small>fee ${formatAmount(row.fee)} KAS</small>`
-      : (row.note ? `<small>${esc(row.note)}</small>` : '');
-    const sub = [expl.title, id.slice(0, 10) + '…', new Date(tx.block_time || Date.now()).toLocaleString()]
-      .filter(Boolean).join(' · ');
-    return `
-      <button class="tx" type="button" data-txid="${esc(id)}">
-        <div class="dir">${row.dir === 'in' ? '↓' : '↑'}</div>
+  box.innerHTML = rows.slice(0, 30).map(r => `
+      <button class="tx" type="button" ${r.id ? `data-txid="${esc(r.id)}"` : ''} ${r.tokId ? `data-token-act="${esc(r.tokId)}"` : ''}>
+        <div class="dir">${r.dir === 'in' ? '↓' : '↑'}</div>
         <div class="meta">
-          <b>${esc(row.label)}</b>
-          <span>${esc(sub)}</span>
+          <b>${esc(r.title)}</b>
+          <span>${esc(r.sub)}</span>
         </div>
-        <div class="val ${row.dir === 'in' ? 'in' : 'out'}">${row.dir === 'in' ? '+' : '−'}${formatAmount(row.amount || 0)}${feeLine}
-          ${id ? `<button type="button" class="copy-chip" data-copy="${esc(id)}">Copy ID</button>` : ''}
+        <div class="val ${r.dir === 'in' ? 'in' : 'out'}">${esc(r.val)}${r.feeLine ? `<small>${esc(r.feeLine)}</small>` : ''}
+          ${r.id ? `<button type="button" class="copy-chip" data-copy="${esc(r.id)}">Copy ID</button>` : ''}
         </div>
-      </button>`;
-  }).join('');
+      </button>`).join('');
 }
 
 function renderProfile() {
@@ -1292,15 +1407,80 @@ function explHtml(expl) {
   `;
 }
 
-function openScorpionTx(id) {
+async function openScorpionTx(id) {
   haptic();
-  const tx = (window.__txs || []).find(t => (t.transaction_id || t.transactionId) === id);
+  if (!id) return;
+  let tx = (window.__txs || []).find(t => (t.transaction_id || t.transactionId) === id);
   if (!tx) {
-    toast('Tx not loaded — refresh Activity');
-    return;
+    try { tx = await fetchKaspaTx(id); }
+    catch {
+      toast('Tx not loaded — refresh Activity');
+      return;
+    }
   }
   const expl = explainTransaction(tx, { address: wallet.address, vaults: loadVaults() });
   openSheet('Scorpion', explHtml(expl), { confirm: 'Done', cancel: false });
+}
+
+function openTokenActivity(id) {
+  const ev = loadTokenActivity().find(x => x.id === id);
+  if (!ev) return;
+  if (ev.txId) {
+    openScorpionTx(ev.txId);
+    return;
+  }
+  haptic();
+  openSheet((ev.label || 'Received') + ' ' + ev.tick, `
+    <div class="kv"><span class="k">Asset</span><span class="v">${esc(ev.tick)} · ${esc(ev.protocol === 'krc20' ? 'KRC-20' : 'KCC20')}</span></div>
+    <div class="kv"><span class="k">Amount</span><span class="v">${esc(formatTokenUnits(ev.amount, ev.decimals))} ${esc(ev.tick)}</span></div>
+    <div class="kv"><span class="k">When</span><span class="v">${esc(new Date(ev.time || Date.now()).toLocaleString())}</span></div>
+    <p class="muted" style="text-align:left;">KCC20 cells sit on a covenant P2SH, so Kaspa’s address history for your kaspa:q… key often misses them. This row is the indexer credit to this wallet.</p>
+  `, { confirm: 'Done', cancel: false });
+}
+
+async function backfillRecentKcc20Activity() {
+  if (!wallet?.address) return;
+  const cutoff = Date.now() - 7 * 86400000;
+  for (const t of (kccHoldings || []).slice(0, 8)) {
+    const tick = String(t.ticker || '').toUpperCase();
+    if (!tick) continue;
+    const acts = loadTokenActivity();
+    try {
+      const res = await fetch(
+        'https://idx.kron.technology/v1/kcc20/token/' +
+        encodeURIComponent(tick) + '/address/' +
+        encodeURIComponent(wallet.address) + '/utxos',
+        { cache: 'no-store' }
+      );
+      if (!res.ok) continue;
+      const data = await res.json();
+      const cells = Array.isArray(data?.result) ? data.result : [];
+      const ids = [...new Set(cells.map(c => c.outpoint?.transactionId).filter(Boolean))].slice(0, 4);
+      let best = null;
+      for (const id of ids) {
+        const tx = await fetchKaspaTx(id).catch(() => null);
+        if (!tx) continue;
+        const tm = Number(tx.block_time || tx.blockTime || 0);
+        if (tm < cutoff) continue;
+        if (!best || tm > best.t) {
+          const cell = cells.find(c => c.outpoint?.transactionId === id);
+          best = { id, t: tm, amount: String(cell?.amount ?? '') };
+        }
+      }
+      if (!best) continue;
+      if (acts.some(a => a.txId === best.id)) continue;
+      pushTokenActivity({
+        dir: 'in',
+        tick,
+        protocol: 'kcc20',
+        amount: best.amount || t.balance || '0',
+        decimals: t.decimals,
+        txId: best.id,
+        time: best.t,
+        label: 'Received'
+      });
+    } catch {}
+  }
 }
 
 async function fetchKaspaTx(id) {
@@ -1554,6 +1734,15 @@ async function refreshTokenHoldings() {
         const d = nextAmt - prevAmt;
         toast(`Received ${formatTokenUnits(d, t.decimals)} ${t.ticker}`);
         haptic();
+        const ev = pushTokenActivity({
+          dir: 'in',
+          tick: t.ticker,
+          protocol: t.protocol || 'kcc20',
+          amount: String(d),
+          decimals: t.decimals,
+          label: 'Received'
+        });
+        attachKcc20ReceiveTxid(ev);
         setLiveFast(true);
         clearTimeout(tokenFastOff);
         tokenFastOff = setTimeout(() => setLiveFast(false), 25000);
@@ -1565,6 +1754,11 @@ async function refreshTokenHoldings() {
   if (currentTab === 'home') renderHome();
   if (currentTab === 'tokens') renderTokens();
   if (currentTab === 'you') renderProfile();
+  if (currentTab === 'activity') renderActivity(window.__txs || []);
+  if (!tokenActBackfill) {
+    tokenActBackfill = true;
+    backfillRecentKcc20Activity().catch(() => {});
+  }
 }
 
 function findToken(key) {
@@ -1790,6 +1984,27 @@ async function runTrade({ tick, side, amount, quote }) {
       }
     }
     afterTx();
+    if (q?.side === 'buy' && q.tokenOut != null) {
+      pushTokenActivity({
+        dir: 'in',
+        tick: q.tick || tick,
+        protocol: 'kcc20',
+        amount: String(q.tokenOut),
+        decimals: q.decimals || 0,
+        txId: result.txId || '',
+        label: 'Bought'
+      });
+    } else if (q?.side === 'sell') {
+      pushTokenActivity({
+        dir: 'out',
+        tick: q.tick || tick,
+        protocol: 'kcc20',
+        amount: String(q.tokenIn || amount || ''),
+        decimals: q.decimals || 0,
+        txId: result.txId || '',
+        label: 'Sold'
+      });
+    }
     renderHome();
     if (currentTab === 'tokens') renderTokens();
     openSheet('Swap sent', `
@@ -2147,6 +2362,15 @@ async function broadcastTokenSend(dest, asset, human, raw) {
       result = await sendKcc20({ wallet, dest, token: asset, amountHuman: human, utxos: availableUtxos, onStatus });
     }
     applyLocalTokenDelta(asset.ticker, asset.protocol, '-' + String(raw));
+    pushTokenActivity({
+      dir: 'out',
+      tick: asset.ticker,
+      protocol: asset.protocol,
+      amount: String(raw),
+      decimals: asset.decimals,
+      txId: result.revealId || result.txId || '',
+      label: 'Sent'
+    });
     afterTx();
     const id = result.revealId || result.txId;
     openSheet('Sent ' + asset.ticker, `
@@ -2770,8 +2994,12 @@ function bind() {
   });
   $('activity-list')?.addEventListener('click', e => {
     if (e.target.closest('[data-copy]')) return;
-    const row = e.target.closest('[data-txid]');
-    if (row?.dataset.txid) openScorpionTx(row.dataset.txid);
+    const row = e.target.closest('[data-txid], [data-token-act]');
+    if (row?.dataset.txid) {
+      openScorpionTx(row.dataset.txid).catch(err => toast(errText(err)));
+      return;
+    }
+    if (row?.dataset.tokenAct) openTokenActivity(row.dataset.tokenAct);
   });
   click('profile-copy', async () => {
     if (!wallet?.address) return;

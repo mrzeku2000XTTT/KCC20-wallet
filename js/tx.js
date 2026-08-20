@@ -1239,14 +1239,13 @@ export async function sendKcc20({ wallet, dest, token, amountHuman, utxos, onSta
     spk: k.payToScriptHashScript(materializeKcc20Script(tpl, st))
   }));
 
-  const cid = new k.Hash(tokenCovid);
   function spkOf(v) {
     if (v instanceof k.ScriptPublicKey) return v;
     if (typeof v === 'string') return new k.ScriptPublicKey(0, v);
     if (v && (typeof v.script === 'string' || v.script instanceof Uint8Array)) {
       return new k.ScriptPublicKey(Number(v.version || 0), v.script);
     }
-    return v;
+    throw new Error('Missing script for a KCC20 input');
   }
   function inputFromUtxo({ txid, index, amount, scriptPublicKey, address, blockDaaScore, isCoinbase, signatureScript, computeBudget }) {
     const id = String(txid);
@@ -1269,6 +1268,11 @@ export async function sendKcc20({ wallet, dest, token, amountHuman, utxos, onSta
       utxo
     });
   }
+  let tx;
+  let scripts;
+  let signKasInputs;
+  let inSum;
+  try {
   const tokenIns = selected.map(p => {
     const redeem = p.redeem.script;
     const spk = k.payToScriptHashScript(redeem);
@@ -1293,14 +1297,16 @@ export async function sendKcc20({ wallet, dest, token, amountHuman, utxos, onSta
     isCoinbase: e.isCoinbase,
     computeBudget: 10
   }));
-  const covOutputs = tokenOuts.map(o => new k.TransactionOutput(o.value, o.spk, new k.CovenantBinding(0, cid)));
-  const inSum = inCellKas + feeSum;
+  const covOutputs = tokenOuts.map(o =>
+    new k.TransactionOutput(o.value, o.spk, new k.CovenantBinding(0, new k.Hash(tokenCovid)))
+  );
+  inSum = inCellKas + feeSum;
   const changeSpk = k.payToAddressScript(wallet.address);
   const outputs = kasChange > 0n
     ? [...covOutputs, new k.TransactionOutput(kasChange, changeSpk)]
     : covOutputs;
 
-  const tx = new k.Transaction({
+  tx = new k.Transaction({
     version: 1,
     inputs: [...tokenIns, ...kasIns],
     outputs,
@@ -1317,16 +1323,21 @@ export async function sendKcc20({ wallet, dest, token, amountHuman, utxos, onSta
   }
   try { k.updateTransactionMass('mainnet', tx); } catch {}
 
-  function signKasInputs() {
-    const scripts = tokenScripts.slice();
+  signKasInputs = function signKasInputs() {
+    const signed = tokenScripts.slice();
     for (let i = tokenN; i < tx.inputs.length; i++) {
       const sig = k.createInputSignature(tx, i, priv, k.SighashType.All);
       tx.inputs[i].signatureScript = hexish(sig);
-      scripts.push(hexish(sig));
+      signed.push(hexish(sig));
     }
-    return scripts;
+    return signed;
+  };
+  scripts = signKasInputs();
+  } catch (e) {
+    const m = errText(e);
+    if (/null pointer/i.test(m)) throw new Error('KCC20 send failed in the Kaspa engine while building the tx. Hard-refresh and try 20 KKDAG again.');
+    throw e;
   }
-  const scripts = signKasInputs();
   onStatus?.('Broadcasting KCC20 send…');
   let txId;
   try {

@@ -105,7 +105,7 @@ img { display: block; max-width: 100%; }
   padding: calc(12px + var(--safe-t)) 22px 8px;
   font-size: 13px; font-weight: 600; color: var(--label-2);
 }
-.status .clock { color: var(--label); letter-spacing: 0.2px; }
+.status .clock { color: var(--label); letter-spacing: 0.4px; font-variant-numeric: tabular-nums; font-size: 12px; }
 .status-pips { display: flex; gap: 6px; align-items: center; }
 .status-pips i {
   display: block; width: 16px; height: 10px; border: 1.4px solid var(--label-2); border-radius: 3px; position: relative;
@@ -423,9 +423,10 @@ img { display: block; max-width: 100%; }
 .tx .meta { flex: 1; min-width: 0; }
 .tx .meta b { display: block; font-size: 15px; font-weight: 600; }
 .tx .meta span { font-size: 12px; color: var(--label-2); }
-.tx .val { font-weight: 600; font-variant-numeric: tabular-nums; }
+.tx .val { font-weight: 600; font-variant-numeric: tabular-nums; text-align: right; }
 .tx .val.in { color: var(--green); }
 .tx .val.out { color: var(--label); }
+.tx .val small { display: block; font-size: 11px; font-weight: 500; color: var(--label-2); margin-top: 2px; }
 
 .empty {
   text-align: center; padding: 28px 12px; color: var(--label-2); font-size: 14px; line-height: 1.5;

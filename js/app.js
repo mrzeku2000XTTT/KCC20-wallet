@@ -47,6 +47,7 @@ let liveFast = false;
 let seenBalance = null;
 let receiveWatch = false;
 let lastDaa = 0;
+let lastDaaAt = 0;
 let lastAutoSweep = 0;
 let autoSweepBusy = false;
 const autoSweepTried = new Set();
@@ -63,9 +64,54 @@ function toast(msg) {
   setTimeout(() => el.remove(), ms);
 }
 
+function remainingLockSec(unlockDaa) {
+  const u = Number(unlockDaa || 0);
+  if (!u) return 0;
+  if (!lastDaa) return null;
+  const base = (u - lastDaa) / 10;
+  const elapsed = lastDaaAt ? (Date.now() - lastDaaAt) / 1000 : 0;
+  return Math.max(0, Math.ceil(base - elapsed));
+}
+
+function formatLockClock(sec) {
+  if (sec == null) return '…';
+  if (sec <= 0) return 'Unlocked';
+  const h = Math.floor(sec / 3600);
+  const m = Math.floor((sec % 3600) / 60);
+  const s = sec % 60;
+  if (h) return `${h}h ${m}m ${String(s).padStart(2, '0')}s`;
+  if (m) return `${m}m ${String(s).padStart(2, '0')}s`;
+  return `${s}s`;
+}
+
+function unlockAtUtc(sec) {
+  if (sec == null || sec <= 0) return 'now';
+  const d = new Date(Date.now() + sec * 1000);
+  const p = (n) => String(n).padStart(2, '0');
+  return `${d.getUTCFullYear()}-${p(d.getUTCMonth() + 1)}-${p(d.getUTCDate())} ${p(d.getUTCHours())}:${p(d.getUTCMinutes())}:${p(d.getUTCSeconds())} UTC`;
+}
+
 function setClock() {
   const d = new Date();
-  $('clock').textContent = d.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+  const p = (n) => String(n).padStart(2, '0');
+  if ($('clock')) $('clock').textContent = `${p(d.getUTCHours())}:${p(d.getUTCMinutes())}:${p(d.getUTCSeconds())} UTC`;
+  tickLockLabels();
+}
+
+function tickLockLabels() {
+  document.querySelectorAll('[data-unlock-daa]').forEach(el => {
+    el.textContent = formatLockClock(remainingLockSec(el.dataset.unlockDaa));
+  });
+  const live = $('lock-timer-live');
+  if (!live) return;
+  const sec = remainingLockSec(live.dataset.unlockDaa);
+  live.textContent = formatLockClock(sec);
+  const at = $('lock-timer-utc');
+  if (at) at.textContent = unlockAtUtc(sec);
+  if (sec === 0 && live.dataset.addr && live.dataset.fired !== '1') {
+    live.dataset.fired = '1';
+    maybeAutoUnlock();
+  }
 }
 
 function showPage(id) {
@@ -160,7 +206,7 @@ function renderHoldings() {
     { ...NATIVE_KAS, sompi: balanceSompi, usd: usd(kas()) },
     ...watched.map(t => ({ ...t, sompi: 0, usd: '—' }))
   ];
-  $('holdings').innerHTML = items.map(t => `
+  const nativeRows = items.map(t => `
     <button class="row token-row" data-ticker="${esc(t.ticker)}">
       <div class="dot" style="background:${esc(t.color)}22;color:${esc(t.color)}">${esc(t.ticker.slice(0, 3))}</div>
       <div>
@@ -172,7 +218,25 @@ function renderHoldings() {
         <em>${t.native ? t.usd : 'Watching'}</em>
       </div>
     </button>
-  `).join('') || `<div class="empty">No holdings yet.</div>`;
+  `);
+  const locked = loadVaults().filter(v => v.address && Number(v.fundedSompi) > 0);
+  const lockRows = locked.map(v => {
+    const sec = remainingLockSec(v.unlockDaa);
+    const lockedNow = sec == null || sec > 0;
+    return `
+    <button class="row token-row" data-lock-holding="${esc(v.address)}">
+      <div class="dot" style="background:rgba(212,176,122,.18);color:var(--gold-2)">⏱</div>
+      <div>
+        <div class="title">${esc(v.name || 'Time Capsule')}</div>
+        <div class="sub">${lockedNow ? 'Unlocks in <span data-unlock-daa="' + esc(v.unlockDaa) + '">' + esc(formatLockClock(sec)) + '</span>' : 'Unlocked — returning to wallet'}</div>
+      </div>
+      <div class="amt">
+        <b>${formatAmount(v.fundedSompi || 0)}</b>
+        <em>${lockedNow ? 'Locked' : 'Unlocking'}</em>
+      </div>
+    </button>`;
+  });
+  $('holdings').innerHTML = [...nativeRows, ...lockRows].join('') || `<div class="empty">No holdings yet.</div>`;
 }
 
 function renderTokens() {
@@ -199,11 +263,12 @@ function renderTokens() {
 function vaultStatusLine(v) {
   const amt = v.fundedSompi ? formatAmount(v.fundedSompi) + ' KAS' : '0 KAS';
   if (!v.fundedSompi) return `${v.status || 'unfunded'} · ${amt}`;
-  if (v.unlockDaa && lastDaa && lastDaa < Number(v.unlockDaa)) {
-    const sec = Math.max(0, Math.ceil((Number(v.unlockDaa) - lastDaa) / 10));
-    return `Locked ~${sec}s · ${amt}`;
+  if (v.unlockDaa) {
+    const sec = remainingLockSec(v.unlockDaa);
+    if (sec == null) return `Locked · ${amt}`;
+    if (sec > 0) return `Unlocks in <span data-unlock-daa="${esc(v.unlockDaa)}">${esc(formatLockClock(sec))}</span> · ${amt}`;
+    return `Unlocked — returning · ${amt}`;
   }
-  if (v.unlockDaa) return `Unlocked — returning · ${amt}`;
   return `${v.status || 'funded'} · ${amt}`;
 }
 
@@ -240,6 +305,63 @@ function renderVault() {
   });
 }
 
+function sompiOf(v) {
+  const n = Number(v);
+  return Number.isFinite(n) ? n : 0;
+}
+
+function formatKas(n, digits = 8) {
+  const x = Number(n);
+  if (!Number.isFinite(x) || x === 0) return '0';
+  const s = x.toFixed(digits);
+  return s.replace(/\.?0+$/, '') || '0';
+}
+
+function inputAddr(i) {
+  return i.previous_outpoint_address
+    || i.previousOutpointAddress
+    || i.previous_outpoint_resolved?.script_public_key_address
+    || '';
+}
+
+function inputAmt(i) {
+  return sompiOf(
+    i.previous_outpoint_amount
+    ?? i.previousOutpointAmount
+    ?? i.previous_outpoint_resolved?.amount
+  );
+}
+
+function outputAddr(o) {
+  return o.script_public_key_address || o.scriptPublicKeyAddress || '';
+}
+
+function summarizeTx(tx, myAddr) {
+  const inputs = tx.inputs || [];
+  const outputs = tx.outputs || [];
+  const spent = inputs.filter(i => inputAddr(i) === myAddr).reduce((a, i) => a + inputAmt(i), 0);
+  const weSpent = inputs.some(i => inputAddr(i) === myAddr);
+  const received = outputs.filter(o => outputAddr(o) === myAddr).reduce((a, o) => a + sompiOf(o.amount), 0);
+  const toOthers = outputs.filter(o => outputAddr(o) && outputAddr(o) !== myAddr);
+  const sentToOthers = toOthers.reduce((a, o) => a + sompiOf(o.amount), 0);
+  const p2shOut = toOthers.find(o => String(outputAddr(o)).startsWith('kaspa:p'));
+  const p2shIn = inputs.some(i => String(inputAddr(i)).startsWith('kaspa:p'));
+  const fee = spent > 0 ? Math.max(0, spent - received - sentToOthers) : 0;
+  const vaultIn = inputs.filter(i => String(inputAddr(i)).startsWith('kaspa:p')).reduce((a, i) => a + inputAmt(i), 0);
+  const sweepFee = p2shIn && vaultIn > received ? vaultIn - received : 0;
+  if (p2shIn && received > 0) {
+    return { label: 'Unlocked', dir: 'in', amount: received, fee: sweepFee, note: 'back to wallet' };
+  }
+  if (weSpent && p2shOut) {
+    return { label: 'Locked', dir: 'out', amount: sompiOf(p2shOut.amount), fee, note: 'into capsule' };
+  }
+  if (weSpent) {
+    const amount = spent > 0 ? Math.max(0, spent - received) : sentToOthers;
+    return { label: 'Sent', dir: 'out', amount, fee, note: fee ? `fee ${formatAmount(fee)}` : '' };
+  }
+  return { label: 'Received', dir: 'in', amount: received, fee: 0, note: '' };
+}
+
 function renderActivity(txs = []) {
   if (!txs.length) {
     $('activity-list').innerHTML = `<div class="empty">No recent transactions on this address.</div>`;
@@ -247,18 +369,20 @@ function renderActivity(txs = []) {
   }
   $('activity-list').innerHTML = txs.slice(0, 25).map(tx => {
     const id = tx.transaction_id || tx.transactionId || '';
-    const ins = (tx.inputs || []).some(i => (i.previous_outpoint_address || i.previousOutpointAddress) === wallet.address);
-    const outs = (tx.outputs || []).filter(o => (o.script_public_key_address || o.scriptPublicKeyAddress) === wallet.address);
-    const inAmt = outs.reduce((a, o) => a + Number(o.amount || 0), 0);
-    const incoming = !ins;
+    const row = summarizeTx(tx, wallet.address);
+    const feeLine = row.fee > 0
+      ? `<small>fee ${formatAmount(row.fee)} KAS</small>`
+      : (row.note ? `<small>${esc(row.note)}</small>` : '');
+    const sub = [id.slice(0, 12) + '…', new Date(tx.block_time || Date.now()).toLocaleString(), row.note && row.fee > 0 ? row.note : '']
+      .filter(Boolean).join(' · ');
     return `
       <a class="tx" href="https://kas.fyi/transaction/${esc(id)}" target="_blank" rel="noopener">
-        <div class="dir">${incoming ? '↓' : '↑'}</div>
+        <div class="dir">${row.dir === 'in' ? '↓' : '↑'}</div>
         <div class="meta">
-          <b>${incoming ? 'Received' : 'Sent'}</b>
-          <span>${esc(id.slice(0, 12))}… · ${esc(new Date((tx.block_time || Date.now())).toLocaleString())}</span>
+          <b>${esc(row.label)}</b>
+          <span>${esc(sub)}</span>
         </div>
-        <div class="val ${incoming ? 'in' : 'out'}">${incoming ? '+' : '−'}${formatAmount(inAmt || 0)}</div>
+        <div class="val ${row.dir === 'in' ? 'in' : 'out'}">${row.dir === 'in' ? '+' : '−'}${formatAmount(row.amount || 0)}${feeLine}</div>
       </a>`;
   }).join('');
 }
@@ -342,7 +466,10 @@ async function refreshAll() {
 }
 
 async function refreshVaultBalances() {
-  try { lastDaa = await currentDaa(); } catch {}
+  try {
+    lastDaa = await currentDaa();
+    lastDaaAt = Date.now();
+  } catch {}
   const mine = loadVaults();
   for (const v of mine) {
     if (!v.address || !v.address.startsWith('kaspa:')) continue;
@@ -352,6 +479,7 @@ async function refreshVaultBalances() {
     } catch {}
   }
   if (currentTab === 'vault') renderVault();
+  if (currentTab === 'home') renderHome();
 }
 
 async function maybeAutoUnlock() {
@@ -360,6 +488,7 @@ async function maybeAutoUnlock() {
   try {
     const daa = await currentDaa();
     lastDaa = daa;
+    lastDaaAt = Date.now();
     const mine = loadVaults().filter(v => v.address && Number(v.unlockDaa) > 0);
     for (const v of mine) {
       if (daa < Number(v.unlockDaa)) continue;
@@ -439,7 +568,7 @@ function openSend(prefill) {
   openSheet('Send KAS', `
     <div class="field"><label>To</label><input id="send-dest" placeholder="kaspa:q…" value="${esc(dest0)}" spellcheck="false" autocomplete="off"></div>
     <div class="field"><label>Amount</label><input id="send-amount" type="number" inputmode="decimal" min="0" step="0.0001" placeholder="0.00" value="${esc(amt0)}"></div>
-    <p class="muted" style="text-align:left;padding:0 0 8px;">Available ${formatAmount(balanceSompi)} KAS. Network fee ~0.001 KAS.</p>
+    <p class="muted" style="text-align:left;padding:0 0 8px;">Available ${formatAmount(balanceSompi)} KAS. Network fee is usually 0.004–0.007 KAS (Toccata compute mass), shown before you confirm.</p>
   `, { confirm: 'Review', gold: true, onConfirm: () => prepareSend() });
 }
 
@@ -448,11 +577,13 @@ async function prepareSend(prefill) {
   const amount = Number((prefill && prefill.amountKas) || $('send-amount')?.value);
   if (!isValidKaspaAddress(dest)) { toast('Invalid Kaspa address'); return; }
   if (!amount || amount <= 0) { toast('Enter an amount'); return; }
+  const feeEst = 0.0045;
   openSheet('Review send', `
     <div class="kv"><span class="k">To</span><span class="v">${esc(shortAddr(dest, 14, 8))}</span></div>
-    <div class="kv"><span class="k">Amount</span><span class="v">${esc(amount)} KAS</span></div>
-    <div class="kv"><span class="k">Network</span><span class="v">Kaspa mainnet</span></div>
-    <p class="muted" style="text-align:left;padding-top:8px;">Fee is calculated by the Kaspa node (mass). First send loads the official Kaspa engine.</p>
+    <div class="kv"><span class="k">Amount</span><span class="v">${esc(formatKas(amount))} KAS</span></div>
+    <div class="kv"><span class="k">Network fee</span><span class="v">~${feeEst.toFixed(4)} KAS</span></div>
+    <div class="kv"><span class="k">Leaves wallet</span><span class="v">~${formatKas(amount + feeEst, 4)} KAS</span></div>
+    <p class="muted" style="text-align:left;padding-top:8px;">The node sets the real fee from compute mass (usually 0.004–0.007 KAS). Change stays in this wallet.</p>
   `, { confirm: 'Send now', gold: true, onConfirm: () => broadcastSend(dest, amount) });
 }
 
@@ -471,6 +602,8 @@ async function broadcastSend(dest, amount) {
     closeSheet();
     toast('Sent');
     openSheet('Sent', `
+      <div class="kv"><span class="k">Amount</span><span class="v">${esc(formatKas(result.amountKas || amount))} KAS</span></div>
+      <div class="kv"><span class="k">Network fee</span><span class="v">${Number(result.feeKas || 0).toFixed(6)} KAS</span></div>
       <div class="kv"><span class="k">TX</span><span class="v">${esc(result.txId)}</span></div>
       <p class="muted"><a href="https://kas.fyi/transaction/${esc(result.txId)}" target="_blank" rel="noopener" style="color:var(--gold-2)">View on explorer</a></p>
     `, { confirm: 'Done', cancel: false, onConfirm: () => { closeSheet(); refreshAll(); } });
@@ -649,15 +782,19 @@ async function buildCovenant(p, explicit) {
 }
 
 function openVaultReady(vault) {
+  const amt = Number(vault.params?.amountKas) || 0;
+  const feeEst = 0.0045;
   openSheet('Covenant ready', `
     <div class="kv"><span class="k">Type</span><span class="v">${esc(vault.name || vault.type)}</span></div>
-    <div class="kv"><span class="k">Amount</span><span class="v">${esc(vault.params?.amountKas)} KAS</span></div>
+    <div class="kv"><span class="k">Lock amount</span><span class="v">${esc(amt)} KAS</span></div>
+    <div class="kv"><span class="k">Network fee</span><span class="v">~${feeEst.toFixed(4)} KAS</span></div>
+    <div class="kv"><span class="k">Leaves wallet</span><span class="v">~${(amt + feeEst).toFixed(4)} KAS</span></div>
     ${vault.params?.duration ? `<div class="kv"><span class="k">Lock</span><span class="v">${esc(vault.params.duration)}</span></div>` : ''}
     ${vault.unlockDaa ? `<div class="kv"><span class="k">Unlock DAA</span><span class="v">${esc(vault.unlockDaa)}</span></div>` : ''}
     <div class="kv"><span class="k">Covenant</span><span class="v">${esc(vault.address)}</span></div>
-    <p class="muted" style="text-align:left;">KAS leaves this wallet into a <span class="mono">kaspa:p…</span> capsule. It cannot move until the timer. Keep this app open: when the lock expires we Sweep it back automatically.</p>
+    <p class="muted" style="text-align:left;">Only <strong>${esc(amt)} KAS</strong> goes into the capsule. The fee is paid from your remaining KAS (change stays in this wallet). When the timer ends we Sweep the locked amount back, minus a small sweep fee (~0.004 KAS).</p>
   `, {
-    confirm: 'Send ' + vault.params.amountKas + ' KAS in',
+    confirm: 'Lock ' + amt + ' KAS',
     cancelLabel: 'Copy address',
     gold: true,
     onConfirm: () => fundVault(vault)
@@ -682,43 +819,45 @@ async function fundVault(vault) {
   setSheetStatus('Connecting to public Kaspa node (ivy / resolver)…');
   const ping = await pingPublicNode();
   setSheetStatus('Connected ' + ping.networkId + ' @ ' + ping.url.replace('wss://','') + ' — signing…');
-  const result = await sendKas({ wallet, dest: vault.address, amountKas: amt, utxos: availableUtxos });
+  const result = await sendKas({ wallet, dest: vault.address, amountKas: amt, utxos: availableUtxos, exact: true });
   const lockedSompi = Math.round((Number(result.amountKas) || amt) * 1e8);
   updateVault(vault.address, {
     status: 'funding',
     fundTxId: result.txId,
     covenantId: result.covenantId || null,
     fundedSompi: lockedSompi,
+    fundFeeKas: result.feeKas || 0,
     params: { ...(vault.params || {}), amountKas: result.amountKas || amt }
   });
   setLiveFast(true);
   setTimeout(() => setLiveFast(false), 25000);
+  const lockedKas = Number(result.amountKas || amt);
+  const feeKas = Number(result.feeKas || 0);
   openSheet('Covenant funded', `
+    <div class="kv"><span class="k">Locked in capsule</span><span class="v">${esc(formatKas(lockedKas))} KAS</span></div>
+    <div class="kv"><span class="k">Network fee</span><span class="v">${feeKas.toFixed(6)} KAS</span></div>
+    <div class="kv"><span class="k">Left this wallet</span><span class="v">${formatKas(lockedKas + feeKas)} KAS</span></div>
     <div class="kv"><span class="k">Covenant</span><span class="v">${esc(vault.address)}</span></div>
-    <div class="kv"><span class="k">Locked</span><span class="v">${esc(result.amountKas || amt)} KAS</span></div>
     ${result.covenantId ? `<div class="kv"><span class="k">Covenant ID</span><span class="v">${esc(result.covenantId)}</span></div>` : ''}
     <div class="kv"><span class="k">TX</span><span class="v">${esc(result.txId || '')}</span></div>
-    ${result.boosted ? `<p class="muted">Kaspa storage-mass rules block splitting this UTXO into two similar piles, so the leftover went into the vault too. Sweep returns all of it.</p>` : ''}
-    <p class="muted">Toccata v1 genesis binding attached. The CLTV rules sit in the redeem script and appear when it is spent.</p>
+    <p class="muted" style="text-align:left;">Exactly ${esc(formatKas(lockedKas))} KAS is frozen in the capsule. The fee was paid from leftover UTXOs; change stays in this wallet. Sweep later returns the locked amount minus a small sweep fee (~0.004 KAS).</p>
     <p class="muted"><a href="https://kaspa.stream/transactions/${esc(result.txId)}" target="_blank" rel="noopener" style="color:var(--gold-2)">View on kaspa.stream</a></p>
   `, { confirm: 'Done', cancel: false, onConfirm: () => { closeSheet(); refreshAll(); } });
 }
 
-async function openVaultDetail(address) {
-  const vault = loadVaults().find(v => v.address === address);
+function openLockTimer(vault) {
   if (!vault) return;
   haptic();
-  let daa = 0;
-  try { daa = await currentDaa(); } catch {}
-  const locked = vault.unlockDaa && daa && daa < vault.unlockDaa;
-  const waitSec = locked ? Math.ceil((vault.unlockDaa - daa) / 10) : 0;
-  openSheet(vault.name || 'Vault', `
-    <div class="kv"><span class="k">Type</span><span class="v">${esc(vault.type)}</span></div>
-    <div class="kv"><span class="k">Status</span><span class="v">${esc(vault.status || 'unfunded')}</span></div>
+  const sec = remainingLockSec(vault.unlockDaa);
+  const locked = sec == null || sec > 0;
+  openSheet(vault.name || 'Time Capsule', `
     <div class="kv"><span class="k">Locked</span><span class="v">${formatAmount(vault.fundedSompi || 0)} KAS</span></div>
+    ${vault.fundFeeKas ? `<div class="kv"><span class="k">Lock fee paid</span><span class="v">${Number(vault.fundFeeKas).toFixed(6)} KAS</span></div>` : ''}
+    <div class="kv"><span class="k">Time left</span><span class="v" id="lock-timer-live" data-unlock-daa="${esc(vault.unlockDaa || '')}" data-addr="${esc(vault.address || '')}">${esc(formatLockClock(sec))}</span></div>
+    <div class="kv"><span class="k">Unlocks (UTC)</span><span class="v" id="lock-timer-utc">${esc(unlockAtUtc(sec))}</span></div>
+    ${vault.unlockDaa ? `<div class="kv"><span class="k">Unlock DAA</span><span class="v">${esc(vault.unlockDaa)} (now ${esc(lastDaa || '—')})</span></div>` : ''}
     <div class="kv"><span class="k">Address</span><span class="v">${esc(vault.address)}</span></div>
-    ${vault.unlockDaa ? `<div class="kv"><span class="k">Unlock DAA</span><span class="v">${esc(vault.unlockDaa)} (now ${esc(daa || '—')})</span></div>` : ''}
-    <p class="muted" style="text-align:left;">${locked ? `Still frozen on-chain (~${waitSec}s). The node will reject a spend until then. This app sweeps it back when the timer hits zero.` : 'Lock has expired. Sweep (or wait — auto-return is on) to send KAS back to this wallet.'}</p>
+    <p class="muted" style="text-align:left;">${locked ? 'Still frozen on-chain. When this timer hits zero, this app Sweeps the KAS back to your kaspa:q… wallet automatically.' : 'Lock has expired. Sweep now, or wait — auto-return is on.'}</p>
     <button class="btn btn-gold" id="v-unlock" style="margin-top:14px;">Sweep to wallet</button>
     <div class="btn-row" style="margin-top:10px;">
       <button class="btn btn-glass" id="v-copy">Copy</button>
@@ -728,6 +867,15 @@ async function openVaultDetail(address) {
   $('v-copy').onclick = async () => { await navigator.clipboard.writeText(vault.address); toast('Copied'); };
   $('v-fund').onclick = () => fundVault(vault).catch(e => toast(errText(e)));
   $('v-unlock').onclick = () => unlockVault(vault).catch(e => { setSheetStatus(errText(e), true); toast(errText(e)); });
+}
+
+async function openVaultDetail(address) {
+  const vault = loadVaults().find(v => v.address === address);
+  if (!vault) return;
+  if (!lastDaa) {
+    try { lastDaa = await currentDaa(); lastDaaAt = Date.now(); } catch {}
+  }
+  openLockTimer(vault);
 }
 
 async function unlockVault(vault) {
@@ -749,8 +897,10 @@ async function unlockVault(vault) {
   setLiveFast(true);
   setTimeout(() => setLiveFast(false), 25000);
   openSheet('Swept', `
-    <div class="kv"><span class="k">Returned</span><span class="v">${esc(result.amountKas)} KAS</span></div>
+    <div class="kv"><span class="k">Returned</span><span class="v">${esc(formatKas(result.amountKas))} KAS</span></div>
+    <div class="kv"><span class="k">Sweep fee</span><span class="v">${Number(result.feeKas || 0).toFixed(6)} KAS</span></div>
     <div class="kv"><span class="k">TX</span><span class="v">${esc(result.txId)}</span></div>
+    <p class="muted" style="text-align:left;">The sweep fee is the Toccata compute fee (usually 0.004–0.007 KAS), not a cut of the lock. You should get lock amount minus this fee.</p>
     <p class="muted"><a href="https://kaspa.stream/transactions/${esc(result.txId)}" target="_blank" rel="noopener" style="color:var(--gold-2)">View on kaspa.stream</a></p>
   `, { confirm: 'Done', cancel: false, onConfirm: () => { closeSheet(); refreshAll(); } });
 }
@@ -898,6 +1048,12 @@ function bind() {
     if (tab === 'home') refreshAll();
   });
   $('holdings').addEventListener('click', e => {
+    const lock = e.target.closest('[data-lock-holding]');
+    if (lock?.dataset.lockHolding) {
+      const vault = loadVaults().find(v => v.address === lock.dataset.lockHolding);
+      openLockTimer(vault);
+      return;
+    }
     const row = e.target.closest('[data-ticker]');
     if (row?.dataset.ticker === 'KAS') openReceive();
     else if (row) showPage('tokens');
@@ -932,7 +1088,7 @@ async function init() {
   window.__kcc = { parseIntent, isValidKaspaAddress, describeIntent, pingPublicNode, toRpcTransaction, p2shSpendScript, planKasPayment, storageMassOk };
   window.__kccLoad = loadKaspaSdk;
   setClock();
-  setInterval(setClock, 15000);
+  setInterval(setClock, 1000);
   bind();
   const video = document.getElementById('bg-video');
   video?.play?.().catch(() => {});

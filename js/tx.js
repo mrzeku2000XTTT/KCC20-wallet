@@ -263,7 +263,8 @@ export function storageMassOk(k, inAmts, outAmts) {
 }
 
 /** KIP-9: splitting a UTXO into two similar outputs (0.15 + 0.15 from 0.30) blows storage mass. */
-export function planKasPayment(k, entries, amount, fee) {
+export function planKasPayment(k, entries, amount, fee, opts = {}) {
+  const exact = !!opts.exact;
   const need = amount + fee;
   const usable = (entries || []).filter(e => e.amount > 0n).sort((a, b) => (a.amount < b.amount ? 1 : -1));
   const totalAll = usable.reduce((a, e) => a + e.amount, 0n);
@@ -295,16 +296,21 @@ export function planKasPayment(k, entries, amount, fee) {
     const ins = set.map(e => e.amount);
     const change = total - amount - fee;
     if (change <= dust) {
-      if (storageMassOk(k, ins, [amount])) return { entries: set, amount, fee: total - amount, change: 0n, boosted: false };
+      // Leftover becomes the fee. Dest stays `amount` — never fold leftover into the vault.
+      if (storageMassOk(k, ins, [amount])) {
+        return { entries: set, amount, fee: total - amount, change: 0n, boosted: false };
+      }
     } else if (storageMassOk(k, ins, [amount, change])) {
       return { entries: set, amount, fee, change, boosted: false };
     }
-    const sendAll = total - fee;
-    if (sendAll > 0n && storageMassOk(k, ins, [sendAll]) && !absorb) {
-      absorb = { entries: set, amount: sendAll, fee, change: 0n, boosted: true };
+    if (!exact) {
+      const sendAll = total - fee;
+      if (sendAll > 0n && storageMassOk(k, ins, [sendAll]) && !absorb) {
+        absorb = { entries: set, amount: sendAll, fee, change: 0n, boosted: true };
+      }
     }
   }
-  return absorb;
+  return exact ? null : absorb;
 }
 
 async function nodeFeeRate(rpc) {
@@ -399,7 +405,7 @@ async function submitSignedRpc(k, rpc, url, tx, { sigOpCount, computeBudget, loc
   throw new Error('Node did not return a transaction id');
 }
 
-export async function sendKas({ wallet, dest, amountKas, utxos }) {
+export async function sendKas({ wallet, dest, amountKas, utxos, exact = false }) {
   const k = await loadKaspaSdk();
   const requested = k.kaspaToSompi(String(amountKas));
   if (requested == null) throw new Error('Invalid amount');
@@ -412,18 +418,31 @@ export async function sendKas({ wallet, dest, amountKas, utxos }) {
   const { rpc, url } = await connectPublicNode();
   const feeRate = await nodeFeeRate(rpc);
   const feeGuess = 500_000n;
-  const plan = planKasPayment(k, entries, requested, feeGuess);
+  let plan = planKasPayment(k, entries, requested, feeGuess, { exact });
+  if (exact && plan?.boosted) plan = null;
   if (!plan) {
     const have = entries.reduce((a, e) => a + e.amount, 0n);
-    throw new Error(`Have ${Number(have) / 1e8} KAS in UTXOs but cannot place ${Number(requested) / 1e8} KAS without breaking storage-mass (try 0.2 KAS, or lock the whole leftover).`);
+    if (exact) {
+      if (have < requested + feeGuess) {
+        throw new Error(`Need ${Number(requested + feeGuess) / 1e8} KAS (lock + fee), you have ${Number(have) / 1e8} KAS.`);
+      }
+      throw new Error(
+        `Cannot lock exactly ${Number(requested) / 1e8} KAS from your UTXOs. ` +
+        `Kaspa rejects a near-even split (storage mass). You have ${Number(have) / 1e8} KAS. ` +
+        `Receive a bit more KAS first, or lock a different amount.`
+      );
+    }
+    throw new Error(`Have ${Number(have) / 1e8} KAS in UTXOs but cannot place ${Number(requested) / 1e8} KAS without breaking storage-mass.`);
   }
 
-  const amount = plan.amount;
-  const boosted = !!plan.boosted;
+  const amount = exact ? requested : plan.amount;
+  const boosted = exact ? false : !!plan.boosted;
   let pendingList = [];
   let lastErr = '';
 
-  if (plan.change > 0n) {
+  // Exact vault locks must not go through createTransactions — it silently
+  // absorbs leftover UTXOs into the destination when change is awkward.
+  if (!exact) {
     try {
       const built = await k.createTransactions({
         entries: plan.entries,
@@ -443,21 +462,25 @@ export async function sendKas({ wallet, dest, amountKas, utxos }) {
     const outputs = [{ address: destStr, amount }];
     if (plan.change > 0n) outputs.push({ address: wallet.address, amount: plan.change });
     const tx = k.createTransaction(plan.entries, outputs, 0n, undefined, 1);
-    pendingList = [{ transaction: tx, sign(keys) { k.signTransaction(tx, keys, false); } }];
+    pendingList = [{ transaction: tx }];
   }
 
   const priv = new k.PrivateKey(wallet.privKey);
   let txId = null;
   let covenantId = null;
+  let paidFee = 0n;
+  let locked = amount;
   for (let p = 0; p < pendingList.length; p++) {
     const pending = pendingList[p];
     const tx = pending.transaction;
     tx.version = 1;
     prepInputs(tx, { sigOpCount: 0, computeBudget: 10 });
     const isFinal = p === pendingList.length - 1;
+    const protect = (exact || (isCovenantDest && isFinal)) ? destOutputIndex(k, tx, destStr) : -1;
     if (isCovenantDest && isFinal) covenantId = bindCovenantOutputs(k, tx, destStr);
     try { k.updateTransactionMass('mainnet', tx); } catch {}
-    let scripts = meetToccataFee(k, tx, priv, plan.entries, 0n);
+    let scripts = meetToccataFee(k, tx, priv, plan.entries, 0n, protect);
+    if (exact) assertExactDest(k, tx, destStr, requested);
     try {
       txId = await submitSignedRpc(k, rpc, url, tx, {
         sigOpCount: 0,
@@ -469,7 +492,8 @@ export async function sendKas({ wallet, dest, amountKas, utxos }) {
       const need = requiredFeeFromError(e);
       const paid = txInputSum(tx, plan.entries) - txOutputSum(tx);
       if (need && need > paid) {
-        shrinkOutputsForFee(tx, need - paid + 50_000n);
+        shrinkOutputsForFee(tx, need - paid + 50_000n, protect);
+        if (exact) assertExactDest(k, tx, destStr, requested);
         scripts = signP2pkInputs(k, tx, priv);
         txId = await submitSignedRpc(k, rpc, url, tx, {
           sigOpCount: 0,
@@ -481,14 +505,16 @@ export async function sendKas({ wallet, dest, amountKas, utxos }) {
         throw e;
       }
     }
+    paidFee = txInputSum(tx, plan.entries) - txOutputSum(tx);
+    if (protect >= 0) locked = BigInt(tx.outputs[protect].value);
   }
   if (!txId) throw new Error(lastErr || 'Node did not return a transaction id');
   return {
     txId,
-    feeKas: Number(plan.fee) / 1e8,
+    feeKas: Number(paidFee) / 1e8,
     node: url,
     covenantId,
-    amountKas: Number(amount) / 1e8,
+    amountKas: Number(locked) / 1e8,
     boosted
   };
 }
@@ -581,9 +607,10 @@ function txInputSum(tx, entries) {
   return (entries || []).reduce((a, e) => a + BigInt(e.amount), 0n);
 }
 
-function shrinkOutputsForFee(tx, extra) {
+function shrinkOutputsForFee(tx, extra, protectIndex = -1) {
   const outs = tx.outputs;
   for (let i = outs.length - 1; i >= 0; i--) {
+    if (i === protectIndex) continue;
     const v = BigInt(outs[i].value);
     if (v > extra + 10_000n) {
       outs[i].value = v - extra;
@@ -593,13 +620,33 @@ function shrinkOutputsForFee(tx, extra) {
   throw new Error('Not enough leftover to cover the network fee');
 }
 
-function meetToccataFee(k, tx, priv, entries, floor = 0n) {
+function destOutputIndex(k, tx, destStr) {
+  const outs = tx.outputs;
+  for (let i = 0; i < outs.length; i++) {
+    try {
+      const a = String(k.addressFromScriptPublicKey(outs[i].scriptPublicKey, 'mainnet'));
+      if (a === destStr) return i;
+    } catch {}
+  }
+  return 0;
+}
+
+function assertExactDest(k, tx, destStr, requested) {
+  const got = BigInt(tx.outputs[destOutputIndex(k, tx, destStr)].value);
+  if (got !== requested) {
+    throw new Error(
+      `Aborted: capsule would have received ${Number(got) / 1e8} KAS instead of the ${Number(requested) / 1e8} KAS you asked to lock.`
+    );
+  }
+}
+
+function meetToccataFee(k, tx, priv, entries, floor = 0n, protectIndex = -1) {
   let scripts = signP2pkInputs(k, tx, priv);
   for (let round = 0; round < 3; round++) {
     const need = toccataMinFee(k, tx, floor);
     const paid = txInputSum(tx, entries) - txOutputSum(tx);
     if (paid >= need) return scripts;
-    shrinkOutputsForFee(tx, need - paid);
+    shrinkOutputsForFee(tx, need - paid, protectIndex);
     scripts = signP2pkInputs(k, tx, priv);
   }
   return scripts;
@@ -655,10 +702,9 @@ export async function sweepVault({ wallet, vault, utxos }) {
     return { tx, sendAmt, fee, scripts };
   }
 
-  // Toccata mempool: 100 sompi * compute mass (node required 666900 for mass 6669).
-  let fee = 1_000_000n;
+  let fee = 450_000n;
   let built = assemble(fee);
-  const measured = toccataMinFee(k, built.tx, 1_000_000n);
+  const measured = toccataMinFee(k, built.tx, 400_000n);
   if (measured > fee) {
     fee = measured;
     built = assemble(fee);

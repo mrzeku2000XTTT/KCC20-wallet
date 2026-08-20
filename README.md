@@ -26,6 +26,8 @@ Import this repo. Framework: Other. No build command. Root directory: `.`
 - Create / import Schnorr wallet (browser keygen)
 - Live KAS balance, USD, UTXOs, activity from api.kaspa.org
 - Send / receive (QR)
+- Time capsule locks the exact KAS you type (leftover stays as change; it is not absorbed into the vault)
+- Network fees shown on lock, send, sweep, and Activity (Toccata compute fee, usually 0.004–0.007 KAS)
 - KCC20 watchlist
 - AI + manual covenant builder (existing `kccApi` backend)
 

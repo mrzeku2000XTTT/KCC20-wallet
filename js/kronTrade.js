@@ -435,6 +435,30 @@ function restFunding(utxos, address) {
   }).filter(Boolean).sort((a, b) => (a.amount < b.amount ? 1 : -1));
 }
 
+function hexish(v) {
+  if (v == null) return '';
+  if (typeof v === 'string') return v.replace(/^0x/i, '');
+  if (v instanceof Uint8Array) {
+    return Array.from(v, b => b.toString(16).padStart(2, '0')).join('');
+  }
+  return String(v);
+}
+
+/** rusty-kaspa createInputSignature already returns a complete P2PK script (push + sig).
+ *  Do NOT wrap it with ScriptBuilder.addData — that double-encodes and the node rejects
+ *  "signature invalid: malformed signature". */
+function signFundingP2pk(k, tx, priv, indexes) {
+  const inputs = [...tx.inputs];
+  for (const idx of indexes) {
+    const sig = k.createInputSignature(tx, idx, priv, k.SighashType.All);
+    const hex = hexish(sig);
+    if (!hex || hex.length < 20) throw new Error('Signing failed — empty P2PK signature');
+    inputs[idx].signatureScript = hex;
+    inputs[idx].sigOpCount = 0;
+  }
+  tx.inputs = inputs;
+}
+
 function assembleSpend(k, spend, fundingEntries, changeAddress, networkFee) {
   const covInputs = spend.inputs.map(ci => inputFromUtxo(k, {
     txid: ci.transactionId,
@@ -603,7 +627,7 @@ export async function executeKronTrade({ wallet, tick, side, amount, utxos, onSt
   const fee = kron.spend.estimateNativeFee(k, 'mainnet', asm, 100);
   asm = assembleSpend(k, spend, funding, wallet.address, fee);
   const priv = new k.PrivateKey(wallet.privKey);
-  kron.spend.signFundingInputs(k, asm.transaction, priv, asm.fundingInputIndexes);
+  signFundingP2pk(k, asm.transaction, priv, asm.fundingInputIndexes);
   onStatus?.('Broadcasting KRON trade…');
   const submitted = await rpc.submitTransaction({ transaction: asm.transaction, allowOrphan: false });
   const txId = submitted?.transactionId || submitted || asm.transaction.id;

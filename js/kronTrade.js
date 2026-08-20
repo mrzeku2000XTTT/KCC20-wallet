@@ -90,6 +90,25 @@ export function findKronEntry(tick) {
   return (listCache?.tokens || []).find(e => String(e.symbol).toUpperCase() === t) || null;
 }
 
+export async function lookupKronTick(tick) {
+  const t = String(tick || '').trim().toUpperCase();
+  if (!/^[A-Z0-9]{2,12}$/.test(t)) throw new Error('Enter a ticker like KRON or KKDAG');
+  await kronTokenlist();
+  const token = await idxToken(t);
+  const entry = findKronEntry(t);
+  return {
+    tick: t,
+    name: token.name || entry?.name || t,
+    graduated: !!(token.graduated || entry?.extensions?.graduated),
+    price: Number(token.price || 0),
+    decimals: Number(entry?.decimals ?? token.dec ?? 0),
+    change24h: Number(token.change24h || 0),
+    volume24h: Number(token.volume24h || 0),
+    covenantId: token.covenantId || entry?.covenantId || '',
+    entry
+  };
+}
+
 async function descriptor(covid) {
   if (descCache.has(covid)) return descCache.get(covid);
   const res = await fetch(REG + '/api/registry/token/' + encodeURIComponent(covid) + '/descriptor', { cache: 'no-store' });

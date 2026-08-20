@@ -139,6 +139,10 @@ img { display: block; max-width: 100%; }
   padding: 0 18px var(--tab-h);
   -webkit-overflow-scrolling: touch;
 }
+.scroll.home-noscroll {
+  overflow: hidden;
+  padding-bottom: calc(var(--tab-h) + 4px);
+}
 .scroll::-webkit-scrollbar { width: 0; }
 
 .page { display: none; animation: rise 0.42s cubic-bezier(0.32,0.72,0,1); }
@@ -357,6 +361,44 @@ img { display: block; max-width: 100%; }
   font-size: 14px; font-weight: 600;
 }
 .utxo-bar .utxo-go { color: var(--gold-2); }
+.trade-cta span:first-child { letter-spacing: 0.8px; font-weight: 750; }
+
+#page-home.home-fit {
+  height: 100%;
+  flex-direction: column;
+  overflow: hidden;
+}
+#page-home.home-fit.active { display: flex; }
+#page-home.home-fit .metal-card {
+  min-height: 0; padding: 12px 16px 12px; margin-bottom: 8px; border-radius: 18px;
+}
+#page-home.home-fit .card-label { margin-top: 8px; font-size: 10px; }
+#page-home.home-fit .card-bal { font-size: 28px; letter-spacing: -1px; }
+#page-home.home-fit .card-bal small { font-size: 13px; }
+#page-home.home-fit .card-usd { font-size: 12px; }
+#page-home.home-fit .card-foot { margin-top: 8px; font-size: 11px; }
+#page-home.home-fit .card-chip { width: 28px; height: 20px; }
+#page-home.home-fit .wallet-switch { margin: 0 0 8px; padding: 0; }
+#page-home.home-fit .w-chip { padding: 6px 10px; min-width: 86px; border-radius: 12px; }
+#page-home.home-fit .w-chip b { font-size: 12px; }
+#page-home.home-fit .w-chip em { font-size: 10px; }
+#page-home.home-fit .w-chip.add { min-width: 40px; padding: 6px 10px; font-size: 18px; }
+#page-home.home-fit .actions { margin-bottom: 6px; gap: 4px; }
+#page-home.home-fit .action { padding: 2px 2px 4px; gap: 4px; }
+#page-home.home-fit .action .orb { width: 40px; height: 40px; }
+#page-home.home-fit .action svg { width: 18px; height: 18px; }
+#page-home.home-fit .action span { font-size: 11px; }
+#page-home.home-fit .utxo-bar { padding: 8px 12px; margin-bottom: 6px; font-size: 13px; }
+#page-home.home-fit .section-label { padding: 2px 4px 4px; font-size: 11px; }
+#page-home.home-fit #holdings {
+  flex: 1; min-height: 0; overflow: hidden; margin-bottom: 0;
+}
+#page-home.home-fit #holdings .row { padding: 8px 12px; min-height: 44px; }
+#page-home.home-fit #holdings .dot { width: 28px; height: 28px; }
+#page-home.home-fit #holdings .title { font-size: 14px; }
+#page-home.home-fit #holdings .sub { font-size: 11px; }
+#page-home.home-fit #holdings .amt b { font-size: 13px; }
+#page-home.home-fit #holdings .amt em { display: none; }
 
 .tabbar {
   position: absolute; left: 0; right: 0; bottom: 0;
@@ -674,41 +716,64 @@ button.tx { width: 100%; text-align: left; color: inherit; }
 
 .pin-lock {
   position: absolute; inset: 0; z-index: 90;
-  background: rgba(8, 8, 10, 0.94);
-  backdrop-filter: blur(28px);
-  -webkit-backdrop-filter: blur(28px);
+  background: #000;
   display: flex; align-items: center; justify-content: center;
-  padding: 24px 20px calc(24px + var(--safe-b));
+  padding: 48px 20px calc(28px + var(--safe-b));
 }
 .pin-inner { width: 100%; max-width: 320px; text-align: center; }
 .pin-app-icon {
-  width: 64px; height: 64px; margin: 0 auto 16px; border-radius: 16px;
-  box-shadow: 0 12px 28px rgba(0,0,0,0.4);
+  width: 72px; height: 72px; margin: 0 auto 22px; border-radius: 18px;
 }
-.pin-inner h2 { font-size: 24px; font-weight: 700; letter-spacing: -0.5px; }
-.pin-sub { color: var(--label-2); font-size: 14px; margin: 6px 0 18px; }
+.pin-inner h2 { font-size: 22px; font-weight: 600; letter-spacing: -0.4px; color: #fff; }
+.pin-sub { color: rgba(235,235,245,0.62); font-size: 14px; margin: 8px 0 22px; }
 .pin-dots {
-  display: flex; justify-content: center; gap: 10px; margin-bottom: 16px; min-height: 14px;
+  display: flex; justify-content: center; gap: 16px; margin-bottom: 22px; min-height: 14px;
 }
 .pin-dots i {
-  width: 12px; height: 12px; border-radius: 50%;
-  border: 1.5px solid var(--gold);
+  width: 10px; height: 10px; border-radius: 50%;
+  border: 1.5px solid #fff;
   background: transparent;
 }
-.pin-dots i.on { background: var(--gold); }
+.pin-dots i.on { background: #fff; }
 .pin-err { color: var(--red); font-size: 13px; margin: 0 0 12px; min-height: 18px; }
+.pin-cancel {
+  display: block; margin: 0 auto 16px; color: #0a84ff; font-size: 17px; font-weight: 500;
+}
 .pin-pad {
-  display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px;
-  max-width: 280px; margin: 0 auto;
+  display: grid; grid-template-columns: repeat(3, 1fr); gap: 14px 18px;
+  max-width: 280px; margin: 12px auto 0;
 }
 .pin-pad button {
-  height: 58px; border-radius: 16px;
-  background: rgba(255,255,255,0.08);
-  border: 0.5px solid var(--hairline);
-  font-size: 22px; font-weight: 600;
+  width: 72px; height: 72px; margin: 0 auto;
+  border-radius: 50%;
+  background: rgba(255,255,255,0.14);
+  border: 0;
+  color: #fff;
+  font-size: 28px; font-weight: 400;
+  display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 1px;
 }
-.pin-pad button:active { background: rgba(255,255,255,0.16); }
-.pin-pad .pin-ghost { background: transparent; font-size: 16px; color: var(--gold-2); }
+.pin-pad button small {
+  font-size: 9px; letter-spacing: 1.6px; font-weight: 600; opacity: 0.72;
+}
+.pin-pad .pin-ghost { background: transparent; font-size: 17px; font-weight: 500; color: #0a84ff; }
+.trade-screen {
+  position: absolute; inset: 0; z-index: 85;
+  background: #050506;
+  display: flex; flex-direction: column;
+  padding: calc(18px + var(--safe-t)) 18px calc(18px + var(--safe-b));
+}
+.trade-head {
+  display: flex; align-items: center; justify-content: space-between;
+  margin-bottom: 16px;
+}
+.trade-head h2 { font-size: 20px; font-weight: 700; letter-spacing: -0.4px; }
+.trade-x, .trade-head-space { min-width: 56px; color: var(--gold-2); font-size: 16px; font-weight: 600; }
+.trade-head-space { visibility: hidden; }
+.trade-meta { padding: 12px 14px; margin-bottom: 12px; text-align: left; }
+.trade-meta .title { font-size: 16px; font-weight: 650; }
+.trade-meta .sub { font-size: 12px; color: var(--label-2); margin-top: 2px; }
+#trade-screen .btn-gold { height: 52px; margin-top: auto; }
+.pin-pad button:active { background: rgba(255,255,255,0.28); }
 .pin-lock.shake .pin-dots { animation: pinshake 0.4s ease; }
 @keyframes pinshake {
   0%, 100% { transform: translateX(0); }

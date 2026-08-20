@@ -16,7 +16,7 @@ import {
   pingPublicNode, sweepVault, toRpcTransaction, p2shSpendScript, planKasPayment, storageMassOk,
   compoundUtxos, sendKrc20, sendKcc20, loadKrc20Pending
 } from './tx.js';
-import { kronMarkets, quoteKronTrade, executeKronTrade, formatKasSompi } from './kronTrade.js';
+import { kronMarkets, quoteKronTrade, executeKronTrade, formatKasSompi, lookupKronTick } from './kronTrade.js';
 
 function errText(e) {
   if (e == null) return 'Unknown error';
@@ -103,6 +103,9 @@ let pinMode = 'unlock';
 let pinPending = '';
 let pinFails = 0;
 let pinLockUntil = 0;
+let pinWait = null;
+let pinUnlockedFor = '';
+let pendingNewKey = null;
 let qrStream = null;
 let qrRaf = 0;
 
@@ -170,6 +173,7 @@ function tickLockLabels() {
 
 function showPage(id) {
   document.querySelectorAll('.page').forEach(p => p.classList.toggle('active', p.id === 'page-' + id));
+  $('scroll')?.classList.toggle('home-noscroll', id === 'home');
   currentTab = id;
   document.querySelectorAll('.tab').forEach(t => t.classList.toggle('active', t.dataset.tab === id));
   const titles = { home: 'KCC20', tokens: 'Tokens', vault: 'Vault', activity: 'Activity', you: 'Profile' };
@@ -267,7 +271,8 @@ function saveWallet() {
     address: wallet.address,
     privKey: wallet.privKey,
     pubKey: wallet.pubKey || '',
-    createdAt: wallet.createdAt || Date.now()
+    createdAt: wallet.createdAt || Date.now(),
+    pin: wallet.pin || list[i]?.pin || undefined
   };
   if (i >= 0) list[i] = { ...list[i], ...row };
   else list.push(row);
@@ -356,7 +361,17 @@ async function refreshAllWalletSnaps({ tokens = false } = {}) {
   }
 }
 
+function migratePinOnto(w) {
+  if (!w || w.pin?.hash) return w;
+  try {
+    const raw = JSON.parse(localStorage.getItem(PIN_KEY) || 'null');
+    if (raw?.salt && raw?.hash) w.pin = raw;
+  } catch {}
+  return w;
+}
+
 function loadPin() {
+  if (wallet?.pin?.salt && wallet?.pin?.hash) return wallet.pin;
   try {
     const raw = JSON.parse(localStorage.getItem(PIN_KEY) || 'null');
     if (raw?.salt && raw?.hash) return raw;
@@ -365,7 +380,7 @@ function loadPin() {
 }
 
 function sessionOpen() {
-  return !loadPin() || sessionUnlocked;
+  return !!wallet && pinUnlockedFor === wallet.id;
 }
 
 function hidePinLock() {
@@ -375,33 +390,38 @@ function hidePinLock() {
   pinBuffer = '';
   pinPending = '';
   paintPinDots();
+  if (sessionOpen()) $('tabbar')?.classList.add('show');
 }
 
-function beginPinFlow(mode) {
+function beginPinFlow(mode, purpose) {
   pinMode = mode || 'unlock';
   pinBuffer = '';
   if (mode !== 'confirm' && mode !== 'change-confirm') pinPending = '';
+  const name = wallet?.name || 'this wallet';
   const titles = {
-    unlock: ['Enter PIN', 'Unlock this wallet'],
-    set: ['Create PIN', '4–8 digits. You will confirm next.'],
-    confirm: ['Confirm PIN', 'Enter the same PIN again'],
-    'change-old': ['Current PIN', 'Enter your current PIN'],
-    'change-new': ['New PIN', 'Choose 4–8 digits'],
-    'change-confirm': ['Confirm new PIN', 'Enter the same PIN again'],
-    remove: ['Remove PIN', 'Enter your PIN to turn lock off']
+    unlock: ['Enter Passcode', 'Unlock ' + name],
+    set: ['Set Passcode', 'Required for ' + name + ' · 4–8 digits'],
+    confirm: ['Confirm Passcode', 'Enter the same PIN again'],
+    'change-old': ['Enter Passcode', 'Current PIN for ' + name],
+    'change-new': ['New Passcode', 'Choose 4–8 digits for ' + name],
+    'change-confirm': ['Confirm Passcode', 'Enter the same PIN again'],
+    gate: [purpose || 'Enter Passcode', 'Sign with ' + name]
   };
   const t = titles[pinMode] || titles.unlock;
   if ($('pin-title')) $('pin-title').textContent = t[0];
   if ($('pin-sub')) $('pin-sub').textContent = t[1];
   $('pin-err')?.classList.add('hidden');
+  const canCancel = pinMode === 'gate' || pinMode === 'change-old' || pinMode === 'change-new' || pinMode === 'change-confirm';
+  $('pin-cancel')?.classList.toggle('hidden', !canCancel);
   $('pin-lock')?.classList.remove('hidden', 'shake');
   $('pin-lock')?.setAttribute('aria-hidden', 'false');
+  $('tabbar')?.classList.remove('show');
   paintPinDots();
 }
 
 function paintPinDots() {
   const rec = loadPin();
-  const known = (pinMode === 'unlock' || pinMode === 'change-old' || pinMode === 'remove') ? (rec?.len || 6) : 0;
+  const known = (pinMode === 'unlock' || pinMode === 'change-old' || pinMode === 'gate') ? (rec?.len || 6) : 0;
   const n = known || Math.min(8, Math.max(4, pinBuffer.length || 4));
   const box = $('pin-dots');
   if (!box) return;
@@ -437,7 +457,12 @@ async function hashPin(pin, salt) {
 async function savePin(pin) {
   const salt = [...crypto.getRandomValues(new Uint8Array(16))].map(b => b.toString(16).padStart(2, '0')).join('');
   const hash = await hashPin(pin, salt);
-  localStorage.setItem(PIN_KEY, JSON.stringify({ salt, hash, len: pin.length }));
+  const rec = { salt, hash, len: pin.length };
+  if (wallet) {
+    wallet.pin = rec;
+    saveWallet();
+  }
+  localStorage.removeItem(PIN_KEY);
 }
 
 async function pinMatches(pin) {
@@ -465,7 +490,7 @@ async function pinPress(key) {
   pinBuffer += key;
   paintPinDots();
   const rec = loadPin();
-  if ((pinMode === 'unlock' || pinMode === 'change-old' || pinMode === 'remove') && rec?.len && pinBuffer.length >= rec.len) {
+  if ((pinMode === 'unlock' || pinMode === 'change-old' || pinMode === 'gate') && rec?.len && pinBuffer.length >= rec.len) {
     await submitPin();
   }
 }
@@ -486,10 +511,45 @@ async function submitPin() {
     }
     await savePin(pin);
     sessionUnlocked = true;
+    if (wallet?.id) pinUnlockedFor = wallet.id;
     hidePinLock();
-    toast('PIN saved');
+    toast('PIN saved for ' + (wallet?.name || 'wallet'));
+    if (pinWait) {
+      const w = pinWait;
+      pinWait = null;
+      w.resolve(true);
+    }
+    if (pendingNewKey) {
+      const pk = pendingNewKey;
+      pendingNewKey = null;
+      await unlockToHome();
+      openSheet('Your new wallet', `
+        <p class="muted" style="text-align:left;padding:0 0 12px;">This is the only copy of this wallet’s private key. It stays hidden until you reveal it. Store it offline.</p>
+        <div class="field"><label>Private key</label>
+          <div class="pk-mask" id="new-pk-view">••••••••••••••••••••••••••••••••</div>
+        </div>
+        <div class="btn-row" style="margin-bottom:8px;">
+          <button class="btn btn-glass" id="reveal-new-pk" type="button">Reveal</button>
+          <button class="btn btn-glass" id="copy-new-pk" type="button">Copy</button>
+        </div>
+      `, { confirm: 'I saved it', cancel: false });
+      let shown = false;
+      $('reveal-new-pk').onclick = () => {
+        shown = !shown;
+        const el = $('new-pk-view');
+        if (!el) return;
+        el.textContent = shown ? pk : '••••••••••••••••••••••••••••••••';
+        el.classList.toggle('shown', shown);
+        $('reveal-new-pk').textContent = shown ? 'Hide' : 'Reveal';
+      };
+      $('copy-new-pk').onclick = async () => {
+        await navigator.clipboard.writeText(pk);
+        toast('Key copied');
+      };
+      return;
+    }
+    if (wallet?.address) await unlockToHome();
     if (currentTab === 'you') renderProfile();
-    if (currentTab === 'home') showPage('home');
     return;
   }
   if (!/^\d{4,8}$/.test(pin)) { pinError('Enter your PIN'); return; }
@@ -506,17 +566,19 @@ async function submitPin() {
     return;
   }
   pinFails = 0;
-  if (pinMode === 'remove') {
-    localStorage.removeItem(PIN_KEY);
-    sessionUnlocked = true;
-    hidePinLock();
-    toast('PIN removed');
-    if (currentTab === 'you') renderProfile();
-    if (currentTab === 'home') showPage('home');
-    return;
-  }
   if (pinMode === 'change-old') {
     beginPinFlow('change-new');
+    return;
+  }
+  if (pinMode === 'gate') {
+    hidePinLock();
+    if (wallet?.id) pinUnlockedFor = wallet.id;
+    $('tabbar')?.classList.toggle('show', !!wallet);
+    if (pinWait) {
+      const w = pinWait;
+      pinWait = null;
+      w.resolve(true);
+    }
     return;
   }
   await finishPinUnlock();
@@ -524,20 +586,38 @@ async function submitPin() {
 
 async function finishPinUnlock() {
   sessionUnlocked = true;
+  if (wallet?.id) pinUnlockedFor = wallet.id;
   hidePinLock();
   if (wallet?.address) await unlockToHome();
 }
 
 function lockNow() {
-  if (!loadPin()) {
-    beginPinFlow('set');
-    return;
-  }
-  sessionUnlocked = false;
   closeSheet();
   stopQrScan();
+  hideTradeScreen();
+  pinUnlockedFor = '';
+  sessionUnlocked = false;
   $('tabbar')?.classList.remove('show');
-  beginPinFlow('unlock');
+  if (!loadPin()) beginPinFlow('set');
+  else beginPinFlow('unlock');
+}
+
+function requirePin(purpose) {
+  return new Promise((resolve, reject) => {
+    if (!wallet) { reject(new Error('No wallet')); return; }
+    pinWait = { resolve, reject };
+    if (!loadPin()) beginPinFlow('set');
+    else beginPinFlow('gate', purpose || 'Enter Passcode');
+  });
+}
+
+function cancelPinGate() {
+  if (pinMode === 'set' || pinMode === 'confirm' || pinMode === 'unlock') return;
+  const w = pinWait;
+  pinWait = null;
+  hidePinLock();
+  if (wallet?.id && pinUnlockedFor === wallet.id) $('tabbar')?.classList.add('show');
+  w?.reject(new Error('cancelled'));
 }
 
 function onPinKeydown(e) {
@@ -550,21 +630,20 @@ function onPinKeydown(e) {
 function openPinSettings() {
   haptic();
   const rec = loadPin();
+  const name = wallet?.name || 'this wallet';
   if (!rec) {
     beginPinFlow('set');
     return;
   }
-  openSheet('PIN lock', `
-    <p class="muted" style="text-align:left;padding:0 0 10px;">PIN locks this device between sessions. It is not a recovery phrase — keep your private key backed up.</p>
+  openSheet('PIN for ' + name, `
+    <p class="muted" style="text-align:left;padding:0 0 10px;">Each wallet has its own iOS-style passcode. Sends and trades ask for it. It is not a recovery phrase.</p>
     <div class="btn-row" style="margin-bottom:10px;">
       <button class="btn btn-gold" id="pin-change" type="button">Change PIN</button>
       <button class="btn btn-glass" id="pin-lock-now" type="button">Lock now</button>
     </div>
-    <button class="btn btn-danger" id="pin-remove" type="button">Remove PIN</button>
   `, { confirm: 'Close', cancel: false });
   $('pin-change').onclick = () => { closeSheet(); beginPinFlow('change-old'); };
   $('pin-lock-now').onclick = () => { closeSheet(); lockNow(); };
-  $('pin-remove').onclick = () => { closeSheet(); beginPinFlow('remove'); };
 }
 
 function parseKaspaQr(raw) {
@@ -694,14 +773,20 @@ function resetLiveState() {
 }
 
 async function activateWallet(w, { toastMsg } = {}) {
-  wallet = w;
+  wallet = migratePinOnto(w);
   saveWallet();
   setVaultOwner(w.address);
   resetLiveState();
   hydrateFromSnap(w.address);
-  await unlockToHome();
-  refreshAllWalletSnaps({ tokens: true }).catch(() => {});
   if (toastMsg) toast(toastMsg);
+  pinUnlockedFor = '';
+  sessionUnlocked = false;
+  $('tabbar')?.classList.remove('show');
+  if (!loadPin()) {
+    beginPinFlow('set');
+    return;
+  }
+  beginPinFlow('unlock');
 }
 
 async function unlockToHome() {
@@ -730,31 +815,8 @@ async function createWallet() {
       name: 'Wallet ' + (list.length + 1),
       createdAt: Date.now()
     };
+    pendingNewKey = w.privKey;
     await activateWallet(w, { toastMsg: list.length ? 'New wallet added' : 'Wallet created' });
-    const pk = w.privKey;
-    openSheet('Your new wallet', `
-      <p class="muted" style="text-align:left;padding:0 0 12px;">This is the only copy of this wallet’s private key. It stays hidden until you reveal it. Store it offline — anyone with the key can spend.</p>
-      <div class="field"><label>Private key</label>
-        <div class="pk-mask" id="new-pk-view">••••••••••••••••••••••••••••••••</div>
-      </div>
-      <div class="btn-row" style="margin-bottom:8px;">
-        <button class="btn btn-glass" id="reveal-new-pk" type="button">Reveal</button>
-        <button class="btn btn-glass" id="copy-new-pk" type="button">Copy</button>
-      </div>
-    `, { confirm: 'I saved it', cancel: false });
-    let shown = false;
-    $('reveal-new-pk').onclick = () => {
-      shown = !shown;
-      const el = $('new-pk-view');
-      if (!el) return;
-      el.textContent = shown ? pk : '••••••••••••••••••••••••••••••••';
-      el.classList.toggle('shown', shown);
-      $('reveal-new-pk').textContent = shown ? 'Hide' : 'Reveal';
-    };
-    $('copy-new-pk').onclick = async () => {
-      await navigator.clipboard.writeText(pk);
-      toast('Key copied');
-    };
   } catch (e) {
     toast(e.message);
   }
@@ -910,14 +972,8 @@ function tokenRow(t, extra = '') {
 }
 
 function renderHoldings() {
-  const watched = loadWatchlist();
-  const liveTickers = new Set([...kccHoldings, ...krcHoldings].map(t => t.ticker));
-  const native = tokenRow({ ...NATIVE_KAS, sompi: balanceSompi, usd: usd(kas()), protocol: 'native' }, 'data-ticker="KAS"');
   const kccRows = kccHoldings.map(t => tokenRow(t));
   const krcRows = krcHoldings.map(t => tokenRow(t));
-  const watchRows = watched.filter(t => t.ticker && !liveTickers.has(t.ticker.toUpperCase())).map(t =>
-    tokenRow({ ...t, protocol: 'watch', balance: 0, decimals: t.decimals || 8 })
-  );
   const locked = loadVaults().filter(v => v.address && Number(v.fundedSompi) > 0);
   const lockRows = locked.map(v => {
     const sec = remainingLockSec(v.unlockDaa);
@@ -935,7 +991,8 @@ function renderHoldings() {
       </div>
     </button>`;
   });
-  $('holdings').innerHTML = [native, ...kccRows, ...krcRows, ...watchRows, ...lockRows].join('') || `<div class="empty">No holdings yet.</div>`;
+  const rows = [...kccRows, ...krcRows, ...lockRows].slice(0, 4);
+  $('holdings').innerHTML = rows.join('') || `<div class="empty">No tokens yet — TRADE KCC20 to buy.</div>`;
   const n = Array.isArray(utxos) ? utxos.length : 0;
   if ($('utxo-count')) $('utxo-count').textContent = n === 1 ? '1 UTXO' : `${n} UTXOs`;
 }
@@ -1121,7 +1178,9 @@ function renderProfile() {
     ex.textContent = 'Open on kaspa.stream';
   }
   if ($('profile-pin-sub')) {
-    $('profile-pin-sub').textContent = loadPin() ? 'On — tap to change or lock' : 'Off — protect this device';
+    $('profile-pin-sub').textContent = loadPin()
+      ? 'On for ' + (wallet.name || 'this wallet')
+      : 'Required — set a PIN for ' + (wallet.name || 'this wallet');
   }
   const box = $('wallet-list');
   if (box) {
@@ -1522,87 +1581,64 @@ async function renderKronMarkets() {
   }
 }
 
+function hideTradeScreen() {
+  $('trade-screen')?.classList.add('hidden');
+  $('trade-screen')?.setAttribute('aria-hidden', 'true');
+}
+
 function openTrade(prefill = {}) {
   haptic();
+  const screen = $('trade-screen');
+  if (!screen) return;
+  screen.classList.remove('hidden');
+  screen.setAttribute('aria-hidden', 'false');
   const tick0 = String(prefill.tick || 'KRON').toUpperCase();
   const side0 = prefill.side === 'sell' ? 'sell' : 'buy';
-  openSheet('Trade on KRON', `<div class="spinner"></div><p class="muted">Loading markets…</p>`, { confirm: 'Close', cancel: false });
-  kronMarkets().then(markets => {
-    const ticks = markets.length ? markets : [{ tick: 'KRON', name: 'Kron Token', graduated: true, price: 0 }];
-    const chosen = ticks.find(t => t.tick === tick0) || ticks[0];
-    const opts = ticks.slice(0, 24).map(m =>
-      `<button class="asset-opt${m.tick === chosen.tick ? ' on' : ''}" type="button" data-trade-pick="${esc(m.tick)}">
-        <span class="asset-opt-tick">${esc(m.tick)}</span>
-        <span class="asset-opt-proto">${esc(m.graduated ? 'Pool' : 'Curve')}</span>
-        <span class="asset-opt-bal">${m.price ? Number(m.price).toPrecision(4) : '—'}</span>
-      </button>`
-    ).join('');
-    openSheet('Trade on KRON', `
-      <div class="seg" id="trade-side">
-        <button class="${side0 === 'buy' ? 'on' : ''}" data-side="buy" type="button">Buy</button>
-        <button class="${side0 === 'sell' ? 'on' : ''}" data-side="sell" type="button">Sell</button>
-      </div>
-      <div class="field"><label>Token</label>
-        <input type="hidden" id="trade-tick" value="${esc(chosen.tick)}">
-        <button class="asset-pick" id="trade-tick-btn" type="button">
-          <span><b id="trade-tick-name">${esc(chosen.tick)}</b><small id="trade-tick-meta">${esc(chosen.graduated ? 'Locked AMM pool' : 'Bonding curve')}</small></span>
-          <span class="chev">›</span>
-        </button>
-        <div class="asset-pick-list hidden" id="trade-tick-list">${opts}</div>
-      </div>
-      <div class="field"><label id="trade-amt-label">${side0 === 'sell' ? 'Amount (' + chosen.tick + ')' : 'Pay (KAS)'}</label>
-        <input id="trade-amount" type="text" inputmode="decimal" placeholder="${side0 === 'sell' ? '100' : '5'}" value="${esc(prefill.amount || '')}">
-      </div>
-      <div class="trade-quote" id="trade-quote"><p class="muted" style="text-align:left;padding:0;">KRON SDK quotes a live pool or curve. Expect ~1 KAS of fixed cost (fees + 0.5 KAS cell + network) on top of the trade.</p></div>
-    `, {
-      confirm: 'Review swap',
-      gold: true,
-      onConfirm: () => reviewTrade()
-    });
-    const btn = $('trade-tick-btn');
-    const list = $('trade-tick-list');
-    btn?.addEventListener('click', () => list?.classList.toggle('hidden'));
-    list?.addEventListener('click', e => {
-      const row = e.target.closest('[data-trade-pick]');
-      if (!row) return;
-      const m = ticks.find(t => t.tick === row.dataset.tradePick);
-      if (!m) return;
-      $('trade-tick').value = m.tick;
-      $('trade-tick-name').textContent = m.tick;
-      $('trade-tick-meta').textContent = m.graduated ? 'Locked AMM pool' : 'Bonding curve';
-      list.classList.add('hidden');
-      syncTradeLabel();
-      quoteTradePreview();
-    });
-    $('trade-side')?.addEventListener('click', e => {
-      const b = e.target.closest('[data-side]');
-      if (!b) return;
-      $('trade-side').querySelectorAll('button').forEach(x => x.classList.toggle('on', x === b));
-      syncTradeLabel();
-      quoteTradePreview();
-    });
-    $('trade-amount')?.addEventListener('input', () => {
-      clearTimeout(openTrade._t);
-      openTrade._t = setTimeout(quoteTradePreview, 280);
-    });
-    if (prefill.amount) quoteTradePreview();
-  }).catch(e => {
-    setSheetStatus(errText(e), true);
-    toast(errText(e));
-  });
+  if ($('trade-ticker')) $('trade-ticker').value = tick0;
+  if ($('trade-amount')) $('trade-amount').value = prefill.amount || '';
+  $('trade-side')?.querySelectorAll('button').forEach(b => b.classList.toggle('on', b.dataset.side === side0));
+  $('trade-go').textContent = side0 === 'sell' ? 'Review sell' : 'Review buy';
+  syncTradeLabel();
+  lookupTradeTicker();
+}
+
+async function lookupTradeTicker() {
+  const tick = ($('trade-ticker')?.value || '').trim().toUpperCase();
+  const meta = $('trade-meta');
+  if (!tick) { meta?.classList.add('hidden'); return; }
+  if ($('trade-ticker')) $('trade-ticker').value = tick;
+  if (meta) {
+    meta.classList.remove('hidden');
+    meta.innerHTML = `<div class="title">Looking up ${esc(tick)}…</div>`;
+  }
+  try {
+    const info = await lookupKronTick(tick);
+    if (meta) {
+      const chg = Number(info.change24h || 0);
+      const px = info.price ? Number(info.price).toPrecision(4) + ' KAS' : '—';
+      meta.innerHTML = `
+        <div class="title">${esc(info.tick)} · ${esc(info.name)}</div>
+        <div class="sub">${esc(info.graduated ? 'Locked AMM pool' : 'Bonding curve')} · ${esc(px)}${chg ? ' · ' + ((chg > 0 ? '+' : '') + (chg * 100).toFixed(1) + '%') : ''}</div>`;
+    }
+    syncTradeLabel();
+    quoteTradePreview();
+  } catch (e) {
+    if (meta) meta.innerHTML = `<div class="title">${esc(tick)}</div><div class="sub" style="color:var(--red)">${esc(errText(e))}</div>`;
+  }
 }
 
 function syncTradeLabel() {
   const side = $('trade-side')?.querySelector('.on')?.dataset.side || 'buy';
-  const tick = $('trade-tick')?.value || 'KRON';
+  const tick = ($('trade-ticker')?.value || 'TOKEN').toUpperCase();
   const lab = $('trade-amt-label');
   if (lab) lab.textContent = side === 'sell' ? `Amount (${tick})` : 'Pay (KAS)';
+  if ($('trade-go')) $('trade-go').textContent = side === 'sell' ? 'Review sell' : 'Review buy';
 }
 
 async function quoteTradePreview() {
   const box = $('trade-quote');
   const amount = $('trade-amount')?.value.trim();
-  const tick = $('trade-tick')?.value || 'KRON';
+  const tick = ($('trade-ticker')?.value || 'KRON').toUpperCase();
   const side = $('trade-side')?.querySelector('.on')?.dataset.side || 'buy';
   if (!box || !amount) return;
   box.innerHTML = `<p class="muted" style="text-align:left;padding:0;">Quoting…</p>`;
@@ -1628,13 +1664,12 @@ async function quoteTradePreview() {
 
 async function reviewTrade() {
   const amount = $('trade-amount')?.value.trim();
-  const tick = $('trade-tick')?.value || 'KRON';
+  const tick = ($('trade-ticker')?.value || 'KRON').toUpperCase();
   const side = $('trade-side')?.querySelector('.on')?.dataset.side || 'buy';
   if (!amount) { toast('Enter an amount'); return; }
-  setSheetStatus('Quoting…');
   let q;
   try { q = await quoteKronTrade({ tick, side, amount }); }
-  catch (e) { setSheetStatus(errText(e), true); toast(errText(e)); return; }
+  catch (e) { toast(errText(e)); return; }
   const lines = q.side === 'buy'
     ? `<div class="kv"><span class="k">Pay</span><span class="v">${esc(formatKasSompi(q.kasIn))} KAS</span></div>
        <div class="kv"><span class="k">Receive</span><span class="v">${esc(formatTokenUnits(q.tokenOut, q.decimals))} ${esc(q.tick)}</span></div>`
@@ -1655,6 +1690,7 @@ async function reviewTrade() {
 async function runTrade({ tick, side, amount }) {
   toast('Building KRON swap…');
   try {
+    await requirePin('Confirm trade');
     await loadKaspaSdk();
     const utxosNow = await fetchAddressUtxos(wallet.address);
     const result = await executeKronTrade({
@@ -1665,6 +1701,7 @@ async function runTrade({ tick, side, amount }) {
       utxos: utxosNow,
       onStatus: (m) => { toast(m); setSheetStatus(m); }
     });
+    hideTradeScreen();
     afterTx();
     openSheet('Swap sent', `
       <div class="kv"><span class="k">Market</span><span class="v">${esc(tick)}</span></div>
@@ -1673,6 +1710,7 @@ async function runTrade({ tick, side, amount }) {
       ${txidBlock(result.txId)}
     `, { confirm: 'Done', cancel: false, onConfirm: () => { closeSheet(); refreshAll(); } });
   } catch (e) {
+    if (errText(e) === 'cancelled') return;
     toast(errText(e));
     setSheetStatus(errText(e), true);
   }
@@ -1694,6 +1732,7 @@ function openCompound() {
 async function runCompound() {
   toast('Connecting to Kaspa…');
   try {
+    await requirePin('Confirm compound');
     await loadKaspaSdk();
     await pingPublicNode();
     const available = await fetchAddressUtxos(wallet.address);
@@ -1973,6 +2012,7 @@ async function prepareSend(prefill) {
 async function broadcastSend(dest, amount) {
   toast('Connecting to Kaspa…');
   try {
+    await requirePin('Confirm send');
     await loadKaspaSdk();
     toast('Connecting to public Kaspa node…');
     await pingPublicNode();
@@ -1989,6 +2029,7 @@ async function broadcastSend(dest, amount) {
       ${txidBlock(result.txId)}
     `, { confirm: 'Done', cancel: false, onConfirm: () => { closeSheet(); refreshAll(); } });
   } catch (e) {
+    if (errText(e) === 'cancelled') return;
     toast(e.message || 'Broadcast failed');
   }
 }
@@ -1996,6 +2037,7 @@ async function broadcastSend(dest, amount) {
 async function broadcastTokenSend(dest, asset, human, raw) {
   toast('Connecting to Kaspa…');
   try {
+    await requirePin('Confirm send');
     await loadKaspaSdk();
     await pingPublicNode();
     const availableUtxos = await fetchAddressUtxos(wallet.address);
@@ -2018,6 +2060,7 @@ async function broadcastTokenSend(dest, asset, human, raw) {
       ${txidBlock(id, 'Reveal / TX')}
     `, { confirm: 'Done', cancel: false, onConfirm: () => { closeSheet(); refreshAll(); } });
   } catch (e) {
+    if (errText(e) === 'cancelled') return;
     toast(errText(e));
     setSheetStatus(errText(e), true);
   }
@@ -2063,11 +2106,16 @@ function openSettings() {
     <button class="btn btn-gold" id="settings-compound" style="margin-bottom:10px;">Compound UTXOs</button>
     <button class="btn btn-danger" id="wipe">Remove wallet from this device</button>
   `, { confirm: 'Close', cancel: false });
-  $('reveal-pk').onclick = () => {
+  $('reveal-pk').onclick = async () => {
+    try { await requirePin('Reveal key'); } catch { return; }
     const i = $('pk-view');
     i.type = i.type === 'password' ? 'text' : 'password';
   };
-  $('copy-pk').onclick = async () => { await navigator.clipboard.writeText(wallet.privKey); toast('Key copied'); };
+  $('copy-pk').onclick = async () => {
+    try { await requirePin('Copy key'); } catch { return; }
+    await navigator.clipboard.writeText(wallet.privKey);
+    toast('Key copied');
+  };
   $('settings-compound').onclick = () => { closeSheet(); openCompound(); };
   $('wipe').onclick = logout;
 }
@@ -2426,6 +2474,22 @@ function bind() {
   click('btn-receive', openReceive);
   click('btn-trade', () => openTrade({ tick: 'KRON', side: 'buy' }));
   click('btn-trade-tokens', () => openTrade({ tick: 'KRON', side: 'buy' }));
+  click('trade-close', hideTradeScreen);
+  click('trade-lookup', lookupTradeTicker);
+  click('trade-go', () => reviewTrade());
+  $('trade-ticker')?.addEventListener('keydown', e => { if (e.key === 'Enter') lookupTradeTicker(); });
+  $('trade-amount')?.addEventListener('input', () => {
+    clearTimeout(openTrade._t);
+    openTrade._t = setTimeout(quoteTradePreview, 280);
+  });
+  $('trade-side')?.addEventListener('click', e => {
+    const b = e.target.closest('[data-side]');
+    if (!b) return;
+    $('trade-side').querySelectorAll('button').forEach(x => x.classList.toggle('on', x === b));
+    syncTradeLabel();
+    quoteTradePreview();
+  });
+  $('pin-cancel')?.addEventListener('click', cancelPinGate);
   $('kron-markets')?.addEventListener('click', e => {
     const row = e.target.closest('[data-trade-tick]');
     if (row?.dataset.tradeTick) openTrade({ tick: row.dataset.tradeTick, side: 'buy' });
@@ -2605,15 +2669,15 @@ async function init() {
   video?.play?.().catch(() => {});
   video?.addEventListener('playing', () => document.querySelector('.bg-poster')?.classList.add('hidden'));
   const saved = loadStoredWallet();
-  const pinOn = !!loadPin();
-  if (saved?.address && saved?.privKey && pinOn) {
-    wallet = saved;
+  if (saved?.address && saved?.privKey) {
+    wallet = migratePinOnto(saved);
     hydrateFromSnap(saved.address);
-    beginPinFlow('unlock');
+    if (!loadPin()) beginPinFlow('set');
+    else beginPinFlow('unlock');
   }
   try { await loadCryptoLibs(); } catch { toast('Signing library delayed — check network'); }
   if (saved?.address && saved?.privKey) {
-    wallet = saved;
+    wallet = migratePinOnto(saved);
     if (!wallet.pubKey) {
       try {
         const pub = await derivePublicKey(hexToBytes(wallet.privKey));
@@ -2622,11 +2686,11 @@ async function init() {
         saveWallet();
       } catch {}
     }
-    if (pinOn && !sessionUnlocked) {
-      beginPinFlow('unlock');
+    if (!sessionOpen()) {
+      if (!loadPin()) beginPinFlow('set');
+      else beginPinFlow('unlock');
       return;
     }
-    sessionUnlocked = true;
     await unlockToHome();
   } else {
     showPage('lock');

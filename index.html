@@ -12,7 +12,7 @@
   <link rel="icon" href="assets/icon.png">
   <title>KCC20 Wallet</title>
   <meta http-equiv="Cache-Control" content="no-store, no-cache, must-revalidate">
-  <link rel="stylesheet" href="css/app.css?v=47">
+  <link rel="stylesheet" href="css/app.css?v=48">
 </head>
 <body>
   <img class="bg-poster" src="assets/bg.jpg" alt="">
@@ -62,7 +62,7 @@
         </section>
 
         <!-- HOME -->
-        <section class="page" id="page-home">
+        <section class="page home-fit" id="page-home">
           <div class="metal-card">
             <div class="card-top">
               <div class="card-chip"></div>
@@ -83,9 +83,9 @@
             <button class="action" id="btn-vault-short"><div class="orb"><svg viewBox="0 0 24 24" fill="none" stroke="var(--gold-2)" stroke-width="1.8"><rect x="5" y="11" width="14" height="10" rx="2"/><path d="M8 11V8a4 4 0 018 0v3"/></svg></div><span>Vault</span></button>
             <button class="action" id="btn-refresh"><div class="orb"><svg viewBox="0 0 24 24" fill="none" stroke="var(--gold-2)" stroke-width="1.8"><path d="M21 12a9 9 0 11-3-6.7"/><path d="M21 4v6h-6"/></svg></div><span>Refresh</span></button>
           </div>
-          <button class="glass utxo-bar" id="btn-trade" type="button">
-            <span>Buy KRON</span>
-            <span class="utxo-go">Trade</span>
+          <button class="glass utxo-bar trade-cta" id="btn-trade" type="button">
+            <span>TRADE KCC20</span>
+            <span class="utxo-go">Buy</span>
           </button>
           <button class="glass utxo-bar" id="btn-compound" type="button">
             <span id="utxo-count">0 UTXOs</span>
@@ -99,7 +99,7 @@
         <section class="page" id="page-tokens">
           <div class="section-label">KRON DEX</div>
           <button class="glass utxo-bar" id="btn-trade-tokens" type="button">
-            <span>Buy &amp; sell KCC20</span>
+            <span>TRADE KCC20</span>
             <span class="utxo-go">Trade</span>
           </button>
           <div class="glass list" id="kron-markets"></div>
@@ -202,7 +202,7 @@
           <div class="glass list">
             <button class="row" id="profile-pin" type="button">
               <div class="glyph" style="background:rgba(94,92,230,.16);color:var(--indigo)">●</div>
-              <div><div class="title">PIN lock</div><div class="sub" id="profile-pin-sub">Protect this device</div></div>
+              <div><div class="title">Wallet PIN</div><div class="sub" id="profile-pin-sub">Required for this wallet</div></div>
               <span class="chev">›</span>
             </button>
             <button class="row" id="profile-compound" type="button">
@@ -256,6 +256,32 @@
         </div>
       </div>
 
+      <div class="trade-screen hidden" id="trade-screen" aria-hidden="true">
+        <div class="trade-head">
+          <button type="button" class="trade-x" id="trade-close">Close</button>
+          <h2>Trade KCC20</h2>
+          <span class="trade-head-space"></span>
+        </div>
+        <div class="seg" id="trade-side">
+          <button class="on" data-side="buy" type="button">Buy</button>
+          <button data-side="sell" type="button">Sell</button>
+        </div>
+        <div class="field"><label>Ticker</label>
+          <div class="dest-row">
+            <input id="trade-ticker" placeholder="KRON, KKDAG…" maxlength="12" spellcheck="false" autocomplete="off">
+            <button class="scan-btn" id="trade-lookup" type="button">Go</button>
+          </div>
+        </div>
+        <div class="trade-meta glass hidden" id="trade-meta"></div>
+        <div class="field"><label id="trade-amt-label">Pay (KAS)</label>
+          <input id="trade-amount" type="text" inputmode="decimal" placeholder="5">
+        </div>
+        <div class="trade-quote" id="trade-quote">
+          <p class="muted" style="text-align:left;padding:0;">Type a KRON ticker, look it up, then buy with this wallet. You’ll confirm with this wallet’s PIN.</p>
+        </div>
+        <button class="btn btn-gold" id="trade-go" type="button" style="margin-top:auto;">Review buy</button>
+      </div>
+
       <div class="pin-lock hidden" id="pin-lock" aria-hidden="true">
         <div class="pin-inner">
           <img class="pin-app-icon" src="assets/icon.png" alt="">
@@ -263,19 +289,20 @@
           <p class="pin-sub" id="pin-sub">Unlock this wallet</p>
           <div class="pin-dots" id="pin-dots"></div>
           <p class="pin-err hidden" id="pin-err"></p>
+          <button type="button" class="pin-cancel hidden" id="pin-cancel">Cancel</button>
           <div class="pin-pad" id="pin-pad">
             <button type="button" data-pin="1">1</button>
-            <button type="button" data-pin="2">2</button>
-            <button type="button" data-pin="3">3</button>
-            <button type="button" data-pin="4">4</button>
-            <button type="button" data-pin="5">5</button>
-            <button type="button" data-pin="6">6</button>
-            <button type="button" data-pin="7">7</button>
-            <button type="button" data-pin="8">8</button>
-            <button type="button" data-pin="9">9</button>
+            <button type="button" data-pin="2">2<small>ABC</small></button>
+            <button type="button" data-pin="3">3<small>DEF</small></button>
+            <button type="button" data-pin="4">4<small>GHI</small></button>
+            <button type="button" data-pin="5">5<small>JKL</small></button>
+            <button type="button" data-pin="6">6<small>MNO</small></button>
+            <button type="button" data-pin="7">7<small>PQRS</small></button>
+            <button type="button" data-pin="8">8<small>TUV</small></button>
+            <button type="button" data-pin="9">9<small>WXYZ</small></button>
             <button type="button" class="pin-ghost" data-pin="back">⌫</button>
             <button type="button" data-pin="0">0</button>
-            <button type="button" class="pin-ghost" data-pin="ok">OK</button>
+            <button type="button" class="pin-ghost" id="pin-ok" data-pin="ok">OK</button>
           </div>
         </div>
       </div>
@@ -317,7 +344,7 @@
     })();
   </script>
   <script type="module">
-    import('./js/app.js?v=47').catch(function (err) {
+    import('./js/app.js?v=48').catch(function (err) {
       console.error(err);
       var phone = document.getElementById('phone');
       var d = document.createElement('div');

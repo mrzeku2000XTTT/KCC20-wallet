@@ -35,6 +35,8 @@ const STORE_KEY = 'kcc20_wallet_v1';
 const LEGACY_KEY = 'scorpion_wallet';
 const WALLETS_KEY = 'kcc20_wallets_v2';
 const ACTIVE_KEY = 'kcc20_active_id';
+const PIN_KEY = 'kcc20_pin_v1';
+const SNAPS_KEY = 'kcc20_snaps_v1';
 
 const $ = (id) => document.getElementById(id);
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
@@ -89,6 +91,18 @@ let tokenPending = false;
 let seenTokens = false;
 let tokenStream = null;
 let tokenFastOff = 0;
+let walletSnap = {};
+let lastAllSnap = 0;
+let lastAllTokenSnap = 0;
+let snapBusy = false;
+let sessionUnlocked = false;
+let pinBuffer = '';
+let pinMode = 'unlock';
+let pinPending = '';
+let pinFails = 0;
+let pinLockUntil = 0;
+let qrStream = null;
+let qrRaf = 0;
 
 function haptic() { try { navigator.vibrate?.(12); } catch {} }
 
@@ -159,16 +173,25 @@ function showPage(id) {
   const titles = { home: 'KCC20', tokens: 'Tokens', vault: 'Vault', activity: 'Activity', you: 'Profile' };
   $('nav-title').textContent = titles[id] || 'KCC20';
   $('nav-left').innerHTML = '';
-  $('nav-right').innerHTML = id === 'home'
-    ? `<button class="icon-btn" id="btn-settings" aria-label="Settings">•••</button>`
-    : '';
-  if (id === 'home') $('btn-settings')?.addEventListener('click', () => showPage('you'));
-  $('tabbar').classList.toggle('show', !!wallet);
+  if (id === 'home') {
+    $('nav-right').innerHTML = `
+      ${loadPin() ? `<button class="icon-btn" id="btn-lock-now" aria-label="Lock" title="Lock">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="5" y="11" width="14" height="10" rx="2"/><path d="M8 11V8a4 4 0 018 0v3"/></svg>
+      </button>` : ''}
+      <button class="icon-btn" id="btn-settings" aria-label="Settings">•••</button>
+    `;
+    $('btn-lock-now')?.addEventListener('click', lockNow);
+    $('btn-settings')?.addEventListener('click', () => showPage('you'));
+  } else {
+    $('nav-right').innerHTML = '';
+  }
+  $('tabbar').classList.toggle('show', !!wallet && sessionOpen());
   if (id === 'vault') {
     try { renderVault(); } catch (e) { console.error(e); }
   }
   if (id === 'you') {
     try { renderProfile(); } catch (e) { console.error(e); }
+    refreshAllWalletSnaps({ tokens: true }).catch(() => {});
   }
   if (id === 'activity') {
     try { renderActivity(window.__txs || []); } catch (e) { console.error(e); }
@@ -241,6 +264,412 @@ function saveWallet() {
   saveWalletList(list);
 }
 
+function slimTokens(list) {
+  return (list || []).slice(0, 40).map(t => ({
+    ticker: t.ticker,
+    name: t.name || t.ticker,
+    balance: String(t.balance || '0'),
+    decimals: Number(t.decimals || 0),
+    protocol: t.protocol,
+    image: t.image || '',
+    color: t.color || ''
+  }));
+}
+
+function loadSnaps() {
+  try {
+    const raw = JSON.parse(localStorage.getItem(SNAPS_KEY) || '{}');
+    if (raw && typeof raw === 'object' && !Array.isArray(raw)) walletSnap = raw;
+  } catch { walletSnap = {}; }
+}
+
+function persistSnaps() {
+  try { localStorage.setItem(SNAPS_KEY, JSON.stringify(walletSnap)); } catch {}
+}
+
+function rememberActiveSnap() {
+  if (!wallet?.address) return;
+  walletSnap[wallet.address] = {
+    sompi: balanceSompi,
+    kcc: slimTokens(kccHoldings),
+    krc: slimTokens(krcHoldings),
+    at: Date.now()
+  };
+  persistSnaps();
+}
+
+function hydrateFromSnap(addr) {
+  const snap = walletSnap[addr];
+  if (!snap) return;
+  if (snap.sompi != null) {
+    balanceSompi = Number(snap.sompi) || 0;
+    seenBalance = balanceSompi;
+  }
+  if (Array.isArray(snap.kcc)) kccHoldings = snap.kcc;
+  if (Array.isArray(snap.krc)) krcHoldings = snap.krc;
+}
+
+async function refreshAllWalletSnaps({ tokens = false } = {}) {
+  const list = loadWalletList();
+  if (!list.length || snapBusy) return;
+  snapBusy = true;
+  lastAllSnap = Date.now();
+  if (tokens) lastAllTokenSnap = Date.now();
+  try {
+    await Promise.all(list.map(async w => {
+      const isActive = wallet && (w.id === wallet.id || w.address === wallet.address);
+      if (isActive) {
+        rememberActiveSnap();
+        return;
+      }
+      try {
+        const sompi = await fetchAddressBalance(w.address);
+        const prev = walletSnap[w.address] || {};
+        walletSnap[w.address] = { ...prev, sompi, at: Date.now() };
+        if (tokens) {
+          const [kcc, krc] = await Promise.allSettled([
+            fetchKcc20Portfolio(w.address, w.pubKey),
+            fetchKrc20Portfolio(w.address)
+          ]);
+          if (kcc.status === 'fulfilled') walletSnap[w.address].kcc = slimTokens(kcc.value);
+          if (krc.status === 'fulfilled') walletSnap[w.address].krc = slimTokens(krc.value);
+        }
+      } catch (e) {
+        console.warn(e);
+      }
+    }));
+    persistSnaps();
+    if (currentTab === 'you') renderProfile();
+  } finally {
+    snapBusy = false;
+  }
+}
+
+function loadPin() {
+  try {
+    const raw = JSON.parse(localStorage.getItem(PIN_KEY) || 'null');
+    if (raw?.salt && raw?.hash) return raw;
+  } catch {}
+  return null;
+}
+
+function sessionOpen() {
+  return !loadPin() || sessionUnlocked;
+}
+
+function hidePinLock() {
+  $('pin-lock')?.classList.add('hidden');
+  $('pin-lock')?.setAttribute('aria-hidden', 'true');
+  $('pin-lock')?.classList.remove('shake');
+  pinBuffer = '';
+  pinPending = '';
+  paintPinDots();
+}
+
+function beginPinFlow(mode) {
+  pinMode = mode || 'unlock';
+  pinBuffer = '';
+  if (mode !== 'confirm' && mode !== 'change-confirm') pinPending = '';
+  const titles = {
+    unlock: ['Enter PIN', 'Unlock this wallet'],
+    set: ['Create PIN', '4–8 digits. You will confirm next.'],
+    confirm: ['Confirm PIN', 'Enter the same PIN again'],
+    'change-old': ['Current PIN', 'Enter your current PIN'],
+    'change-new': ['New PIN', 'Choose 4–8 digits'],
+    'change-confirm': ['Confirm new PIN', 'Enter the same PIN again'],
+    remove: ['Remove PIN', 'Enter your PIN to turn lock off']
+  };
+  const t = titles[pinMode] || titles.unlock;
+  if ($('pin-title')) $('pin-title').textContent = t[0];
+  if ($('pin-sub')) $('pin-sub').textContent = t[1];
+  $('pin-err')?.classList.add('hidden');
+  $('pin-lock')?.classList.remove('hidden', 'shake');
+  $('pin-lock')?.setAttribute('aria-hidden', 'false');
+  paintPinDots();
+}
+
+function paintPinDots() {
+  const rec = loadPin();
+  const known = (pinMode === 'unlock' || pinMode === 'change-old' || pinMode === 'remove') ? (rec?.len || 6) : 0;
+  const n = known || Math.min(8, Math.max(4, pinBuffer.length || 4));
+  const box = $('pin-dots');
+  if (!box) return;
+  box.innerHTML = Array.from({ length: n }, (_, i) =>
+    `<i class="${i < pinBuffer.length ? 'on' : ''}"></i>`
+  ).join('');
+}
+
+function pinError(msg) {
+  haptic();
+  const err = $('pin-err');
+  if (err) {
+    err.textContent = msg;
+    err.classList.remove('hidden');
+  }
+  const lock = $('pin-lock');
+  lock?.classList.remove('shake');
+  void lock?.offsetWidth;
+  lock?.classList.add('shake');
+  pinBuffer = '';
+  paintPinDots();
+}
+
+async function sha256Hex(text) {
+  const buf = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(text));
+  return [...new Uint8Array(buf)].map(b => b.toString(16).padStart(2, '0')).join('');
+}
+
+async function hashPin(pin, salt) {
+  return sha256Hex(`${salt}:${pin}`);
+}
+
+async function savePin(pin) {
+  const salt = [...crypto.getRandomValues(new Uint8Array(16))].map(b => b.toString(16).padStart(2, '0')).join('');
+  const hash = await hashPin(pin, salt);
+  localStorage.setItem(PIN_KEY, JSON.stringify({ salt, hash, len: pin.length }));
+}
+
+async function pinMatches(pin) {
+  const rec = loadPin();
+  if (!rec) return false;
+  return (await hashPin(pin, rec.salt)) === rec.hash;
+}
+
+async function pinPress(key) {
+  if ($('pin-lock')?.classList.contains('hidden')) return;
+  if (Date.now() < pinLockUntil) {
+    pinError(`Try again in ${Math.ceil((pinLockUntil - Date.now()) / 1000)}s`);
+    return;
+  }
+  if (key === 'back') {
+    pinBuffer = pinBuffer.slice(0, -1);
+    paintPinDots();
+    return;
+  }
+  if (key === 'ok') {
+    await submitPin();
+    return;
+  }
+  if (!/^\d$/.test(key) || pinBuffer.length >= 8) return;
+  pinBuffer += key;
+  paintPinDots();
+  const rec = loadPin();
+  if ((pinMode === 'unlock' || pinMode === 'change-old' || pinMode === 'remove') && rec?.len && pinBuffer.length >= rec.len) {
+    await submitPin();
+  }
+}
+
+async function submitPin() {
+  const pin = pinBuffer;
+  if (pinMode === 'set' || pinMode === 'change-new') {
+    if (!/^\d{4,8}$/.test(pin)) { pinError('Use 4 to 8 digits'); return; }
+    pinPending = pin;
+    beginPinFlow(pinMode === 'set' ? 'confirm' : 'change-confirm');
+    return;
+  }
+  if (pinMode === 'confirm' || pinMode === 'change-confirm') {
+    if (pin !== pinPending) {
+      pinError('PINs did not match');
+      beginPinFlow(pinMode === 'confirm' ? 'set' : 'change-new');
+      return;
+    }
+    await savePin(pin);
+    sessionUnlocked = true;
+    hidePinLock();
+    toast('PIN saved');
+    if (currentTab === 'you') renderProfile();
+    if (currentTab === 'home') showPage('home');
+    return;
+  }
+  if (!/^\d{4,8}$/.test(pin)) { pinError('Enter your PIN'); return; }
+  const ok = await pinMatches(pin);
+  if (!ok) {
+    pinFails += 1;
+    if (pinFails >= 5) {
+      pinLockUntil = Date.now() + 20000;
+      pinFails = 0;
+      pinError('Too many tries — wait 20 seconds');
+      return;
+    }
+    pinError('Wrong PIN');
+    return;
+  }
+  pinFails = 0;
+  if (pinMode === 'remove') {
+    localStorage.removeItem(PIN_KEY);
+    sessionUnlocked = true;
+    hidePinLock();
+    toast('PIN removed');
+    if (currentTab === 'you') renderProfile();
+    if (currentTab === 'home') showPage('home');
+    return;
+  }
+  if (pinMode === 'change-old') {
+    beginPinFlow('change-new');
+    return;
+  }
+  await finishPinUnlock();
+}
+
+async function finishPinUnlock() {
+  sessionUnlocked = true;
+  hidePinLock();
+  if (wallet?.address) await unlockToHome();
+}
+
+function lockNow() {
+  if (!loadPin()) {
+    beginPinFlow('set');
+    return;
+  }
+  sessionUnlocked = false;
+  closeSheet();
+  stopQrScan();
+  $('tabbar')?.classList.remove('show');
+  beginPinFlow('unlock');
+}
+
+function onPinKeydown(e) {
+  if ($('pin-lock')?.classList.contains('hidden')) return;
+  if (e.key >= '0' && e.key <= '9') { e.preventDefault(); pinPress(e.key); }
+  else if (e.key === 'Backspace') { e.preventDefault(); pinPress('back'); }
+  else if (e.key === 'Enter') { e.preventDefault(); pinPress('ok'); }
+}
+
+function openPinSettings() {
+  haptic();
+  const rec = loadPin();
+  if (!rec) {
+    beginPinFlow('set');
+    return;
+  }
+  openSheet('PIN lock', `
+    <p class="muted" style="text-align:left;padding:0 0 10px;">PIN locks this device between sessions. It is not a recovery phrase — keep your private key backed up.</p>
+    <div class="btn-row" style="margin-bottom:10px;">
+      <button class="btn btn-gold" id="pin-change" type="button">Change PIN</button>
+      <button class="btn btn-glass" id="pin-lock-now" type="button">Lock now</button>
+    </div>
+    <button class="btn btn-danger" id="pin-remove" type="button">Remove PIN</button>
+  `, { confirm: 'Close', cancel: false });
+  $('pin-change').onclick = () => { closeSheet(); beginPinFlow('change-old'); };
+  $('pin-lock-now').onclick = () => { closeSheet(); lockNow(); };
+  $('pin-remove').onclick = () => { closeSheet(); beginPinFlow('remove'); };
+}
+
+function parseKaspaQr(raw) {
+  const text = String(raw || '').trim();
+  if (!text) return null;
+  const packed = text.replace(/\s+/g, '');
+  const m = packed.match(/(kaspa:[qp][a-z0-9]+)(?:\?([^]*))?/i);
+  if (m) {
+    const addr = m[1].toLowerCase();
+    let amount = '';
+    try {
+      const qs = new URLSearchParams(m[2] || '');
+      amount = qs.get('amount') || qs.get('value') || '';
+    } catch {}
+    if (isValidKaspaAddress(addr)) return { address: addr, amount };
+  }
+  const bare = packed.toLowerCase();
+  if (isValidKaspaAddress(bare)) return { address: bare, amount: '' };
+  return null;
+}
+
+function stopQrScan() {
+  if (qrRaf) {
+    cancelAnimationFrame(qrRaf);
+    qrRaf = 0;
+  }
+  if (qrStream) {
+    try { qrStream.getTracks().forEach(t => t.stop()); } catch {}
+    qrStream = null;
+  }
+  const vid = $('qr-video');
+  if (vid) vid.srcObject = null;
+  $('qr-scan-box')?.classList.add('hidden');
+}
+
+async function startQrScan() {
+  const box = $('qr-scan-box');
+  const video = $('qr-video');
+  if (!box || !video) return;
+  if (!navigator.mediaDevices?.getUserMedia) {
+    toast('Camera is not available on this device');
+    return;
+  }
+  stopQrScan();
+  box.classList.remove('hidden');
+  if ($('qr-scan-status')) $('qr-scan-status').textContent = 'Point at a Kaspa address QR';
+  const stream = await navigator.mediaDevices.getUserMedia({
+    video: { facingMode: { ideal: 'environment' } },
+    audio: false
+  });
+  qrStream = stream;
+  video.setAttribute('playsinline', 'true');
+  video.muted = true;
+  video.srcObject = stream;
+  await video.play().catch(() => {});
+  let detector = null;
+  if (typeof window.BarcodeDetector === 'function') {
+    try { detector = new window.BarcodeDetector({ formats: ['qr_code'] }); } catch {}
+  }
+  let jsQR = null;
+  if (!detector) {
+    try {
+      const mod = await import('https://esm.sh/jsqr@1.4.0');
+      jsQR = mod.default || mod.jsQR || mod;
+    } catch {
+      toast('QR library failed to load — try Chrome or a phone');
+      return;
+    }
+  }
+  const canvas = document.createElement('canvas');
+  const ctx = canvas.getContext('2d', { willReadFrequently: true });
+  let last = 0;
+  const tick = async () => {
+    if (!qrStream) return;
+    qrRaf = requestAnimationFrame(tick);
+    if (Date.now() - last < 180) return;
+    last = Date.now();
+    try {
+      let value = '';
+      if (detector) {
+        const codes = await detector.detect(video);
+        value = codes?.[0]?.rawValue || '';
+      } else if (typeof jsQR === 'function' && video.readyState >= 2) {
+        const w = video.videoWidth || 640;
+        const h = video.videoHeight || 480;
+        if (!w || !h) return;
+        canvas.width = w;
+        canvas.height = h;
+        ctx.drawImage(video, 0, 0, w, h);
+        const img = ctx.getImageData(0, 0, w, h);
+        const code = jsQR(img.data, img.width, img.height);
+        value = code?.data || '';
+      }
+      if (!value) return;
+      const parsed = parseKaspaQr(value);
+      if (!parsed) {
+        if ($('qr-scan-status')) $('qr-scan-status').textContent = 'Not a Kaspa address — try again';
+        return;
+      }
+      if ($('send-dest')) $('send-dest').value = parsed.address;
+      if (parsed.amount && $('send-amount') && !$('send-amount').value) $('send-amount').value = parsed.amount;
+      toast('Address scanned');
+      haptic();
+      stopQrScan();
+    } catch {}
+  };
+  qrRaf = requestAnimationFrame(tick);
+}
+
+function bindSendQr() {
+  $('send-scan-qr')?.addEventListener('click', () => {
+    startQrScan().catch(e => toast(errText(e)));
+  });
+  $('qr-scan-stop')?.addEventListener('click', stopQrScan);
+}
+
 function resetLiveState() {
   utxos = [];
   balanceSompi = 0;
@@ -258,7 +687,9 @@ async function activateWallet(w, { toastMsg } = {}) {
   saveWallet();
   setVaultOwner(w.address);
   resetLiveState();
+  hydrateFromSnap(w.address);
   await unlockToHome();
+  refreshAllWalletSnaps({ tokens: true }).catch(() => {});
   if (toastMsg) toast(toastMsg);
 }
 
@@ -581,19 +1012,37 @@ function renderProfile() {
     ex.href = explorerAddr(addr);
     ex.textContent = 'Open on kaspa.stream';
   }
+  if ($('profile-pin-sub')) {
+    $('profile-pin-sub').textContent = loadPin() ? 'On — tap to change or lock' : 'Off — protect this device';
+  }
   const box = $('wallet-list');
   if (box) {
     const list = loadWalletList();
-    box.innerHTML = list.map(w => `
-      <button class="row" type="button" data-switch-wallet="${esc(w.id)}">
-        <div class="glyph" style="background:${w.id === wallet.id ? 'rgba(48,209,88,.16)' : 'rgba(255,255,255,.08)'};color:${w.id === wallet.id ? 'var(--green)' : 'var(--label-2)'}">${w.id === wallet.id ? '●' : '○'}</div>
+    box.innerHTML = list.map(w => {
+      const active = w.id === wallet.id;
+      const snap = walletSnap[w.address] || {};
+      const sompi = active ? balanceSompi : snap.sompi;
+      const kcc = active ? kccHoldings : (snap.kcc || []);
+      const krc = active ? krcHoldings : (snap.krc || []);
+      const tokens = [...kcc, ...krc];
+      const bits = tokens.slice(0, 2).map(t => `${formatTokenUnits(t.balance, t.decimals)} ${t.ticker}`);
+      const more = tokens.length > 2 ? ` +${tokens.length - 2}` : '';
+      const kasTxt = sompi == null ? '…' : `${formatAmount(sompi)} KAS`;
+      const tokTxt = bits.length ? bits.join(' · ') + more : 'Native KAS';
+      return `
+      <button class="row wallet-row" type="button" data-switch-wallet="${esc(w.id)}">
+        <div class="glyph" style="background:${active ? 'rgba(48,209,88,.16)' : 'rgba(255,255,255,.08)'};color:${active ? 'var(--green)' : 'var(--label-2)'}">${active ? '●' : '○'}</div>
         <div style="min-width:0;flex:1">
           <div class="title">${esc(w.name || 'Wallet')}</div>
           <div class="sub">${esc(shortAddr(w.address, 12, 8))}</div>
         </div>
-        <span class="chev">${w.id === wallet.id ? 'Now' : 'Use'}</span>
-      </button>
-    `).join('') || `<div class="empty">No wallets</div>`;
+        <div class="amt">
+          <b>${esc(kasTxt)}</b>
+          <em>${esc(tokTxt)}</em>
+        </div>
+        <span class="chev">${active ? 'Now' : 'Use'}</span>
+      </button>`;
+    }).join('') || `<div class="empty">No wallets</div>`;
   }
   const log = $('scorpion-log');
   if (log && !log.childElementCount) {
@@ -759,11 +1208,13 @@ function kickTokenRefresh() {
 
 async function tickLive(full) {
   if (!wallet) return;
+  const addr = wallet.address;
   try {
     const [bRes, uRes] = await Promise.all([
-      fetch(`${API_BASE}/addresses/${wallet.address}/balance`),
-      fetch(`${API_BASE}/addresses/${wallet.address}/utxos`)
+      fetch(`${API_BASE}/addresses/${addr}/balance`),
+      fetch(`${API_BASE}/addresses/${addr}/utxos`)
     ]);
+    if (!wallet || wallet.address !== addr) return;
     let nextBal = balanceSompi;
     if (bRes.ok) {
       const data = await bRes.json();
@@ -784,9 +1235,11 @@ async function tickLive(full) {
     }
     seenBalance = nextBal;
     balanceSompi = nextBal;
+    rememberActiveSnap();
     if (full || balChanged) {
       if (currentTab === 'home' || currentTab === 'tokens') renderHome();
       if (currentTab === 'tokens') renderTokens();
+      if (currentTab === 'you') renderProfile();
     }
     const recvBal = $('recv-balance');
     if (recvBal) recvBal.textContent = `${formatAmount(balanceSompi)} KAS`;
@@ -794,8 +1247,9 @@ async function tickLive(full) {
       try {
         const [pRes, tRes] = await Promise.all([
           fetch(`${API_BASE}/info/price?stringOnly=false`),
-          fetch(`${API_BASE}/addresses/${wallet.address}/full-transactions?limit=20&resolve_previous_outpoints=light`)
+          fetch(`${API_BASE}/addresses/${addr}/full-transactions?limit=20&resolve_previous_outpoints=light`)
         ]);
+        if (!wallet || wallet.address !== addr) return;
         if (pRes.ok) {
           const data = await pRes.json();
           price = Number(data.price ?? data ?? 0);
@@ -816,6 +1270,9 @@ async function tickLive(full) {
       lastAutoSweep = now;
       maybeAutoUnlock();
     }
+    if (full || now - lastAllSnap > 10000) {
+      refreshAllWalletSnaps({ tokens: now - lastAllTokenSnap > 22000 }).catch(() => {});
+    }
   } catch (e) {
     console.warn(e);
   }
@@ -823,16 +1280,19 @@ async function tickLive(full) {
 
 async function refreshAll() {
   await tickLive(true);
+  refreshAllWalletSnaps({ tokens: true }).catch(() => {});
 }
 
 async function refreshTokenHoldings() {
   if (!wallet?.address) return;
+  const addr = wallet.address;
   const before = [...kccHoldings, ...krcHoldings];
   try {
     const [kcc, krc] = await Promise.allSettled([
-      fetchKcc20Portfolio(wallet.address, wallet.pubKey),
-      fetchKrc20Portfolio(wallet.address)
+      fetchKcc20Portfolio(addr, wallet.pubKey),
+      fetchKrc20Portfolio(addr)
     ]);
+    if (!wallet || wallet.address !== addr) return;
     if (kcc.status === 'fulfilled') kccHoldings = kcc.value;
     if (krc.status === 'fulfilled') krcHoldings = krc.value;
     tokenLoadErr = kcc.status === 'rejected' ? 'KCC20 indexer unreachable — retrying…' : '';
@@ -856,8 +1316,10 @@ async function refreshTokenHoldings() {
     }
   }
   seenTokens = true;
+  rememberActiveSnap();
   if (currentTab === 'home') renderHome();
   if (currentTab === 'tokens') renderTokens();
+  if (currentTab === 'you') renderProfile();
 }
 
 function findToken(key) {
@@ -1017,6 +1479,7 @@ function openSheet(title, body, opts = {}) {
 }
 
 function closeSheet() {
+  stopQrScan();
   $('sheet-overlay').classList.remove('open');
   sheetConfirm = null;
   if (receiveWatch) { receiveWatch = false; setLiveFast(false); }
@@ -1041,7 +1504,7 @@ function assetAvail(a) {
 
 function sendHintFor(a) {
   if (!a || a.native || a.protocol === 'kas') {
-    return `Available ${assetAvail(a)} KAS. Send to any kaspa:q or kaspa:p address. Fee ~0.004–0.007 KAS.`;
+    return `Available ${assetAvail(a)} KAS. Paste a kaspa: address or scan QR. Fee ~0.004–0.007 KAS.`;
   }
   const proto = a.protocol === 'krc20' ? 'KRC-20' : 'KCC20';
   if (a.protocol === 'krc20') {
@@ -1118,11 +1581,24 @@ function openSend(prefill) {
       </button>
       <div class="asset-pick-list hidden" id="send-asset-list">${rows}</div>
     </div>
-    <div class="field"><label>To</label><input id="send-dest" placeholder="kaspa:q… or kaspa:p…" value="${esc(dest0)}" spellcheck="false" autocomplete="off"></div>
+    <div class="field"><label>To</label>
+      <div class="dest-row">
+        <input id="send-dest" placeholder="kaspa:q… or kaspa:p…" value="${esc(dest0)}" spellcheck="false" autocomplete="off">
+        <button class="scan-btn" id="send-scan-qr" type="button" aria-label="Scan QR">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><path d="M14 14h3v3h-3zM20 14v7h-7"/></svg>
+        </button>
+      </div>
+    </div>
+    <div class="qr-scan hidden" id="qr-scan-box">
+      <video id="qr-video" playsinline muted autoplay></video>
+      <p class="muted" id="qr-scan-status">Point at a Kaspa QR — works for KAS, KRC-20, and KCC20</p>
+      <button type="button" class="btn btn-glass" id="qr-scan-stop">Close camera</button>
+    </div>
     <div class="field"><label>Amount</label><input id="send-amount" type="text" inputmode="decimal" placeholder="0.00" value="${esc(amt0)}"></div>
     <p class="muted send-hint" id="send-hint">${esc(sendHintFor(chosen))}</p>
   `, { confirm: 'Review', gold: true, onConfirm: () => prepareSend() });
   bindSendAssetPicker();
+  bindSendQr();
 }
 
 function readSendForm() {
@@ -1691,8 +2167,14 @@ function bind() {
   });
   click('profile-qr', () => openReceive());
   click('profile-compound', openCompound);
+  click('profile-pin', openPinSettings);
   click('profile-keys', openSettings);
   click('profile-wipe', logout);
+  $('pin-pad')?.addEventListener('click', e => {
+    const b = e.target.closest('[data-pin]');
+    if (b?.dataset.pin) pinPress(b.dataset.pin);
+  });
+  document.addEventListener('keydown', onPinKeydown);
   click('profile-new-wallet', () => createWallet());
   click('profile-import-wallet', openImportAnother);
   $('wallet-list')?.addEventListener('click', e => {
@@ -1784,6 +2266,7 @@ async function init() {
   window.__kccLoad = loadKaspaSdk;
   setClock();
   setInterval(setClock, 1000);
+  loadSnaps();
   try { bind(); } catch (e) {
     console.error(e);
     window.__kccBound = false;
@@ -1792,8 +2275,14 @@ async function init() {
   const video = document.getElementById('bg-video');
   video?.play?.().catch(() => {});
   video?.addEventListener('playing', () => document.querySelector('.bg-poster')?.classList.add('hidden'));
-  try { await loadCryptoLibs(); } catch { toast('Signing library delayed — check network'); }
   const saved = loadStoredWallet();
+  const pinOn = !!loadPin();
+  if (saved?.address && saved?.privKey && pinOn) {
+    wallet = saved;
+    hydrateFromSnap(saved.address);
+    beginPinFlow('unlock');
+  }
+  try { await loadCryptoLibs(); } catch { toast('Signing library delayed — check network'); }
   if (saved?.address && saved?.privKey) {
     wallet = saved;
     if (!wallet.pubKey) {
@@ -1804,6 +2293,11 @@ async function init() {
         saveWallet();
       } catch {}
     }
+    if (pinOn && !sessionUnlocked) {
+      beginPinFlow('unlock');
+      return;
+    }
+    sessionUnlocked = true;
     await unlockToHome();
   } else {
     showPage('lock');

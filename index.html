@@ -12,7 +12,7 @@
   <link rel="icon" href="assets/icon.png">
   <title>KCC20 Wallet</title>
   <meta http-equiv="Cache-Control" content="no-store, no-cache, must-revalidate">
-  <link rel="stylesheet" href="css/app.css?v=42">
+  <link rel="stylesheet" href="css/app.css?v=43">
 </head>
 <body>
   <img class="bg-poster" src="assets/bg.jpg" alt="">
@@ -189,6 +189,11 @@
 
           <div class="section-label">Settings</div>
           <div class="glass list">
+            <button class="row" id="profile-pin" type="button">
+              <div class="glyph" style="background:rgba(94,92,230,.16);color:var(--indigo)">●</div>
+              <div><div class="title">PIN lock</div><div class="sub" id="profile-pin-sub">Protect this device</div></div>
+              <span class="chev">›</span>
+            </button>
             <button class="row" id="profile-compound" type="button">
               <div class="glyph" style="background:rgba(212,176,122,.16);color:var(--gold)">⧉</div>
               <div><div class="title">Compound UTXOs</div><div class="sub">Merge coins into one output</div></div>
@@ -239,6 +244,30 @@
           <div class="btn-row" id="sheet-actions" style="margin-top:16px;"></div>
         </div>
       </div>
+
+      <div class="pin-lock hidden" id="pin-lock" aria-hidden="true">
+        <div class="pin-inner">
+          <img class="pin-app-icon" src="assets/icon.png" alt="">
+          <h2 id="pin-title">Enter PIN</h2>
+          <p class="pin-sub" id="pin-sub">Unlock this wallet</p>
+          <div class="pin-dots" id="pin-dots"></div>
+          <p class="pin-err hidden" id="pin-err"></p>
+          <div class="pin-pad" id="pin-pad">
+            <button type="button" data-pin="1">1</button>
+            <button type="button" data-pin="2">2</button>
+            <button type="button" data-pin="3">3</button>
+            <button type="button" data-pin="4">4</button>
+            <button type="button" data-pin="5">5</button>
+            <button type="button" data-pin="6">6</button>
+            <button type="button" data-pin="7">7</button>
+            <button type="button" data-pin="8">8</button>
+            <button type="button" data-pin="9">9</button>
+            <button type="button" class="pin-ghost" data-pin="back">⌫</button>
+            <button type="button" data-pin="0">0</button>
+            <button type="button" class="pin-ghost" data-pin="ok">OK</button>
+          </div>
+        </div>
+      </div>
     </div>
   </div>
 
@@ -277,7 +306,7 @@
     })();
   </script>
   <script type="module">
-    import('./js/app.js?v=42').catch(function (err) {
+    import('./js/app.js?v=43').catch(function (err) {
       console.error(err);
       var phone = document.getElementById('phone');
       var d = document.createElement('div');

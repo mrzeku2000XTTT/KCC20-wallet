@@ -390,7 +390,7 @@ img { display: block; max-width: 100%; }
 #sheet-status { flex: 1 0 100%; margin: 0 !important; }
 .toast {
   position: absolute; top: 72px; left: 50%; transform: translateX(-50%);
-  z-index: 80; padding: 12px 16px; border-radius: 14px;
+  z-index: 100; padding: 12px 16px; border-radius: 14px;
   background: var(--glass-2); border: 0.5px solid var(--hairline);
   font-size: 13px; white-space: normal; word-break: break-word;
   max-width: 88%; max-height: 40%; overflow: auto;
@@ -576,6 +576,83 @@ button.tx { width: 100%; text-align: left; color: inherit; }
 .asset-opt-proto { font-size: 12px; color: var(--label-2); flex: 1; }
 .asset-opt-bal { font-size: 15px; font-weight: 600; font-variant-numeric: tabular-nums; }
 .send-hint { text-align: left; padding: 0 0 8px; }
+#nav-right { display: flex; gap: 6px; justify-content: flex-end; min-width: 44px; }
+
+.dest-row { display: flex; gap: 8px; align-items: stretch; }
+.dest-row input { flex: 1; min-width: 0; width: auto; }
+.scan-btn {
+  width: 52px; flex-shrink: 0;
+  border-radius: 14px;
+  background: rgba(212,176,122,0.16);
+  border: 0.5px solid var(--hairline);
+  color: var(--gold-2);
+  display: grid; place-items: center;
+}
+.scan-btn svg { width: 22px; height: 22px; }
+.scan-btn:active { opacity: 0.8; }
+.qr-scan {
+  margin: 0 0 14px;
+  border-radius: 16px;
+  overflow: hidden;
+  background: #000;
+  border: 0.5px solid var(--hairline);
+}
+.qr-scan video {
+  width: 100%; height: 220px; object-fit: cover; display: block; background: #111;
+}
+.qr-scan .muted { padding: 8px 10px 4px; font-size: 12px; }
+.qr-scan .btn { margin: 0 10px 10px; width: calc(100% - 20px); height: 40px; }
+
+.wallet-row .amt { margin-left: auto; text-align: right; flex-shrink: 0; }
+.wallet-row .amt b { display: block; font-size: 15px; font-weight: 650; font-variant-numeric: tabular-nums; }
+.wallet-row .amt em { font-style: normal; font-size: 11px; color: var(--label-2); max-width: 140px; display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.wallet-row .chev { margin-left: 8px; font-size: 12px; font-weight: 650; color: var(--gold-2); }
+
+.pin-lock {
+  position: absolute; inset: 0; z-index: 90;
+  background: rgba(8, 8, 10, 0.94);
+  backdrop-filter: blur(28px);
+  -webkit-backdrop-filter: blur(28px);
+  display: flex; align-items: center; justify-content: center;
+  padding: 24px 20px calc(24px + var(--safe-b));
+}
+.pin-inner { width: 100%; max-width: 320px; text-align: center; }
+.pin-app-icon {
+  width: 64px; height: 64px; margin: 0 auto 16px; border-radius: 16px;
+  box-shadow: 0 12px 28px rgba(0,0,0,0.4);
+}
+.pin-inner h2 { font-size: 24px; font-weight: 700; letter-spacing: -0.5px; }
+.pin-sub { color: var(--label-2); font-size: 14px; margin: 6px 0 18px; }
+.pin-dots {
+  display: flex; justify-content: center; gap: 10px; margin-bottom: 16px; min-height: 14px;
+}
+.pin-dots i {
+  width: 12px; height: 12px; border-radius: 50%;
+  border: 1.5px solid var(--gold);
+  background: transparent;
+}
+.pin-dots i.on { background: var(--gold); }
+.pin-err { color: var(--red); font-size: 13px; margin: 0 0 12px; min-height: 18px; }
+.pin-pad {
+  display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px;
+  max-width: 280px; margin: 0 auto;
+}
+.pin-pad button {
+  height: 58px; border-radius: 16px;
+  background: rgba(255,255,255,0.08);
+  border: 0.5px solid var(--hairline);
+  font-size: 22px; font-weight: 600;
+}
+.pin-pad button:active { background: rgba(255,255,255,0.16); }
+.pin-pad .pin-ghost { background: transparent; font-size: 16px; color: var(--gold-2); }
+.pin-lock.shake .pin-dots { animation: pinshake 0.4s ease; }
+@keyframes pinshake {
+  0%, 100% { transform: translateX(0); }
+  20% { transform: translateX(-8px); }
+  40% { transform: translateX(8px); }
+  60% { transform: translateX(-6px); }
+  80% { transform: translateX(6px); }
+}
 
 @media (prefers-reduced-motion: reduce) {
   .bg-video { display: none; }

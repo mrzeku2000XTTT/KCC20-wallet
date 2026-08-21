@@ -3,16 +3,16 @@ import {
   isValidKaspaAddress, validateKaspaAddress, shortAddr, hexToBytes, privKeyToHex,
   derivePublicKey, kaspaAddressFromPubkey, bytesToHex, kasToSompi, sompiToKasString,
   validateAndCleanUtxo
-} from './crypto.js?v=84';
+} from './crypto.js?v=85';
 import {
   NATIVE_KAS, VAULT_PRODUCTS, loadWatchlist, addToken, removeToken,
   loadVaults, saveVault, updateVault, formatAmount, formatTokenUnits, tokenColor,
   fetchKcc20Portfolio, fetchKrc20Portfolio, fetchKcc20PortfolioMany, fetchKrc20PortfolioMany,
   krc20Logo, toTokenRaw, setVaultOwner, kcc20Identicon, VAULT_GROUPS
-} from './kcc20.js?v=84';
-import { parseIntent, describeIntent, askFor, parseDurationField, interpretVaultChat, normalizeChat } from './intent.js?v=84';
-import { payloadFromAddress } from './script.js?v=84';
-import { explainTransaction, scorpionAnswer } from './scorpion.js?v=84';
+} from './kcc20.js?v=85';
+import { parseIntent, describeIntent, askFor, parseDurationField, interpretVaultChat, normalizeChat } from './intent.js?v=85';
+import { payloadFromAddress } from './script.js?v=85';
+import { explainTransaction, scorpionAnswer } from './scorpion.js?v=85';
 import {
   sendKas, fetchAddressUtxos, fetchAddressBalance, loadKaspaSdk,
   buildTimelockCovenant, buildEscrowCovenant, buildMultisigCovenant, currentDaa,
@@ -20,20 +20,21 @@ import {
   compoundUtxos, sendKrc20, sendKcc20, loadKrc20Pending, lockKcc20Timelock, sweepKcc20Capsule,
   fetchOwnedUtxos, buildSentinelChain, buildRecurringChain, buildHashlockCovenant,
   newHashlockSecret, checkinHop, currentHop, parseXmssKit, p2shFromRedeemHex, spendXmssVault
-} from './tx.js?v=84';
-import { kronMarkets, quoteKronTrade, executeKronTrade, formatKasSompi, lookupKronTick, tradeCostLines, attachKronLogos } from './kronTrade.js?v=84';
+} from './tx.js?v=85';
+import { kronMarkets, quoteKronTrade, executeKronTrade, formatKasSompi, lookupKronTick, tradeCostLines, attachKronLogos } from './kronTrade.js?v=85';
 import {
   migrateReceiveBook, ownedAddresses, markAddressUsed, currentReceive,
   deriveReceiveBatch, unusedReceiveCount, ensurePrivacyBook
-} from './receive.js?v=84';
-import { knsResolve, knsPrimary, knsDomainsFor, knsOwnerMatches, knsAppUrl, looksLikeKasDomain, normalizeKasDomain } from './kns.js?v=84';
-import { runPhoneStudio, runServerStudio } from './studio.js?v=84';
+} from './receive.js?v=85';
+import { knsResolve, knsPrimary, knsDomainsFor, knsOwnerMatches, knsAppUrl, looksLikeKasDomain, normalizeKasDomain } from './kns.js?v=85';
+import { runPhoneStudio, runServerStudio } from './studio.js?v=85';
 import {
   isKaswareInstalled, isDesktopBrowser, kaswareEnabled, kaswareSigning, kaswareConnectedAddress,
-  connectKasware, disconnectKasware, bindKaswareEvents, loadKaswarePref, compoundWithKasware
-} from './kasware.js?v=84';
+  connectKasware, disconnectKasware, bindKaswareEvents, loadKaswarePref, compoundWithKasware,
+  ensureKaswareSigner
+} from './kasware.js?v=85';
 
-export const BUILD = '84';
+export const BUILD = '85';
 
 function errText(e) {
   if (e == null) return 'Unknown error';
@@ -1056,7 +1057,7 @@ function paintIfChanged(el, html) {
 function renderHome() {
   if (!wallet) return;
   if ($('live-pill')) {
-    $('live-pill').textContent = kaswareSigning(wallet) ? 'KasWare · ' + BUILD : 'Live · ' + BUILD;
+    $('live-pill').textContent = kaswareEnabled() ? 'KasWare · ' + BUILD : 'Live · ' + BUILD;
   }
   const balHtml = `${formatAmount(balanceSompi)}<small>KAS</small>`;
   if ($('card-bal') && $('card-bal').innerHTML !== balHtml) $('card-bal').innerHTML = balHtml;
@@ -2895,13 +2896,19 @@ async function reviewTrade() {
     : `<div class="kv"><span class="k">Sell</span><span class="v">${esc(formatTokenUnits(q.tokenIn, q.decimals))} ${esc(q.tick)}</span></div>
        <div class="kv"><span class="k">You receive</span><span class="v">${esc(formatKasSompi(q.net))} KAS</span></div>
        <div class="kv"><span class="k">Protocol fees</span><span class="v">${esc(formatKasSompi(q.fee))} KAS</span></div>`;
+  const kw = kaswareEnabled();
   openSheet('Review ' + q.tick + ' ' + q.side, buyBits, {
-    confirm: kaswareSigning(wallet) ? 'Approve in KasWare' : 'Pay with PIN',
+    confirm: kw ? 'Pay with KasWare' : 'Pay with PIN',
     gold: true,
     onConfirm: async () => {
       try {
-        await requirePin(q.side === 'buy' ? 'Confirm buy ' + tick : 'Confirm sell ' + tick);
-        await runTrade({ tick, side, amount, quote: q });
+        if (kw) {
+          setSheetStatus('Opening KasWare…');
+          await ensureKaswareSigner(wallet);
+        } else {
+          await requirePin(q.side === 'buy' ? 'Confirm buy ' + tick : 'Confirm sell ' + tick);
+        }
+        await runTrade({ tick, side, amount, quote: q, forceKasware: kw });
       } catch (e) {
         if (errText(e) === 'cancelled') return;
         toast(errText(e));
@@ -2911,17 +2918,18 @@ async function reviewTrade() {
   });
 }
 
-async function runTrade({ tick, side, amount, quote }) {
-  toast('Building KRON swap…');
+async function runTrade({ tick, side, amount, quote, forceKasware = false }) {
+  toast(forceKasware || kaswareEnabled() ? 'Building KCC20 swap for KasWare…' : 'Building KRON swap…');
   try {
     await loadKaspaSdk();
-    const utxosNow = await fetchAddressUtxos(wallet.address);
+    const utxosNow = await fetchAddressUtxos(wallet.address).catch(() => []);
     const result = await executeKronTrade({
       wallet,
       tick,
       side,
       amount,
       utxos: utxosNow,
+      forceKasware: !!(forceKasware || kaswareEnabled()),
       onStatus: (m) => { toast(m); setSheetStatus(m); }
     });
     hideTradeScreen();

@@ -41,6 +41,7 @@ assert.equal(kaswareSigning({ address: ADDR }), false, 'no provider → not sign
 
 globalThis.kasware = { signPskt: async () => '{}' };
 assert.equal(kaswareSigning({ address: ADDR }), true, 'provider + matching address → signing');
+assert.equal(kaswareSigning({ address: ADDR.toUpperCase() }), true, 'address compare is case-insensitive');
 assert.equal(kaswareSigning({ address: 'kaspa:qother' }), false, 'wrong address → not signing');
 
 saveKaswarePref({ enabled: false, address: ADDR });

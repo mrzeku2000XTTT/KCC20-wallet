@@ -38,6 +38,10 @@ export function kaswareEnabled() {
   return !!loadKaswarePref().enabled;
 }
 
+export function payWithKaswareLabel() {
+  return kaswareEnabled() ? 'Pay with KasWare' : '';
+}
+
 function firstAddr(accounts) {
   if (!accounts) return '';
   if (typeof accounts === 'string') return accounts;
@@ -45,15 +49,52 @@ function firstAddr(accounts) {
   return String(accounts.address || accounts[0] || '');
 }
 
+export function normKasAddr(a) {
+  return String(a || '').trim().toLowerCase();
+}
+
+export function sameKasAddr(a, b) {
+  const x = normKasAddr(a), y = normKasAddr(b);
+  return !!(x && y && x === y);
+}
+
 export function kaswareConnectedAddress() {
   return String(loadKaswarePref().address || '');
 }
 
 export function kaswareSigning(wallet) {
-  if (!kaswareEnabled() || !isKaswareInstalled()) return false;
-  const mine = String(wallet?.address || '');
+  if (!kaswareEnabled()) return false;
+  if (!isKaswareInstalled()) return false;
+  const mine = wallet?.address || '';
   const theirs = kaswareConnectedAddress();
-  return !!(mine && theirs && mine === theirs);
+  if (mine && theirs && sameKasAddr(mine, theirs)) return true;
+  if (mine && !theirs) return true;
+  return false;
+}
+
+export async function ensureKaswareSigner(wallet) {
+  if (!kaswareEnabled()) return false;
+  const p = kaswareProvider();
+  if (!p) throw new Error('KasWare is not in this browser. Open Chrome/Edge with the KasWare extension, then toggle it on in Settings.');
+  let addr = kaswareConnectedAddress();
+  try {
+    const accounts = await p.getAccounts();
+    addr = firstAddr(accounts) || addr;
+  } catch {}
+  if (!addr) {
+    const linked = await connectKasware();
+    addr = linked.address;
+  }
+  if (addr) {
+    const pref = loadKaswarePref();
+    pref.enabled = true;
+    pref.address = addr;
+    saveKaswarePref(pref);
+  }
+  if (wallet?.address && addr && !sameKasAddr(wallet.address, addr)) {
+    throw new Error('KasWare is on a different account than this wallet. Switch wallets, or reconnect KasWare in Settings.');
+  }
+  return true;
 }
 
 export function parseKaswareTx(raw) {
@@ -180,20 +221,26 @@ export async function sendKrc20WithKasware({ dest, tick, amtRaw }) {
 export async function signPsktWithKasware(txJsonString, signInputs) {
   const p = kaswareProvider();
   if (!p) throw new Error('KasWare is not installed');
-  if (typeof p.signPskt !== 'function') {
-    throw new Error('This KasWare version cannot sign PSKT. Update KasWare to sign KRON trades.');
+  const fn = p.signPskt || p.signPsbt;
+  if (typeof fn !== 'function') {
+    throw new Error('This KasWare version cannot sign PSKT. Update KasWare to sign KCC20 trades.');
   }
+  const json = String(txJsonString || '');
   const inputs = (signInputs || []).map(s => ({
     index: Number(s.index),
     sighashType: Number(s.sighashType ?? 1)
   }));
+  const payload = { txJsonString: json, options: { signInputs: inputs } };
   let res;
   try {
-    res = await p.signPskt({
-      txJsonString: String(txJsonString || ''),
-      options: { signInputs: inputs }
-    });
-  } catch (e) { rejectUser(e); }
+    res = await fn.call(p, payload);
+  } catch (e1) {
+    try {
+      res = await fn.call(p, json, { signInputs: inputs });
+    } catch (e2) {
+      rejectUser(e1);
+    }
+  }
   if (typeof res === 'string' && res) return res;
   if (res && typeof res === 'object') {
     return res.txJsonString || res.signedTx || res.tx || JSON.stringify(res);

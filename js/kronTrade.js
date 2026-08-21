@@ -1,8 +1,8 @@
 /* KRON DEX trades via @kronsdk/kron-sdk (v0.17.2). Quotes + builders from the SDK;
    templates from the CORS-open token descriptor; live heads from idx.kron.technology. */
 import * as kron from '../vendor/kron-sdk/index.js';
-import { loadKaspaSdk, connectPublicNode, fetchAddressUtxos } from './tx.js?v=84';
-import { kaswareSigning, signPsktWithKasware, fetchKaswareUtxos } from './kasware.js?v=84';
+import { loadKaspaSdk, connectPublicNode, fetchAddressUtxos } from './tx.js?v=85';
+import { kaswareSigning, signPsktWithKasware, fetchKaswareUtxos } from './kasware.js?v=85';
 
 const IDX = 'https://idx.kron.technology/v1/kcc20';
 const REG = 'https://api.kron.technology';
@@ -650,7 +650,7 @@ function pickTokens(pieces, need, maxN) {
   return picked;
 }
 
-export async function executeKronTrade({ wallet, tick, side, amount, utxos, onStatus }) {
+export async function executeKronTrade({ wallet, tick, side, amount, utxos, onStatus, forceKasware = false }) {
   const k = await loadKaspaSdk();
   await kronTokenlist();
   const entry = findKronEntry(tick);
@@ -729,12 +729,23 @@ export async function executeKronTrade({ wallet, tick, side, amount, utxos, onSt
   let asm = assembleSpend(k, spend, funding, wallet.address, 10_000n);
   const fee = kron.spend.estimateNativeFee(k, 'mainnet', asm, 100);
   asm = assembleSpend(k, spend, funding, wallet.address, fee);
-  const external = kaswareSigning(wallet);
+  const external = !!(forceKasware || kaswareSigning(wallet));
   if (external) {
-    onStatus?.('Approve KRON trade in KasWare…');
-    const plan = kronPsktPlan(asm);
+    onStatus?.('Approve in KasWare…');
+    let plan;
+    try {
+      plan = kronPsktPlan(asm);
+    } catch (e) {
+      throw new Error('Could not export this KCC20 swap for KasWare: ' + errText(e));
+    }
+    if (!plan?.txJsonString) throw new Error('Could not export this KCC20 swap for KasWare');
     const signedJson = await signPsktWithKasware(plan.txJsonString, plan.signInputs);
-    const signedTx = k.Transaction.deserializeFromSafeJSON(signedJson);
+    let signedTx;
+    try {
+      signedTx = k.Transaction.deserializeFromSafeJSON(signedJson);
+    } catch (e) {
+      throw new Error('KasWare returned a tx this app could not read: ' + errText(e));
+    }
     mergeFundingSignatures(asm.transaction, signedTx, asm.fundingInputIndexes);
   } else {
     if (!wallet.privKey) throw new Error('Turn on KasWare in Settings to sign this trade');

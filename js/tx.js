@@ -3,7 +3,7 @@ import {
   hexToBytes, kaspaAddressFromScriptHash, validateKaspaAddress,
   validateAndCleanUtxo, deepCloneAndFreeze, kasToSompi
 } from './crypto.js?v=77';
-import { kaswareSigning, sendKaspaWithKasware, sendKrc20WithKasware } from './kasware.js?v=84';
+import { kaswareSigning, sendKaspaWithKasware, sendKrc20WithKasware } from './kasware.js?v=85';
 
 const API = 'https://api.kaspa.org';
 

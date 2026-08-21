@@ -12,7 +12,7 @@
   <link rel="icon" href="assets/icon.png">
   <title>KCC20 Wallet</title>
   <meta http-equiv="Cache-Control" content="no-store, no-cache, must-revalidate">
-  <link rel="stylesheet" href="css/app.css?v=76">
+  <link rel="stylesheet" href="css/app.css?v=77">
 </head>
 <body>
   <img class="bg-poster" src="assets/bg.jpg" alt="">
@@ -127,19 +127,6 @@
           <div id="vault-create">
             <div class="section-label">Products</div>
             <div class="vault-grid" id="vault-products"></div>
-            <div class="glass vault-chat">
-              <div class="chat-head">
-                <span class="chat-agent">Argent</span>
-                <span class="chat-ready">getting ready for DAGKnight</span>
-              </div>
-              <div class="chat" id="chat-log">
-                <div class="bubble ai">I’m <strong>Argent</strong>. Tap a tile, or type <em>lock .15 kas for 3 minutes</em>. XMSS: paste a public kit from this repo’s keygen — keys stay offline.</div>
-              </div>
-              <div class="chatbar">
-                <input id="chat-input" placeholder="Tell Argent what to lock…" autocomplete="off" enterkeyhint="send">
-                <button class="send-orb" id="chat-send" type="button" aria-label="Send">↑</button>
-              </div>
-            </div>
           </div>
           <div id="vault-mine-wrap" class="hidden">
             <div class="seg" id="vault-hist-seg">
@@ -154,6 +141,25 @@
               </div>
               <button class="btn btn-glass" id="btn-sweep-addr" type="button" style="margin-top:8px;height:44px;">Sweep this address</button>
             </div>
+          </div>
+          <div id="argent-dock">
+            <div class="argent-panel glass" id="argent-panel" role="dialog" aria-label="Argent">
+              <div class="chat-head">
+                <span class="chat-agent">Argent</span>
+                <button type="button" class="argent-x" id="argent-close" aria-label="Close Argent">Close</button>
+              </div>
+              <div class="chat" id="chat-log">
+                <div class="bubble ai">I’m <strong>Argent</strong>. Tap a tile, or type <em>lock .15 kas for 3 minutes</em>.</div>
+              </div>
+              <div class="chatbar">
+                <input id="chat-input" placeholder="Tell Argent what to lock…" autocomplete="off" enterkeyhint="send">
+                <button class="send-orb" id="chat-send" type="button" aria-label="Send">↑</button>
+              </div>
+            </div>
+            <button type="button" class="argent-orb" id="argent-orb" aria-label="Open Argent" aria-expanded="false">
+              <span class="argent-orb-shine"></span>
+              <span class="argent-orb-core">A</span>
+            </button>
           </div>
         </section>
 
@@ -479,7 +485,7 @@
     })();
   </script>
   <script type="module">
-    import('./js/app.js?v=76').catch(function (err) {
+    import('./js/app.js?v=77').catch(function (err) {
       console.error(err);
       var phone = document.getElementById('phone');
       var d = document.createElement('div');

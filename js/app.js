@@ -3,16 +3,16 @@ import {
   isValidKaspaAddress, validateKaspaAddress, shortAddr, hexToBytes, privKeyToHex,
   derivePublicKey, kaspaAddressFromPubkey, bytesToHex, kasToSompi, sompiToKasString,
   validateAndCleanUtxo
-} from './crypto.js?v=76';
+} from './crypto.js?v=77';
 import {
   NATIVE_KAS, VAULT_PRODUCTS, loadWatchlist, addToken, removeToken,
   loadVaults, saveVault, updateVault, formatAmount, formatTokenUnits, tokenColor,
   fetchKcc20Portfolio, fetchKrc20Portfolio, fetchKcc20PortfolioMany, fetchKrc20PortfolioMany,
   krc20Logo, toTokenRaw, setVaultOwner, kcc20Identicon, VAULT_GROUPS
-} from './kcc20.js?v=76';
-import { parseIntent, describeIntent, askFor, parseDurationField, interpretVaultChat, normalizeChat } from './intent.js?v=76';
-import { payloadFromAddress } from './script.js?v=76';
-import { explainTransaction, scorpionAnswer } from './scorpion.js?v=76';
+} from './kcc20.js?v=77';
+import { parseIntent, describeIntent, askFor, parseDurationField, interpretVaultChat, normalizeChat } from './intent.js?v=77';
+import { payloadFromAddress } from './script.js?v=77';
+import { explainTransaction, scorpionAnswer } from './scorpion.js?v=77';
 import {
   sendKas, fetchAddressUtxos, fetchAddressBalance, loadKaspaSdk,
   buildTimelockCovenant, buildEscrowCovenant, buildMultisigCovenant, currentDaa,
@@ -20,16 +20,16 @@ import {
   compoundUtxos, sendKrc20, sendKcc20, loadKrc20Pending, lockKcc20Timelock, sweepKcc20Capsule,
   fetchOwnedUtxos, buildSentinelChain, buildRecurringChain, buildHashlockCovenant,
   newHashlockSecret, checkinHop, currentHop, parseXmssKit, p2shFromRedeemHex, spendXmssVault
-} from './tx.js?v=76';
-import { kronMarkets, quoteKronTrade, executeKronTrade, formatKasSompi, lookupKronTick, tradeCostLines, attachKronLogos } from './kronTrade.js?v=76';
+} from './tx.js?v=77';
+import { kronMarkets, quoteKronTrade, executeKronTrade, formatKasSompi, lookupKronTick, tradeCostLines, attachKronLogos } from './kronTrade.js?v=77';
 import {
   migrateReceiveBook, ownedAddresses, markAddressUsed, currentReceive,
   deriveReceiveBatch, unusedReceiveCount, ensurePrivacyBook
-} from './receive.js?v=76';
-import { knsResolve, knsPrimary, knsDomainsFor, knsOwnerMatches, knsAppUrl, looksLikeKasDomain, normalizeKasDomain } from './kns.js?v=75';
-import { runPhoneStudio, runServerStudio } from './studio.js?v=76';
+} from './receive.js?v=77';
+import { knsResolve, knsPrimary, knsDomainsFor, knsOwnerMatches, knsAppUrl, looksLikeKasDomain, normalizeKasDomain } from './kns.js?v=77';
+import { runPhoneStudio, runServerStudio } from './studio.js?v=77';
 
-export const BUILD = '76';
+export const BUILD = '77';
 
 function errText(e) {
   if (e == null) return 'Unknown error';
@@ -293,6 +293,7 @@ function showPage(id) {
     $('nav-right').innerHTML = '';
   }
   $('tabbar').classList.toggle('show', !!wallet && sessionOpen());
+  if (id !== 'vault') setArgentOpen(false);
   if (id === 'vault') {
     try { renderVault(); } catch (e) { console.error(e); }
   }
@@ -4093,6 +4094,20 @@ async function sweepAllVaults() {
   toast(`Swept ${ok} vault(s)` + (skipped ? `, skipped ${skipped}` : '') + (errors.length ? `. ${errors[0]}` : ''));
 }
 
+function setArgentOpen(on) {
+  const dock = $('argent-dock');
+  if (!dock) return;
+  dock.classList.toggle('open', !!on);
+  $('argent-orb')?.setAttribute('aria-expanded', on ? 'true' : 'false');
+  $('argent-orb')?.setAttribute('aria-label', on ? 'Close Argent' : 'Open Argent');
+  if (on) setTimeout(() => $('chat-input')?.focus(), 280);
+}
+
+function toggleArgent() {
+  haptic();
+  setArgentOpen(!$('argent-dock')?.classList.contains('open'));
+}
+
 function appendChat(role, html) {
   const log = $('chat-log');
   const el = document.createElement('div');
@@ -4310,6 +4325,8 @@ function bind() {
     setVaultHistory(btn.dataset.vhist === 'history');
   });
   click('btn-add-token', openAddToken);
+  click('argent-orb', toggleArgent);
+  click('argent-close', () => setArgentOpen(false));
   click('chat-send', sendChat);
   $('chat-input')?.addEventListener('keydown', e => { if (e.key === 'Enter') sendChat(); });
   $('chat-input')?.addEventListener('focus', () => {

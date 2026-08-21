@@ -647,29 +647,79 @@ img { display: block; max-width: 100%; }
 }
 #page-vault.active {
   display: flex; flex-direction: column; height: 100%; overflow: hidden;
+  position: relative;
 }
 #vault-create {
   flex: 1; display: flex; flex-direction: column; min-height: 0;
+  overflow-y: auto; -webkit-overflow-scrolling: touch;
 }
 #vault-mine-wrap { flex: 1; min-height: 0; overflow-y: auto; -webkit-overflow-scrolling: touch; }
-.vault-chat {
-  flex: 1; display: flex; flex-direction: column; min-height: 0;
-  margin: 0 0 4px; padding: 0; overflow: hidden;
+#argent-dock {
+  position: absolute; right: 6px; bottom: 8px; z-index: 24;
+  display: flex; flex-direction: column; align-items: flex-end; gap: 10px;
+  pointer-events: none;
+}
+.argent-orb {
+  pointer-events: auto;
+  width: 58px; height: 58px; border-radius: 50%;
+  position: relative;
+  display: grid; place-items: center;
+  background: radial-gradient(circle at 32% 28%, #fff8e8 0%, #f3e2bf 28%, #d4b07a 62%, #8a6230 100%);
+  box-shadow:
+    0 10px 28px rgba(201,163,106,0.48),
+    inset 0 -8px 12px rgba(70,40,8,0.28),
+    inset 0 10px 14px rgba(255,255,255,0.38);
+  color: #1a140c;
+  animation: argent-float 3.4s ease-in-out infinite;
+}
+.argent-orb-shine {
+  position: absolute; inset: 7px 16px auto 8px; height: 16px; border-radius: 50%;
+  background: linear-gradient(180deg, rgba(255,255,255,0.7), transparent);
+  pointer-events: none;
+}
+.argent-orb-core { font-size: 20px; font-weight: 800; letter-spacing: -0.4px; position: relative; z-index: 1; }
+.argent-orb:active { transform: scale(0.94); }
+#argent-dock.open .argent-orb { animation: none; transform: scale(0.92); }
+@keyframes argent-float {
+  0%, 100% { transform: translateY(0); }
+  50% { transform: translateY(-5px); }
+}
+.argent-panel {
+  pointer-events: auto;
+  width: min(352px, calc(100vw - 40px));
+  height: min(420px, 54vh);
+  display: flex; flex-direction: column;
+  padding: 0; overflow: hidden;
+  transform-origin: bottom right;
+  transform: translateY(14px) scale(0.86);
+  opacity: 0; visibility: hidden;
+  transition: transform 0.32s cubic-bezier(0.32, 0.72, 0, 1), opacity 0.24s ease, visibility 0.24s;
+}
+#argent-dock.open .argent-panel {
+  transform: translateY(0) scale(1);
+  opacity: 1; visibility: visible;
+}
+.argent-x {
+  color: var(--label-2); font-size: 13px; font-weight: 650; padding: 4px 2px;
 }
 .chat-head {
-  display: flex; align-items: baseline; justify-content: space-between; gap: 8px;
+  display: flex; align-items: center; justify-content: space-between; gap: 8px;
   padding: 10px 12px 6px; flex-shrink: 0;
 }
 .chat-agent { font-size: 13px; font-weight: 700; color: var(--gold-2); }
 .chat-ready { font-size: 11px; color: var(--label-2); }
 #chat-log.chat {
-  flex: 1; padding: 4px 12px 10px; max-height: none;
+  flex: 1; padding: 4px 12px 10px; max-height: none; min-height: 0;
 }
-.vault-chat .chatbar {
+.argent-panel .chatbar {
   flex-shrink: 0;
   padding: 8px 10px 10px;
   border-top: 0.5px solid var(--hairline);
   background: rgba(8,8,10,0.35);
+}
+@media (prefers-reduced-motion: reduce) {
+  .argent-orb { animation: none; }
+  .argent-panel { transition: none; }
 }
 .vault-sweep { padding: 12px; margin-top: 12px; }
 .vault-card-actions { display: flex; flex-direction: column; align-items: flex-end; gap: 2px; flex-shrink: 0; }
@@ -1124,6 +1174,7 @@ button.tx { width: 100%; text-align: left; color: inherit; }
 }
 
 @media (prefers-reduced-motion: reduce) {
+  .argent-orb { animation: none !important; }
   .bg-video { display: none; }
   .bg-poster, .bg-video { animation: none !important; transform: none !important; }
   .sheen, .metal-card::after { animation: none; }

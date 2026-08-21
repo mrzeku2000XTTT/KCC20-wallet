@@ -3,16 +3,16 @@ import {
   isValidKaspaAddress, validateKaspaAddress, shortAddr, hexToBytes, privKeyToHex,
   derivePublicKey, kaspaAddressFromPubkey, bytesToHex, kasToSompi, sompiToKasString,
   validateAndCleanUtxo
-} from './crypto.js?v=77';
+} from './crypto.js?v=78';
 import {
   NATIVE_KAS, VAULT_PRODUCTS, loadWatchlist, addToken, removeToken,
   loadVaults, saveVault, updateVault, formatAmount, formatTokenUnits, tokenColor,
   fetchKcc20Portfolio, fetchKrc20Portfolio, fetchKcc20PortfolioMany, fetchKrc20PortfolioMany,
   krc20Logo, toTokenRaw, setVaultOwner, kcc20Identicon, VAULT_GROUPS
-} from './kcc20.js?v=77';
-import { parseIntent, describeIntent, askFor, parseDurationField, interpretVaultChat, normalizeChat } from './intent.js?v=77';
-import { payloadFromAddress } from './script.js?v=77';
-import { explainTransaction, scorpionAnswer } from './scorpion.js?v=77';
+} from './kcc20.js?v=78';
+import { parseIntent, describeIntent, askFor, parseDurationField, interpretVaultChat, normalizeChat } from './intent.js?v=78';
+import { payloadFromAddress } from './script.js?v=78';
+import { explainTransaction, scorpionAnswer } from './scorpion.js?v=78';
 import {
   sendKas, fetchAddressUtxos, fetchAddressBalance, loadKaspaSdk,
   buildTimelockCovenant, buildEscrowCovenant, buildMultisigCovenant, currentDaa,
@@ -20,16 +20,16 @@ import {
   compoundUtxos, sendKrc20, sendKcc20, loadKrc20Pending, lockKcc20Timelock, sweepKcc20Capsule,
   fetchOwnedUtxos, buildSentinelChain, buildRecurringChain, buildHashlockCovenant,
   newHashlockSecret, checkinHop, currentHop, parseXmssKit, p2shFromRedeemHex, spendXmssVault
-} from './tx.js?v=77';
-import { kronMarkets, quoteKronTrade, executeKronTrade, formatKasSompi, lookupKronTick, tradeCostLines, attachKronLogos } from './kronTrade.js?v=77';
+} from './tx.js?v=78';
+import { kronMarkets, quoteKronTrade, executeKronTrade, formatKasSompi, lookupKronTick, tradeCostLines, attachKronLogos } from './kronTrade.js?v=78';
 import {
   migrateReceiveBook, ownedAddresses, markAddressUsed, currentReceive,
   deriveReceiveBatch, unusedReceiveCount, ensurePrivacyBook
-} from './receive.js?v=77';
-import { knsResolve, knsPrimary, knsDomainsFor, knsOwnerMatches, knsAppUrl, looksLikeKasDomain, normalizeKasDomain } from './kns.js?v=77';
-import { runPhoneStudio, runServerStudio } from './studio.js?v=77';
+} from './receive.js?v=78';
+import { knsResolve, knsPrimary, knsDomainsFor, knsOwnerMatches, knsAppUrl, looksLikeKasDomain, normalizeKasDomain } from './kns.js?v=78';
+import { runPhoneStudio, runServerStudio } from './studio.js?v=78';
 
-export const BUILD = '77';
+export const BUILD = '78';
 
 function errText(e) {
   if (e == null) return 'Unknown error';
@@ -1334,22 +1334,11 @@ function renderVault() {
   const history = all.filter(isVaultHistory);
   const live = all.filter(v => !isVaultHistory(v));
   const mine = showVaultHistory ? history : live;
-  $('vault-products').innerHTML = VAULT_GROUPS.map(g => {
-    const items = VAULT_PRODUCTS.filter(p => p.group === g.id);
-    return `
-      <div class="vault-group">
-        <div class="section-label">${esc(g.title)}</div>
-        <p class="vault-hint">${esc(g.hint)}</p>
-        <div class="vault-grid">
-          ${items.map(p => `
-            <button class="glass product" data-product="${esc(p.id)}" type="button">
-              <div class="glyph">${esc(p.tag)}</div>
-              <h4>${esc(p.name)}</h4>
-              <span class="product-why">${esc(p.why || p.blurb)}</span>
-            </button>`).join('')}
-        </div>
-      </div>`;
-  }).join('');
+  $('vault-products').innerHTML = VAULT_PRODUCTS.map(p => `
+    <button class="glass product" data-product="${esc(p.id)}" type="button">
+      <div class="glyph">${esc(p.tag)}</div>
+      <h4>${esc(p.name)}</h4>
+    </button>`).join('');
   const empty = showVaultHistory
     ? 'Nothing finished yet. Swept capsules land here.'
     : 'No vaults yet. Tap Time Capsule to lock a little KAS for a few minutes — a safe first try.';

@@ -858,10 +858,56 @@ img { display: block; max-width: 100%; }
   min-height: 2.4em; flex-shrink: 0;
 }
 .build-status { font-size: 11px; color: var(--label-2); margin-top: 6px; line-height: 1.3; flex-shrink: 0; }
+.app-home { flex: 1; min-height: 0; display: flex; flex-direction: column; }
+.app-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.app-tile {
+  text-align: left; padding: 16px 14px; border-radius: 18px; min-height: 140px;
+  background: rgba(255,255,255,0.06); border: 0.5px solid var(--hairline);
+  display: flex; flex-direction: column; gap: 6px;
+}
+.app-tile:active { transform: scale(0.98); }
+.app-ico {
+  width: 36px; height: 36px; border-radius: 12px;
+  display: grid; place-items: center;
+  background: rgba(212,176,122,0.18); color: var(--gold-2); font-size: 16px;
+}
+.app-tile b { font-size: 15px; }
+.app-tile span { font-size: 12px; color: var(--label-2); line-height: 1.35; }
+.app-pane { flex: 1; min-height: 0; display: flex; flex-direction: column; overflow: hidden; }
+.app-pane.hidden { display: none !important; }
+.studio-form { flex-shrink: 0; }
+.studio-form .field { margin-bottom: 8px; }
+.studio-form textarea, .studio-form select, .studio-form input[type=number], #studio-url {
+  width: 100%; border-radius: 12px; padding: 8px 10px;
+  background: rgba(0,0,0,0.35); border: 0.5px solid var(--hairline); font-size: 14px;
+}
+.studio-form textarea { min-height: 52px; resize: none; }
+.studio-row { display: flex; gap: 8px; }
+.studio-row .grow { flex: 1; }
+.studio-row .small { width: 88px; }
+.studio-form .check { display: flex; align-items: center; gap: 8px; font-size: 13px; color: var(--label-2); }
+#studio-go { height: 44px; margin: 6px 0 6px; }
+.studio-hint { font-size: 11px; color: var(--label-2); line-height: 1.35; margin: 0 0 8px; }
+.studio-stage { flex: 1; min-height: 0; overflow-y: auto; }
+.studio-steps { display: flex; gap: 6px; list-style: none; padding: 0; margin: 0 0 8px; }
+.studio-steps li {
+  flex: 1; text-align: center; font-size: 10px; font-weight: 700; letter-spacing: 0.04em;
+  padding: 6px 2px; border-radius: 999px; background: rgba(255,255,255,0.06); color: var(--label-3);
+}
+.studio-steps li.on { color: var(--gold-2); background: rgba(212,176,122,0.18); }
+.studio-steps li.done { color: var(--green); }
+.studio-status { font-size: 12px; color: var(--label-2); margin: 0 0 8px; }
+.studio-stills { display: flex; gap: 6px; overflow-x: auto; margin-bottom: 8px; }
+.studio-stills canvas, .studio-stills img {
+  width: 92px; height: 52px; object-fit: cover; border-radius: 8px; flex-shrink: 0;
+}
+#studio-video { width: 100%; border-radius: 12px; background: #000; max-height: 180px; margin-bottom: 8px; }
+#studio-dl { height: 40px; }
 @media (max-height: 700px) {
   .build-phase { min-height: 58px; padding: 7px 8px; }
   .build-lede { display: none; }
   .build-copy { min-height: 2.2em; }
+  .app-tile { min-height: 110px; padding: 12px; }
 }
 .scorpion-banner, .scorpion-head {
   display: flex; align-items: center; gap: 12px;

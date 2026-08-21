@@ -12,7 +12,7 @@
   <link rel="icon" href="assets/icon.png">
   <title>KCC20 Wallet</title>
   <meta http-equiv="Cache-Control" content="no-store, no-cache, must-revalidate">
-  <link rel="stylesheet" href="css/app.css?v=74">
+  <link rel="stylesheet" href="css/app.css?v=75">
 </head>
 <body>
   <img class="bg-poster" src="assets/bg.jpg" alt="">
@@ -289,37 +289,94 @@
 
       <div class="build-screen hidden" id="build-screen" aria-hidden="true">
         <div class="build-head">
+          <button type="button" class="trade-x hidden" id="build-back">Back</button>
           <button type="button" class="trade-x" id="build-close">Close</button>
-          <h2>Proof of Fact</h2>
+          <h2 id="build-title">Apps</h2>
           <span class="build-mark" aria-hidden="true">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"/></svg>
           </span>
         </div>
-        <p class="build-lede">Stamp AI output onto Kaspa L1. Hash locally, then a dust tx carries the fingerprint in <b>payload</b> (not Bitcoin OP_RETURN).</p>
-        <div class="build-phases">
-          <button type="button" class="build-phase on" data-phase="0">
-            <em>1</em><b>Hash</b><span>SHA-256 truth</span>
-          </button>
-          <button type="button" class="build-phase" data-phase="1">
-            <em>2</em><b>Pack</b><span>1 sompi + payload</span>
-          </button>
-          <button type="button" class="build-phase" data-phase="2">
-            <em>3</em><b>Sign</b><span>Wallet / wRPC</span>
-          </button>
-          <button type="button" class="build-phase" data-phase="3">
-            <em>4</em><b>Anchor</b><span>BlockDAG inclusion</span>
-          </button>
-        </div>
-        <p class="build-copy" id="build-copy">SHA-256 of { aiOutput, model, time }. Same fingerprint the Node MVP returns from POST /api/v1/anchor-truth.</p>
-        <div class="build-demo glass">
-          <label for="truth-in">AI text</label>
-          <textarea id="truth-in" rows="2" placeholder="Paste model output to fingerprint…"></textarea>
-          <div class="build-demo-row">
-            <button class="btn btn-gold" id="truth-stamp" type="button">Stamp</button>
-            <button class="btn btn-glass" id="truth-copy" type="button">Copy hash</button>
+
+        <div id="app-home" class="app-home">
+          <p class="build-lede">Tools in this wallet. Faceless Studio turns one line into a narrated film on this phone. Proof of Fact stamps AI text onto Kaspa.</p>
+          <div class="app-grid">
+            <button type="button" class="app-tile" data-app="studio">
+              <span class="app-ico" aria-hidden="true">▶</span>
+              <b>Faceless Studio</b>
+              <span>Topic → script → voice → Ken Burns film</span>
+            </button>
+            <button type="button" class="app-tile" data-app="truth">
+              <span class="app-ico" aria-hidden="true">#</span>
+              <b>Proof of Fact</b>
+              <span>SHA-256 AI output → Kaspa payload</span>
+            </button>
           </div>
-          <code class="build-hash" id="truth-hash">hash appears here</code>
-          <p class="build-status" id="truth-status">Local only until you broadcast. Needs ~1 sompi dust + payload hex.</p>
+        </div>
+
+        <div id="app-studio" class="app-pane hidden">
+          <div class="studio-form">
+            <label class="field"><span>Topic</span>
+              <textarea id="studio-topic" rows="2" placeholder="The psychology of people who overthink everything">The psychology of people who overthink everything</textarea>
+            </label>
+            <div class="studio-row">
+              <label class="field grow"><span>Voice</span>
+                <select id="studio-voice">
+                  <option value="nova">nova — warm</option>
+                  <option value="echo">echo — calm</option>
+                  <option value="onyx">onyx — deep</option>
+                  <option value="alloy">alloy — neutral</option>
+                </select>
+              </label>
+              <label class="field small"><span>Scenes</span>
+                <input id="studio-scenes" type="number" min="4" max="8" value="5">
+              </label>
+            </div>
+            <label class="field check"><input id="studio-music" type="checkbox" checked> Ambient bed</label>
+            <div class="studio-row">
+              <label class="field grow"><span>Engine</span>
+                <select id="studio-engine">
+                  <option value="phone">This phone (works offline)</option>
+                  <option value="server">Python studio server</option>
+                </select>
+              </label>
+            </div>
+            <input id="studio-url" class="hidden" placeholder="http://127.0.0.1:8000" value="http://127.0.0.1:8000">
+            <button class="btn btn-gold" id="studio-go" type="button">Generate video</button>
+            <p class="studio-hint" id="studio-hint">Phone engine paints cinematic stills, Ken-Burns them to narration length, and records a WebM you can save.</p>
+          </div>
+          <div class="studio-stage" id="studio-stage">
+            <ol class="studio-steps" id="studio-steps">
+              <li data-st="script">Script</li>
+              <li data-st="voice">Voice</li>
+              <li data-st="image">Visuals</li>
+              <li data-st="film">Film</li>
+            </ol>
+            <p class="studio-status" id="studio-status">Ready.</p>
+            <div class="studio-stills" id="studio-stills"></div>
+            <video id="studio-video" class="hidden" controls playsinline></video>
+            <a class="btn btn-glass hidden" id="studio-dl" download="faceless.webm">Download</a>
+          </div>
+        </div>
+
+        <div id="app-truth" class="app-pane hidden">
+          <p class="build-lede">Stamp AI output onto Kaspa L1. Hash locally, then a dust tx carries the fingerprint in <b>payload</b> (not Bitcoin OP_RETURN).</p>
+          <div class="build-phases">
+            <button type="button" class="build-phase on" data-phase="0"><em>1</em><b>Hash</b><span>SHA-256 truth</span></button>
+            <button type="button" class="build-phase" data-phase="1"><em>2</em><b>Pack</b><span>1 sompi + payload</span></button>
+            <button type="button" class="build-phase" data-phase="2"><em>3</em><b>Sign</b><span>Wallet / wRPC</span></button>
+            <button type="button" class="build-phase" data-phase="3"><em>4</em><b>Anchor</b><span>BlockDAG inclusion</span></button>
+          </div>
+          <p class="build-copy" id="build-copy">SHA-256 of { aiOutput, model, time }. Same fingerprint the Node MVP returns from POST /api/v1/anchor-truth.</p>
+          <div class="build-demo glass">
+            <label for="truth-in">AI text</label>
+            <textarea id="truth-in" rows="2" placeholder="Paste model output to fingerprint…"></textarea>
+            <div class="build-demo-row">
+              <button class="btn btn-gold" id="truth-stamp" type="button">Stamp</button>
+              <button class="btn btn-glass" id="truth-copy" type="button">Copy hash</button>
+            </div>
+            <code class="build-hash" id="truth-hash">hash appears here</code>
+            <p class="build-status" id="truth-status">Local only until you broadcast. Needs ~1 sompi dust + payload hex.</p>
+          </div>
         </div>
       </div>
 
@@ -415,7 +472,7 @@
     })();
   </script>
   <script type="module">
-    import('./js/app.js?v=74').catch(function (err) {
+    import('./js/app.js?v=75').catch(function (err) {
       console.error(err);
       var phone = document.getElementById('phone');
       var d = document.createElement('div');

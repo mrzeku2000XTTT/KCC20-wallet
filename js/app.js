@@ -3,16 +3,16 @@ import {
   isValidKaspaAddress, validateKaspaAddress, shortAddr, hexToBytes, privKeyToHex,
   derivePublicKey, kaspaAddressFromPubkey, bytesToHex, kasToSompi, sompiToKasString,
   validateAndCleanUtxo
-} from './crypto.js?v=79';
+} from './crypto.js?v=80';
 import {
   NATIVE_KAS, VAULT_PRODUCTS, loadWatchlist, addToken, removeToken,
   loadVaults, saveVault, updateVault, formatAmount, formatTokenUnits, tokenColor,
   fetchKcc20Portfolio, fetchKrc20Portfolio, fetchKcc20PortfolioMany, fetchKrc20PortfolioMany,
   krc20Logo, toTokenRaw, setVaultOwner, kcc20Identicon, VAULT_GROUPS
-} from './kcc20.js?v=79';
-import { parseIntent, describeIntent, askFor, parseDurationField, interpretVaultChat, normalizeChat } from './intent.js?v=79';
-import { payloadFromAddress } from './script.js?v=79';
-import { explainTransaction, scorpionAnswer } from './scorpion.js?v=79';
+} from './kcc20.js?v=80';
+import { parseIntent, describeIntent, askFor, parseDurationField, interpretVaultChat, normalizeChat } from './intent.js?v=80';
+import { payloadFromAddress } from './script.js?v=80';
+import { explainTransaction, scorpionAnswer } from './scorpion.js?v=80';
 import {
   sendKas, fetchAddressUtxos, fetchAddressBalance, loadKaspaSdk,
   buildTimelockCovenant, buildEscrowCovenant, buildMultisigCovenant, currentDaa,
@@ -20,16 +20,16 @@ import {
   compoundUtxos, sendKrc20, sendKcc20, loadKrc20Pending, lockKcc20Timelock, sweepKcc20Capsule,
   fetchOwnedUtxos, buildSentinelChain, buildRecurringChain, buildHashlockCovenant,
   newHashlockSecret, checkinHop, currentHop, parseXmssKit, p2shFromRedeemHex, spendXmssVault
-} from './tx.js?v=79';
-import { kronMarkets, quoteKronTrade, executeKronTrade, formatKasSompi, lookupKronTick, tradeCostLines, attachKronLogos } from './kronTrade.js?v=79';
+} from './tx.js?v=80';
+import { kronMarkets, quoteKronTrade, executeKronTrade, formatKasSompi, lookupKronTick, tradeCostLines, attachKronLogos } from './kronTrade.js?v=80';
 import {
   migrateReceiveBook, ownedAddresses, markAddressUsed, currentReceive,
   deriveReceiveBatch, unusedReceiveCount, ensurePrivacyBook
-} from './receive.js?v=79';
-import { knsResolve, knsPrimary, knsDomainsFor, knsOwnerMatches, knsAppUrl, looksLikeKasDomain, normalizeKasDomain } from './kns.js?v=79';
-import { runPhoneStudio, runServerStudio } from './studio.js?v=79';
+} from './receive.js?v=80';
+import { knsResolve, knsPrimary, knsDomainsFor, knsOwnerMatches, knsAppUrl, looksLikeKasDomain, normalizeKasDomain } from './kns.js?v=80';
+import { runPhoneStudio, runServerStudio } from './studio.js?v=80';
 
-export const BUILD = '79';
+export const BUILD = '80';
 
 function errText(e) {
   if (e == null) return 'Unknown error';
@@ -2759,8 +2759,19 @@ async function runCompound() {
   try {
     await requirePin('Confirm compound');
     await loadKaspaSdk();
+    setSheetStatus('Connecting to public Kaspa node…');
     await pingPublicNode();
-    const available = await fetchAddressUtxos(wallet.address);
+    setSheetStatus('Fetching UTXOs…');
+    let available = [];
+    try { available = await fetchOwnedUtxos(wallet); } catch {}
+    if (!Array.isArray(available) || available.length < 2) {
+      if (Array.isArray(utxos) && utxos.length >= 2) available = utxos;
+    }
+    if (!Array.isArray(available) || available.length < 2) {
+      available = await fetchAddressUtxos(wallet.address);
+    }
+    if (!available.length) throw new Error('No UTXOs — receive KAS first');
+    if (available.length < 2) throw new Error('Already one UTXO — nothing to compound');
     setSheetStatus(`Merging ${available.length} UTXOs…`);
     const result = await compoundUtxos({ wallet, utxos: available });
     afterTx();

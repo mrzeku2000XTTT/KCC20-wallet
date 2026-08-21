@@ -1419,9 +1419,23 @@ export async function sweepVault({ wallet, vault, utxos, extraPrivKey, escrowRel
   throw new Error(lastErr);
 }
 
+function spendEntriesFrom(utxos, wallet) {
+  const list = Array.isArray(utxos) ? utxos : [];
+  return list.map(u => {
+    const c = validateAndCleanUtxo(u);
+    if (!c) return null;
+    return {
+      address: u.address || wallet.address,
+      privKey: u.privKey || u.privateKey || wallet.privKey,
+      redeemHex: u.redeemHex || '',
+      ...c
+    };
+  }).filter(e => e && e.privKey && e.outpoint?.transactionId && e.amount > 0n);
+}
+
 export async function compoundUtxos({ wallet, utxos }) {
   const k = await loadKaspaSdk();
-  let entries = restUtxosToEntries(utxos, wallet.address);
+  let entries = spendEntriesFrom(utxos, wallet);
   if (entries.length < 2) throw new Error('Already one UTXO — nothing to compound');
   entries = [...entries].sort((a, b) => (a.amount < b.amount ? 1 : -1));
   const total = entries.reduce((a, e) => a + e.amount, 0n);
@@ -1505,11 +1519,20 @@ export async function compoundUtxos({ wallet, utxos }) {
 }
 
 export async function fetchAddressUtxos(address) {
-  const data = await fetchJsonRetry(
-    `${API}/addresses/${encodeURIComponent(address)}/utxos`,
-    { label: 'Kaspa UTXOs' }
-  );
-  return Array.isArray(data) ? data : [];
+  try {
+    const data = await fetchJsonRetry(
+      `${API}/addresses/${encodeURIComponent(address)}/utxos`,
+      { label: 'Kaspa UTXOs', tries: 2, timeout: 8000 }
+    );
+    return Array.isArray(data) ? data : [];
+  } catch (restErr) {
+    try {
+      const { rpc } = await connectPublicNode();
+      const node = await fetchNodeUtxos(rpc, address);
+      if (Array.isArray(node)) return node;
+    } catch {}
+    throw restErr;
+  }
 }
 
 export async function fetchAddressBalance(address) {

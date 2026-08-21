@@ -1,31 +1,31 @@
 import {
   loadCryptoLibs, generatePrivateKey, createKeypairFromHex,
   isValidKaspaAddress, shortAddr, hexToBytes, privKeyToHex, derivePublicKey, kaspaAddressFromPubkey, bytesToHex
-} from './crypto.js?v=68';
+} from './crypto.js?v=69';
 import {
   NATIVE_KAS, VAULT_PRODUCTS, loadWatchlist, addToken, removeToken,
   loadVaults, saveVault, updateVault, formatAmount, formatTokenUnits, tokenColor,
   fetchKcc20Portfolio, fetchKrc20Portfolio, fetchKcc20PortfolioMany, fetchKrc20PortfolioMany,
   krc20Logo, toTokenRaw, setVaultOwner, kcc20Identicon
-} from './kcc20.js?v=68';
-import { parseIntent, describeIntent, askFor, parseDurationField, interpretVaultChat, normalizeChat } from './intent.js?v=68';
-import { payloadFromAddress } from './script.js?v=68';
-import { explainTransaction, scorpionAnswer } from './scorpion.js?v=68';
+} from './kcc20.js?v=69';
+import { parseIntent, describeIntent, askFor, parseDurationField, interpretVaultChat, normalizeChat } from './intent.js?v=69';
+import { payloadFromAddress } from './script.js?v=69';
+import { explainTransaction, scorpionAnswer } from './scorpion.js?v=69';
 import {
   sendKas, fetchAddressUtxos, fetchAddressBalance, loadKaspaSdk,
   buildTimelockCovenant, buildEscrowCovenant, buildMultisigCovenant, currentDaa,
   pingPublicNode, sweepVault, toRpcTransaction, p2shSpendScript, planKasPayment, storageMassOk,
   compoundUtxos, sendKrc20, sendKcc20, loadKrc20Pending, lockKcc20Timelock, sweepKcc20Capsule,
   fetchOwnedUtxos
-} from './tx.js?v=68';
-import { kronMarkets, quoteKronTrade, executeKronTrade, formatKasSompi, lookupKronTick, tradeCostLines, attachKronLogos } from './kronTrade.js?v=68';
+} from './tx.js?v=69';
+import { kronMarkets, quoteKronTrade, executeKronTrade, formatKasSompi, lookupKronTick, tradeCostLines, attachKronLogos } from './kronTrade.js?v=69';
 import {
-  migrateReceiveBook, ownedAddresses, deriveFreshReceiveAddress, ensureFreshReceive,
-  markAddressUsed, currentReceive
-} from './receive.js?v=68';
-import { knsResolve, knsPrimary, knsDomainsFor, knsOwnerMatches, knsAppUrl, looksLikeKasDomain, normalizeKasDomain } from './kns.js?v=68';
+  migrateReceiveBook, ownedAddresses, markAddressUsed, currentReceive,
+  deriveReceiveBatch, unusedReceiveCount
+} from './receive.js?v=69';
+import { knsResolve, knsPrimary, knsDomainsFor, knsOwnerMatches, knsAppUrl, looksLikeKasDomain, normalizeKasDomain } from './kns.js?v=69';
 
-export const BUILD = '68';
+export const BUILD = '69';
 
 function errText(e) {
   if (e == null) return 'Unknown error';
@@ -2866,63 +2866,130 @@ async function paintReceiveQr(addr) {
   }
 }
 
+async function fetchTxCount(addr) {
+  try {
+    const res = await fetch(`${API_BASE}/addresses/${encodeURIComponent(addr)}/transactions-count`);
+    if (res.ok) {
+      const j = await res.json();
+      const n = Number(j.total ?? j.totalTransactions ?? j.tx_count ?? j.count ?? j.limit ?? 0);
+      if (Number.isFinite(n)) return n;
+    }
+  } catch {}
+  try {
+    const res = await fetch(`${API_BASE}/addresses/${encodeURIComponent(addr)}/full-transactions?limit=1&resolve_previous_outpoints=no`);
+    if (!res.ok) return 0;
+    const rows = await res.json();
+    const list = Array.isArray(rows) ? rows : (rows.transactions || []);
+    return list.length ? 1 : 0;
+  } catch {
+    return 0;
+  }
+}
+
+function recvBook() {
+  return ownedAddresses(wallet);
+}
+
+function defaultRecvIndex() {
+  const book = recvBook();
+  if (!book.length) return 0;
+  for (let i = book.length - 1; i >= 0; i--) {
+    if (!book[i].used && book[i].role !== 'home') return i;
+  }
+  return book.length - 1;
+}
+
+async function paintRecvSlot(idx) {
+  const book = recvBook();
+  if (!book.length) return;
+  const i = Math.max(0, Math.min(idx, book.length - 1));
+  window.__recvIdx = i;
+  const row = book[i];
+  window.__recvAddr = row.address;
+  if ($('recv-addr')) $('recv-addr').textContent = row.address;
+  if ($('recv-label')) $('recv-label').textContent = row.role === 'home' ? 'Home' : (row.label || 'Receive');
+  if ($('recv-pager')) $('recv-pager').textContent = (i + 1) + ' / ' + book.length;
+  if ($('recv-prev')) $('recv-prev').disabled = i <= 0;
+  if ($('recv-next')) $('recv-next').disabled = i >= book.length - 1;
+  if ($('recv-fresh')) {
+    $('recv-fresh').className = 'recv-pill wait';
+    $('recv-fresh').textContent = 'Checking…';
+  }
+  if ($('recv-status')) $('recv-status').textContent = 'Watching ' + shortAddr(row.address, 8, 6) + '…';
+  await paintReceiveQr(row.address);
+  try {
+    const n = await fetchTxCount(row.address);
+    row.txCount = n;
+    if (n > 0) markAddressUsed(wallet, row.address, true);
+    else if (row.role !== 'home') row.used = false;
+    saveWallet();
+    const fresh = n === 0;
+    if ($('recv-fresh')) {
+      $('recv-fresh').className = 'recv-pill ' + (fresh ? 'fresh' : 'used');
+      $('recv-fresh').textContent = fresh ? 'Fresh' : ('Used · ' + n + (n === 1 ? ' tx' : ' txs'));
+    }
+  } catch {
+    if ($('recv-fresh')) {
+      $('recv-fresh').className = 'recv-pill ' + (row.used ? 'used' : 'fresh');
+      $('recv-fresh').textContent = row.used ? 'Used' : 'Fresh';
+    }
+  }
+}
+
 async function openReceive(prefill) {
   haptic();
   receiveWatch = true;
   setLiveFast(true);
   migrateReceiveBook(wallet);
-  const tick = String(prefill?.token?.ticker || prefill?.tick || '').toUpperCase();
-  const proto = prefill?.token?.protocol || (tick ? 'kcc20' : 'kas');
-  let recv = await ensureFreshReceive(wallet, { tick, role: tick ? 'kcc20' : 'kas', label: tick ? 'Receive ' + tick : 'Receive' });
   saveWallet();
+  const tick = String(prefill?.token?.ticker || prefill?.tick || '').toUpperCase();
   const title = tick ? 'Receive ' + tick : 'Receive KAS';
-  const book = ownedAddresses(wallet).filter(a => a.role !== 'home');
-  const bookHtml = book.length
-    ? book.slice().reverse().slice(0, 8).map(a => `
-        <div class="row token-row" style="padding:8px 0;">
-          <div style="min-width:0;flex:1">
-            <div class="title">${esc(a.label || 'Receive')}</div>
-            <div class="sub">${esc(shortAddr(a.address, 10, 6))} · ${a.used ? 'used' : 'fresh'}</div>
-          </div>
-          <button class="nav-btn ghost" type="button" data-show-recv="${esc(a.address)}">Show</button>
-        </div>`).join('')
-    : `<div class="empty">Fresh addresses appear here. Home stays for spending.</div>`;
+  const book = recvBook();
+  const start = defaultRecvIndex();
+  const row = book[start] || book[0];
   openSheet(title, `
-    <p class="muted" style="text-align:left;padding:0 0 8px;">KaChing-style privacy: a <strong>new kaspa:q</strong> for this receive. If this one is used, we derive another. ${tick ? esc(tick) + ' cells land on this key.' : 'Native KAS on Layer 1.'}</p>
-    <div class="qr-wrap" id="qr-box"></div>
-    <p class="mono" id="recv-addr" style="text-align:center;font-size:12px;color:var(--label-2);word-break:break-all;padding:0 8px 8px;">${esc(recv.address)}</p>
-    <p class="muted" id="recv-balance">${formatAmount(balanceSompi)} KAS total</p>
-    <p class="muted" id="recv-status">Watching ${esc(shortAddr(recv.address, 8, 6))}…</p>
-    <div class="btn-row" style="margin:8px 0 12px;">
-      <button class="btn btn-gold" id="copy-addr" type="button">Copy</button>
-      <button class="btn btn-glass" id="recv-new" type="button">New address</button>
+    <p class="muted" style="text-align:left;padding:0 0 8px;">Scroll every derived receive key with <b>‹ ›</b>. Fresh means this address has 0 txs on Kaspa. When unused keys run out, derive 20 more.</p>
+    <div class="recv-nav">
+      <button class="recv-arrow" id="recv-prev" type="button" aria-label="Previous address">‹</button>
+      <div class="recv-pager" id="recv-pager">${start + 1} / ${Math.max(book.length, 1)}</div>
+      <button class="recv-arrow" id="recv-next" type="button" aria-label="Next address">›</button>
     </div>
-    <div class="section-label">Receive book</div>
-    <div id="recv-book">${bookHtml}</div>
+    <div style="text-align:center;"><span class="recv-pill wait" id="recv-fresh">Checking…</span></div>
+    <p class="muted" id="recv-label" style="padding:0 0 6px;font-size:12px;">${esc(row?.label || 'Home')}</p>
+    <div class="qr-wrap" id="qr-box"></div>
+    <p class="mono" id="recv-addr" style="text-align:center;font-size:12px;color:var(--label-2);word-break:break-all;padding:0 8px 8px;">${esc(row?.address || '')}</p>
+    <p class="muted" id="recv-balance">${formatAmount(balanceSompi)} KAS total</p>
+    <p class="muted" id="recv-status">Watching…</p>
+    <div class="btn-row" style="margin:8px 0 8px;">
+      <button class="btn btn-gold" id="copy-addr" type="button">Copy</button>
+    </div>
+    <button class="btn btn-glass" id="recv-derive" type="button">Derive 20 more</button>
+    <p class="muted" id="recv-pool" style="padding:8px 0 0;font-size:12px;">${unusedReceiveCount(wallet)} unused in this book</p>
   `, { confirm: 'Done', cancel: false, onConfirm: () => { receiveWatch = false; setLiveFast(false); closeSheet(); } });
-  await paintReceiveQr(recv.address);
-  window.__recvAddr = recv.address;
   $('copy-addr').onclick = async () => {
-    await navigator.clipboard.writeText(window.__recvAddr || recv.address);
+    await navigator.clipboard.writeText(window.__recvAddr || row?.address || '');
     toast('Address copied');
   };
-  $('recv-new').onclick = async () => {
-    const row = await deriveFreshReceiveAddress(wallet, { tick, role: tick ? 'kcc20' : 'kas' });
-    saveWallet();
-    window.__recvAddr = row.address;
-    if ($('recv-addr')) $('recv-addr').textContent = row.address;
-    if ($('recv-status')) $('recv-status').textContent = 'Watching ' + shortAddr(row.address, 8, 6) + '…';
-    await paintReceiveQr(row.address);
-    toast('New receive address');
-    openReceive(prefill);
+  $('recv-prev').onclick = () => paintRecvSlot((window.__recvIdx || 0) - 1);
+  $('recv-next').onclick = () => paintRecvSlot((window.__recvIdx || 0) + 1);
+  $('recv-derive').onclick = async () => {
+    const btn = $('recv-derive');
+    if (btn) { btn.disabled = true; btn.textContent = 'Deriving…'; }
+    toast('Deriving 20 receive addresses…');
+    try {
+      const added = await deriveReceiveBatch(wallet, 20, { tick, role: tick ? 'kcc20' : 'kas' });
+      saveWallet();
+      const bookNow = recvBook();
+      const firstNew = bookNow.findIndex(a => a.address === added[0]?.address);
+      if ($('recv-pool')) $('recv-pool').textContent = unusedReceiveCount(wallet) + ' unused in this book';
+      await paintRecvSlot(firstNew >= 0 ? firstNew : bookNow.length - 1);
+      toast('Added 20 addresses');
+    } catch (e) {
+      toast(errText(e));
+    }
+    if (btn) { btn.disabled = false; btn.textContent = 'Derive 20 more'; }
   };
-  $('recv-book')?.addEventListener('click', e => {
-    const b = e.target.closest('[data-show-recv]');
-    if (!b?.dataset.showRecv) return;
-    window.__recvAddr = b.dataset.showRecv;
-    if ($('recv-addr')) $('recv-addr').textContent = b.dataset.showRecv;
-    paintReceiveQr(b.dataset.showRecv);
-  });
+  await paintRecvSlot(start);
 }
 
 function openSettings() {

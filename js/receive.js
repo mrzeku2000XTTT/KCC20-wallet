@@ -1,5 +1,5 @@
 /* KaChing-style fresh receive addresses. Keys stay on-device. */
-import { generatePrivateKey, createKeypairFromHex } from './crypto.js?v=68';
+import { generatePrivateKey, createKeypairFromHex } from './crypto.js?v=69';
 
 function rid() {
   try { return crypto.randomUUID(); } catch { return String(Date.now()) + Math.random().toString(16).slice(2); }
@@ -90,6 +90,24 @@ export async function ensureFreshReceive(wallet, opts = {}) {
   const hit = currentReceive(wallet, opts);
   if (hit) return hit;
   return deriveFreshReceiveAddress(wallet, opts);
+}
+
+export function unusedReceiveCount(wallet) {
+  return ownedAddresses(wallet).filter(a => a.role !== 'home' && !a.used).length;
+}
+
+export async function deriveReceiveBatch(wallet, n = 20, opts = {}) {
+  migrateReceiveBook(wallet);
+  const count = Math.max(1, Math.min(40, Number(n) || 20));
+  const start = ownedAddresses(wallet).filter(a => a.role !== 'home').length;
+  const out = [];
+  for (let i = 0; i < count; i++) {
+    out.push(await deriveFreshReceiveAddress(wallet, {
+      ...opts,
+      label: opts.tick ? ('Receive ' + String(opts.tick).toUpperCase()) : ('Receive ' + (start + i + 1))
+    }));
+  }
+  return out;
 }
 
 export function keyringFor(wallet) {

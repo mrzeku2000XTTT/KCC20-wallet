@@ -2,7 +2,7 @@
 import {
   hexToBytes, kaspaAddressFromScriptHash, validateKaspaAddress,
   validateAndCleanUtxo, deepCloneAndFreeze, kasToSompi
-} from './crypto.js?v=72';
+} from './crypto.js?v=73';
 
 const API = 'https://api.kaspa.org';
 
@@ -369,6 +369,132 @@ export async function newHashlockSecret() {
   return { secretHex, secretHashHex: await sha256Hex(secret) };
 }
 
+/** Same P2SH wrap as covenants/xmsslock/deploy_xmss_generic.mjs */
+export async function p2shFromRedeemHex(redeemHex) {
+  const k = await loadKaspaSdk();
+  const hex = hexish(redeemHex);
+  if (!hex || hex.length < 40) throw new Error('Redeem script is too short');
+  const sb = k.ScriptBuilder.fromScript(hexToBytes(hex));
+  const p2sh = sb.createPayToScriptHashScript();
+  const addr = k.addressFromScriptPublicKey(p2sh, 'mainnet');
+  if (!addr) throw new Error('SDK did not produce a P2SH address');
+  return {
+    address: String(addr),
+    redeemHex: hex,
+    spkHex: hexish(p2sh.script),
+    scriptBytes: hex.length / 2,
+    type: 'xmss'
+  };
+}
+
+export function parseXmssKit(raw) {
+  const t = String(raw || '').trim();
+  if (!t) throw new Error('Paste the PUBLIC kit from xmss_keygen.py');
+  if (t.startsWith('{') || t.startsWith('[')) {
+    let obj;
+    try { obj = JSON.parse(t); } catch { throw new Error('That JSON is not valid'); }
+    if (obj?.sec_seed_hex) {
+      throw new Error('That is a PRIVATE key file. Never paste it here. Use the .public.json kit.');
+    }
+    const redeem = obj.redeem_script_hex || obj.redeemScriptHex || obj.scriptHex || obj.script_hex || '';
+    if (!redeem) throw new Error('No redeem_script_hex in this JSON. Use the public kit.');
+    return {
+      redeemHex: hexish(redeem),
+      height: obj.height || null,
+      masterRoot: obj.master_root_hex || obj.masterRootHex || '',
+      scriptBytes: obj.script_bytes || hexish(redeem).length / 2
+    };
+  }
+  const hex = t.replace(/\s+/g, '').replace(/^0x/i, '');
+  if (!/^[0-9a-fA-F]+$/.test(hex) || hex.length % 2 !== 0 || hex.length < 200) {
+    throw new Error('Paste public kit JSON, or a long redeem-script hex');
+  }
+  return { redeemHex: hex, height: null, masterRoot: '', scriptBytes: hex.length / 2 };
+}
+
+export function parseXmssWitness(raw) {
+  const t = String(raw || '').trim();
+  if (!t) throw new Error('Paste the witness JSON from xmss_sign.py');
+  let obj;
+  try { obj = JSON.parse(t); } catch { throw new Error('Witness must be JSON from xmss_sign.py'); }
+  const list = Array.isArray(obj) ? obj
+    : Array.isArray(obj.witness_hex) ? obj.witness_hex
+    : Array.isArray(obj.witnessHex) ? obj.witnessHex
+    : null;
+  if (!list?.length) throw new Error('Witness JSON needs a witness_hex array');
+  return list.map(h => hexish(h)).filter(Boolean);
+}
+
+function pushHex(dataHex) {
+  const b = hexToBytes(hexish(dataHex));
+  const n = b.length;
+  let hdr;
+  if (n <= 75) hdr = [n];
+  else if (n <= 255) hdr = [0x4c, n];
+  else if (n <= 65535) hdr = [0x4d, n & 0xff, (n >> 8) & 0xff];
+  else hdr = [0x4e, n & 0xff, (n >> 8) & 0xff, (n >> 16) & 0xff, (n >>> 24) & 0xff];
+  return hexish(new Uint8Array(hdr)) + hexish(b);
+}
+
+export function assembleXmssScriptSig(redeemHex, witnessHexes) {
+  return (witnessHexes || []).map(h => pushHex(h)).join('') + pushHex(redeemHex);
+}
+
+/** Two-input spend: XMSS covenant + Schnorr fee UTXO. Matches spend_xmss_generic.mjs. */
+export async function spendXmssVault({ wallet, vault, utxos, feeUtxos, witness, dest }) {
+  const k = await loadKaspaSdk();
+  const redeemHex = vault?.scriptHex;
+  if (!redeemHex) throw new Error('This Quantum Vault has no redeem script');
+  const parts = parseXmssWitness(typeof witness === 'string' ? witness : JSON.stringify(witness));
+  const cov = restUtxosToEntries(utxos, vault.address);
+  if (!cov.length) throw new Error('No coins at this Quantum Vault yet');
+  const covAmt = cov.reduce((a, e) => a + e.amount, 0n);
+  const fees = restUtxosToEntries(feeUtxos || [], wallet.address)
+    .map(e => ({ ...e, privKey: e.privKey || wallet.privKey }))
+    .sort((a, b) => (a.amount < b.amount ? 1 : -1));
+  const FEE = 32_000_000n;
+  const feeEntry = fees.find(e => e.amount >= FEE + 10_000n);
+  if (!feeEntry) {
+    throw new Error('XMSS spend needs about 0.32 KAS in this wallet for the network fee (the script is large). Receive a bit more KAS first.');
+  }
+  const destAddr = dest || wallet.address;
+  const outAmt = covAmt + feeEntry.amount - FEE;
+  if (outAmt <= 0n) throw new Error('Not enough to cover the XMSS spend fee');
+  const { rpc, url } = await connectPublicNode();
+  const tx = k.createTransaction(
+    [...cov, feeEntry],
+    [{ address: destAddr, amount: outAmt }],
+    0n,
+    undefined,
+    1
+  );
+  tx.version = 1;
+  const xmssScript = assembleXmssScriptSig(redeemHex, parts);
+  tx.inputs[0].signatureScript = xmssScript;
+  tx.inputs[0].sigOpCount = 0;
+  tx.inputs[0].computeBudget = 1400;
+  tx.inputs[0].sequence = 0n;
+  const priv = new k.PrivateKey(feeEntry.privKey || wallet.privKey);
+  const feeSig = hexish(k.createInputSignature(tx, 1, priv, k.SighashType.All));
+  tx.inputs[1].signatureScript = feeSig;
+  tx.inputs[1].sigOpCount = 0;
+  tx.inputs[1].computeBudget = 10;
+  tx.inputs[1].sequence = 0n;
+  try { k.updateTransactionMass('mainnet', tx); } catch {}
+  const txId = await submitSignedRpc(k, rpc, url, tx, {
+    sigOpCount: 0,
+    computeBudget: 1400,
+    lockTime: 0,
+    scripts: [xmssScript, feeSig]
+  });
+  return {
+    txId,
+    amountKas: Number(outAmt) / 1e8,
+    feeKas: Number(FEE) / 1e8,
+    node: url
+  };
+}
+
 /* Same public nodes this repo uses in covenants/* deploy/spend scripts. */
 const PUBLIC_WRPC = [
   'wss://ivy.kaspa.green/kaspa/mainnet/wrpc/borsh',
@@ -636,7 +762,7 @@ async function submitSignedRpc(k, rpc, url, tx, { sigOpCount, computeBudget, loc
     inp.signatureScript = hexish(scripts?.[i] || live[i].signatureScript);
     inp.sequence = Number(live[i].sequence ?? inp.sequence ?? 0);
     inp.sigOpCount = opCount;
-    if (version >= 1) inp.computeBudget = Number(computeBudget ?? 10);
+    if (version >= 1) inp.computeBudget = Number(live[i].computeBudget ?? computeBudget ?? 10);
   });
   if (obj.inputs.some(inp => !inp.signatureScript || inp.signatureScript.length < 20)) {
     throw new Error('Refusing to broadcast — an input is missing its signature');
@@ -649,7 +775,7 @@ async function submitSignedRpc(k, rpc, url, tx, { sigOpCount, computeBudget, loc
     try {
       for (const inp of tx.inputs) {
         inp.sigOpCount = opCount;
-        if (version >= 1) inp.computeBudget = Number(computeBudget ?? 10);
+        if (version >= 1) inp.computeBudget = Number(inp.computeBudget ?? computeBudget ?? 10);
       }
       let last = e;
       for (let i = 0; i < 4; i++) {

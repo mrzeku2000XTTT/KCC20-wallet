@@ -3,32 +3,32 @@ import {
   isValidKaspaAddress, validateKaspaAddress, shortAddr, hexToBytes, privKeyToHex,
   derivePublicKey, kaspaAddressFromPubkey, bytesToHex, kasToSompi, sompiToKasString,
   validateAndCleanUtxo
-} from './crypto.js?v=72';
+} from './crypto.js?v=73';
 import {
   NATIVE_KAS, VAULT_PRODUCTS, loadWatchlist, addToken, removeToken,
   loadVaults, saveVault, updateVault, formatAmount, formatTokenUnits, tokenColor,
   fetchKcc20Portfolio, fetchKrc20Portfolio, fetchKcc20PortfolioMany, fetchKrc20PortfolioMany,
-  krc20Logo, toTokenRaw, setVaultOwner, kcc20Identicon
-} from './kcc20.js?v=72';
-import { parseIntent, describeIntent, askFor, parseDurationField, interpretVaultChat, normalizeChat } from './intent.js?v=72';
-import { payloadFromAddress } from './script.js?v=72';
-import { explainTransaction, scorpionAnswer } from './scorpion.js?v=72';
+  krc20Logo, toTokenRaw, setVaultOwner, kcc20Identicon, VAULT_GROUPS
+} from './kcc20.js?v=73';
+import { parseIntent, describeIntent, askFor, parseDurationField, interpretVaultChat, normalizeChat } from './intent.js?v=73';
+import { payloadFromAddress } from './script.js?v=73';
+import { explainTransaction, scorpionAnswer } from './scorpion.js?v=73';
 import {
   sendKas, fetchAddressUtxos, fetchAddressBalance, loadKaspaSdk,
   buildTimelockCovenant, buildEscrowCovenant, buildMultisigCovenant, currentDaa,
   pingPublicNode, sweepVault, toRpcTransaction, p2shSpendScript, planKasPayment, storageMassOk,
   compoundUtxos, sendKrc20, sendKcc20, loadKrc20Pending, lockKcc20Timelock, sweepKcc20Capsule,
   fetchOwnedUtxos, buildSentinelChain, buildRecurringChain, buildHashlockCovenant,
-  newHashlockSecret, checkinHop, currentHop
-} from './tx.js?v=72';
-import { kronMarkets, quoteKronTrade, executeKronTrade, formatKasSompi, lookupKronTick, tradeCostLines, attachKronLogos } from './kronTrade.js?v=72';
+  newHashlockSecret, checkinHop, currentHop, parseXmssKit, p2shFromRedeemHex, spendXmssVault
+} from './tx.js?v=73';
+import { kronMarkets, quoteKronTrade, executeKronTrade, formatKasSompi, lookupKronTick, tradeCostLines, attachKronLogos } from './kronTrade.js?v=73';
 import {
   migrateReceiveBook, ownedAddresses, markAddressUsed, currentReceive,
   deriveReceiveBatch, unusedReceiveCount, ensurePrivacyBook
-} from './receive.js?v=72';
-import { knsResolve, knsPrimary, knsDomainsFor, knsOwnerMatches, knsAppUrl, looksLikeKasDomain, normalizeKasDomain } from './kns.js?v=72';
+} from './receive.js?v=73';
+import { knsResolve, knsPrimary, knsDomainsFor, knsOwnerMatches, knsAppUrl, looksLikeKasDomain, normalizeKasDomain } from './kns.js?v=73';
 
-export const BUILD = '72';
+export const BUILD = '73';
 
 function errText(e) {
   if (e == null) return 'Unknown error';
@@ -38,7 +38,8 @@ function errText(e) {
 
 function productForIntent(intent) {
   if (intent.type === 'kcc20lock') return VAULT_PRODUCTS.find(p => p.id === 'kcc20freeze');
-  if (intent.type === 'hashlock' || intent.type === 'xmss') return VAULT_PRODUCTS.find(p => p.id === 'xmss');
+  if (intent.type === 'hashlock') return VAULT_PRODUCTS.find(p => p.id === 'hashlock');
+  if (intent.type === 'xmss') return VAULT_PRODUCTS.find(p => p.id === 'xmss');
   if (intent.type === 'timelock') return VAULT_PRODUCTS.find(p => p.id === 'timelock');
   return VAULT_PRODUCTS.find(p => p.id === intent.type)
     || VAULT_PRODUCTS.find(p => p.type === intent.type)
@@ -97,6 +98,7 @@ function canSweepVault(v, daa) {
     if (v.unlockDaa && now && Number(now) < Number(v.unlockDaa)) return false;
     return Number(v.fundedSompi || 0) > 0;
   }
+  if (v.type === 'xmss') return Number(v.fundedSompi || 0) > 0;
   if ((v.type === 'timelock' || isKcc20Vault(v) || v.unlockDaa) && v.unlockDaa) {
     if (now && Number(now) < Number(v.unlockDaa)) return false;
   }
@@ -1325,15 +1327,25 @@ function renderVault() {
   const history = all.filter(isVaultHistory);
   const live = all.filter(v => !isVaultHistory(v));
   const mine = showVaultHistory ? history : live;
-  $('vault-products').innerHTML = VAULT_PRODUCTS.map(p => `
-    <button class="glass product" data-product="${esc(p.id)}" title="${esc(p.blurb)}">
-      <div class="glyph">${esc(p.tag)}</div>
-      <h4>${esc(p.name)}</h4>
-    </button>
-  `).join('');
+  $('vault-products').innerHTML = VAULT_GROUPS.map(g => {
+    const items = VAULT_PRODUCTS.filter(p => p.group === g.id);
+    return `
+      <div class="vault-group">
+        <div class="section-label">${esc(g.title)}</div>
+        <p class="vault-hint">${esc(g.hint)}</p>
+        <div class="vault-grid">
+          ${items.map(p => `
+            <button class="glass product" data-product="${esc(p.id)}" type="button">
+              <div class="glyph">${esc(p.tag)}</div>
+              <h4>${esc(p.name)}</h4>
+              <span class="product-why">${esc(p.why || p.blurb)}</span>
+            </button>`).join('')}
+        </div>
+      </div>`;
+  }).join('');
   const empty = showVaultHistory
-    ? 'No swept vaults yet. Finished capsules land here.'
-    : 'No active vaults. Create a time capsule, or open History for swept ones.';
+    ? 'Nothing finished yet. Swept capsules land here.'
+    : 'No vaults yet. Tap Time Capsule to lock a little KAS for a few minutes — a safe first try.';
   $('vault-mine').innerHTML = mine.length
     ? mine.map(v => `
       <div class="row token-row vault-card${showVaultHistory ? ' history' : ''}">
@@ -2536,6 +2548,7 @@ async function maybeAutoUnlock() {
     for (const v of mine) {
       const unlock = Number((currentHop(v) || v).unlockDaa || v.unlockDaa || 0);
       if (unlock && daa < unlock) continue;
+      if (v.type === 'xmss') continue;
       if (isHopVault(v) && v.params?.beneficiary && v.params.beneficiary !== wallet.address) continue;
       if (autoSweepTried.has(v.address)) continue;
       let utxosV = [];
@@ -3225,6 +3238,9 @@ function readProductForm(type) {
     params.receiver = $('ct-receiver')?.value.trim() || '';
     params.secretHex = ($('ct-secret')?.value || '').trim();
   }
+  if (type === 'xmss') {
+    params.kit = $('ct-kit')?.value || '';
+  }
   return params;
 }
 
@@ -3233,6 +3249,30 @@ function openProduct(id, prefill) {
   if (!p) return;
   haptic();
   if (p.type === 'kcc20') { showPage('tokens'); return; }
+  if (p.type === 'xmss') {
+    const kasMax = maxFillForAsset({ native: true, protocol: 'kas', ticker: 'KAS', decimals: 8, balance: String(balanceSompi) });
+    openSheet('XMSS vault', `
+      <p class="muted" style="text-align:left;padding:0 0 10px;">This is the real post-quantum lock from <b>kaspa-xmss-covenants</b>. Make keys on a PC (offline is best). This phone only funds the address and later broadcasts a spend.</p>
+      <ol class="vault-steps">
+        <li>On a computer: <code>python3 keygen/xmss_keygen.py</code></li>
+        <li>Paste the <b>public</b> <code>.json</code> below — never the private file.</li>
+        <li>Lock KAS. To spend: <code>xmss_sign.py</code> then paste the witness here.</li>
+      </ol>
+      <div class="field"><label>Public kit JSON</label><textarea id="ct-kit" rows="7" placeholder='{"redeem_script_hex":"...","height":10}' spellcheck="false"></textarea></div>
+      <div class="field"><label>Amount (KAS)</label>
+        <div class="dest-row">
+          <input id="ct-amount" type="text" inputmode="decimal" placeholder="${esc(kasMax)}" value="${esc(prefill?.amountKas || '')}">
+          <button class="max-btn" id="ct-kas-max" type="button">Max</button>
+        </div>
+      </div>
+      <p class="muted" style="text-align:left;">Keep ~0.32 KAS extra in this wallet for the later spend fee. The XMSS script is large — that is the proven mainnet cost.</p>
+    `, { confirm: 'Build vault', gold: true, onConfirm: () => buildCovenant(p, readProductForm('xmss')) });
+    $('ct-kas-max')?.addEventListener('click', () => {
+      if ($('ct-amount')) $('ct-amount').value = kasMax;
+      haptic();
+    });
+    return;
+  }
   if (p.type === 'kcc20lock') {
     const ticks = (kccHoldings || []).map(t => t.ticker).filter(Boolean);
     const preTick = String(prefill?.tick || ticks[0] || '').toUpperCase();
@@ -3250,7 +3290,16 @@ function openProduct(id, prefill) {
         </div>
       </div>
       <p class="avail-line" id="ct-token-avail">${held && !held.native ? `Available <b>${esc(formatTokenUnits(held.balance, held.decimals))} ${esc(preTick)}</b> — tap Max to freeze all of it.` : 'No KCC20 in this wallet.'}</p>
-      <div class="field"><label>Duration</label><input id="ct-duration" placeholder="3 minutes or 30 days"></div>
+      <div class="field"><label>How long?</label>
+        <div class="dur-chips" id="ct-dur-chips">
+          <button type="button" data-dur="3 minutes">3 min</button>
+          <button type="button" data-dur="1 hour">1 hour</button>
+          <button type="button" data-dur="1 day">1 day</button>
+          <button type="button" data-dur="7 days">1 week</button>
+          <button type="button" data-dur="30 days">30 days</button>
+        </div>
+        <input id="ct-duration" placeholder="or type 3 minutes">
+      </div>
     `;
     openSheet(p.name, `<p class="muted" style="text-align:left;padding:0 0 12px;">${esc(p.blurb)} Uses ~0.2 KAS witness dust plus the network fee. Tokens stay in a SCRIPT_HASH cell until Sweep.</p>${fields}`, {
       confirm: 'Freeze with PIN', gold: true, onConfirm: () => buildCovenant(p, readProductForm(p.type))
@@ -3277,6 +3326,12 @@ function openProduct(id, prefill) {
       haptic();
     });
     $('ct-tick')?.addEventListener('change', syncFreezeAvail);
+    $('ct-dur-chips')?.addEventListener('click', e => {
+      const b = e.target.closest('button[data-dur]');
+      if (!b) return;
+      $('ct-dur-chips').querySelectorAll('button').forEach(x => x.classList.toggle('on', x === b));
+      if ($('ct-duration')) $('ct-duration').value = b.dataset.dur;
+    });
     return;
   }
   const kasMax = maxFillForAsset({ native: true, protocol: 'kas', ticker: 'KAS', decimals: 8, balance: String(balanceSompi) });
@@ -3287,21 +3342,31 @@ function openProduct(id, prefill) {
       </div>
     </div>
     <p class="avail-line">Available <b>${esc(formatAmount(balanceSompi))} KAS</b> — tap Max to lock all spendable KAS.</p>`;
+  const durField = (label, ph) => `<div class="field"><label>${label}</label>
+      <div class="dur-chips" id="ct-dur-chips">
+        <button type="button" data-dur="3 minutes">3 min</button>
+        <button type="button" data-dur="1 hour">1 hour</button>
+        <button type="button" data-dur="1 day">1 day</button>
+        <button type="button" data-dur="7 days">1 week</button>
+        <button type="button" data-dur="30 days">30 days</button>
+      </div>
+      <input id="ct-duration" placeholder="${ph}">
+    </div>`;
   if (p.type === 'timelock') {
-    fields += `<div class="field"><label>Duration</label><input id="ct-duration" placeholder="3 minutes or 30 days"></div>`;
+    fields += durField('How long?', 'or type 3 minutes');
   } else if (p.type === 'sentinel') {
-    fields += `<div class="field"><label>Check-in window</label><input id="ct-duration" placeholder="30 minutes or 7 days"></div>
-      <div class="field"><label>Beneficiary (heir)</label><input id="ct-beneficiary" placeholder="kaspa:q… (blank = this wallet)" spellcheck="false"></div>
-      <div class="field"><label>Check-ins</label><input id="ct-hops" type="number" min="2" max="8" value="6"></div>`;
+    fields += durField('Check-in window', '30 minutes or 7 days') + `
+      <div class="field"><label>Who gets it if you miss a check-in?</label><input id="ct-beneficiary" placeholder="kaspa:q… (blank = you)" spellcheck="false"></div>
+      <div class="field"><label>How many check-ins?</label><input id="ct-hops" type="number" min="2" max="8" value="6"></div>`;
   } else if (p.type === 'recurring') {
-    fields += `<div class="field"><label>Pay each check-in (KAS)</label><input id="ct-pay" type="text" inputmode="decimal" placeholder="0.05"></div>
-      <div class="field"><label>Payee</label><input id="ct-payee" placeholder="kaspa:q…" spellcheck="false"></div>
-      <div class="field"><label>Periods</label><input id="ct-periods" type="number" min="2" max="8" value="4"></div>
-      <div class="field"><label>Window between payments</label><input id="ct-duration" placeholder="7 days"></div>`;
+    fields += `<div class="field"><label>Pay each time (KAS)</label><input id="ct-pay" type="text" inputmode="decimal" placeholder="0.05"></div>
+      <div class="field"><label>Pay to</label><input id="ct-payee" placeholder="kaspa:q…" spellcheck="false"></div>
+      <div class="field"><label>How many payments?</label><input id="ct-periods" type="number" min="2" max="8" value="4"></div>
+      ${durField('Time between payments', '7 days')}`;
   } else if (p.type === 'hashlock') {
-    fields += `<div class="field"><label>Refund after</label><input id="ct-duration" placeholder="30 minutes or 7 days"></div>
-      <div class="field"><label>Receiver (blank = this wallet)</label><input id="ct-receiver" placeholder="kaspa:q…" spellcheck="false"></div>
-      <div class="field"><label>Secret hex (blank = generate)</label><input id="ct-secret" placeholder="optional 32-byte hex" spellcheck="false"></div>`;
+    fields += durField('Refund after', '30 minutes or 7 days') + `
+      <div class="field"><label>Who can claim with the secret?</label><input id="ct-receiver" placeholder="kaspa:q… (blank = you)" spellcheck="false"></div>
+      <div class="field"><label>Secret (blank = we make one)</label><input id="ct-secret" placeholder="optional 32-byte hex" spellcheck="false"></div>`;
   } else if (p.type === 'escrow') {
     fields += `<div class="field"><label>Buyer address</label><input id="ct-buyer" placeholder="kaspa:q…" spellcheck="false"></div>`;
   } else if (p.type === 'multisig') {
@@ -3314,6 +3379,12 @@ function openProduct(id, prefill) {
     if ($('ct-amount')) $('ct-amount').value = kasMax;
     if (kasMax === '0') toast('Need KAS in this wallet');
     haptic();
+  });
+  $('ct-dur-chips')?.addEventListener('click', e => {
+    const b = e.target.closest('button[data-dur]');
+    if (!b) return;
+    $('ct-dur-chips').querySelectorAll('button').forEach(x => x.classList.toggle('on', x === b));
+    if ($('ct-duration')) $('ct-duration').value = b.dataset.dur;
   });
 }
 
@@ -3434,7 +3505,13 @@ async function buildCovenant(p, explicit) {
     let built;
     const minutes = payload.lockMinutes || (payload.lockDays * 1440);
     const deposit = kasToSompi(params.amountKas);
-    if (p.type === 'timelock') {
+    if (p.type === 'xmss') {
+      const kit = parseXmssKit(params.kit);
+      built = await p2shFromRedeemHex(kit.redeemHex);
+      payload.kitHeight = kit.height;
+      payload.masterRoot = kit.masterRoot;
+      payload.scriptBytes = kit.scriptBytes;
+    } else if (p.type === 'timelock') {
       built = await buildTimelockCovenant({ pubkeyHex: wallet.pubKey, minutes });
     } else if (p.type === 'sentinel') {
       const heir = payload.beneficiary || wallet.address;
@@ -3609,6 +3686,7 @@ function openLockTimer(vault) {
   const isMsig = vault.type === 'multisig';
   const hop = isHopVault(vault);
   const isHash = vault.type === 'hashlock';
+  const isXmss = vault.type === 'xmss';
   const iAmBuyer = isEscrow && wallet?.address === vault.params?.buyerAddress;
   const msigReady = isMsig && !!vaultCounterpartyKey(vault);
   const hopN = (vault.hops || []).length;
@@ -3618,6 +3696,7 @@ function openLockTimer(vault) {
   else if (kcc) help = 'Lock has expired. Sweep now, or wait — auto-return is on.';
   else if (hop && locked) help = 'Check-in now to move the coins to the next hop. If this window ends, the beneficiary can claim.';
   else if (hop) help = 'Check-in window ended. Sweep / timeout releases to the beneficiary.';
+  else if (isXmss) help = 'Paste the witness JSON from xmss_sign.py (offline). Spend uses ~0.32 KAS from this wallet as the fee input.';
   else if (isHash && locked) help = 'Claim with the secret, or wait for the refund timer.';
   else if (isHash) help = 'Refund timer ended. Sweep returns KAS to the sender.';
   else if (vault.unlockDaa && locked) help = 'Still frozen on-chain. When this timer hits zero, Sweep returns the KAS automatically.';
@@ -3627,7 +3706,7 @@ function openLockTimer(vault) {
   else if (isMsig && !msigReady) help = '2-of-2: import the counterparty wallet on You, switch back here, then Sweep.';
   else if (isMsig) help = 'Both keys are on this device. Sweep signs 2-of-2 and returns KAS here.';
   const sweepLabel = isEscrow ? (iAmBuyer ? 'Release to me' : 'Refund to me')
-    : (hop ? 'Timeout release' : (isHash && locked ? 'Claim with secret' : 'Sweep to wallet'));
+    : (isXmss ? 'Spend with witness' : (hop ? 'Timeout release' : (isHash && locked ? 'Claim with secret' : 'Sweep to wallet')));
   openSheet(vault.name || 'Time Capsule', `
     <div class="kv"><span class="k">Locked</span><span class="v">${tok ? esc(tok) : formatAmount(vault.fundedSompi || 0) + ' KAS'}</span></div>
     ${kcc ? `<div class="kv"><span class="k">Witness dust</span><span class="v">${formatAmount(vault.fundedSompi || 0)} KAS</span></div>` : ''}
@@ -3641,6 +3720,7 @@ function openLockTimer(vault) {
     ${vault.params?.beneficiary ? `<div class="kv"><span class="k">Beneficiary</span><span class="v">${esc(shortAddr(vault.params.beneficiary, 10, 6))}</span></div>` : ''}
     ${vault.payeeAddr ? `<div class="kv"><span class="k">Payee</span><span class="v">${esc(shortAddr(vault.payeeAddr, 10, 6))}</span></div>` : ''}
     ${isHash ? `<div class="field"><label>Secret</label><input id="v-secret" placeholder="32-byte hex" value="${esc(vault.params?.secretHex || '')}" spellcheck="false"></div>` : ''}
+    ${isXmss ? `<div class="field"><label>Witness JSON</label><textarea id="v-witness" rows="6" placeholder='{"witness_hex":["…"]}' spellcheck="false"></textarea></div>` : ''}
     <div class="kv"><span class="k">Address</span><span class="v">${esc(vault.address)}</span></div>
     <p class="muted" style="text-align:left;">${esc(help)}</p>
     ${canCheckinVault(vault) ? `<button class="btn btn-gold" id="v-checkin" style="margin-top:14px;">Check in</button>` : ''}
@@ -3654,7 +3734,8 @@ function openLockTimer(vault) {
   $('v-fund')?.addEventListener('click', () => fundVault(vault).catch(e => toast(errText(e))));
   $('v-unlock').onclick = () => unlockVault(vault, {
     escrowRelease: isEscrow && iAmBuyer,
-    secretHex: $('v-secret')?.value.trim() || vault.params?.secretHex || ''
+    secretHex: $('v-secret')?.value.trim() || vault.params?.secretHex || '',
+    witness: $('v-witness')?.value || ''
   }).catch(e => { setSheetStatus(errText(e), true); toast(errText(e)); });
   $('v-checkin')?.addEventListener('click', () => runCheckin(vault).catch(e => { setSheetStatus(errText(e), true); toast(errText(e)); }));
 }
@@ -3711,6 +3792,10 @@ async function unlockVault(vault, opts = {}) {
     toast('Import the counterparty wallet first');
     return;
   }
+  if (vault.type === 'xmss' && !String(opts.witness || '').trim()) {
+    toast('Paste the witness JSON from xmss_sign.py first');
+    return;
+  }
   openSheet(kcc ? 'Unfreeze KCC20' : 'Sweep vault', `
     <p class="muted" style="text-align:left;">${kcc ? 'Spending the CLTV witness and returning ' + esc(vault.tick || 'KCC20') + ' to this wallet.' : 'Returning KAS from this covenant to your wallet.'}</p>
     <div class="kv"><span class="k">From</span><span class="v">${esc(vault.address || '')}</span></div>
@@ -3728,10 +3813,17 @@ async function unlockVault(vault, opts = {}) {
   if (!utxosV.length && !kcc) throw new Error('Nothing to sweep — this address has 0 UTXOs');
   setSheetStatus('Connecting to public node…');
   await pingPublicNode();
-  setSheetStatus(kcc ? 'Signing SCRIPT_HASH witness + CLTV…' : 'Signing P2SH redeem…');
-  const result = kcc
-    ? await sweepKcc20Capsule({ wallet, vault, utxos: utxosV, onStatus: (m) => setSheetStatus(m) })
-    : await sweepVault({
+  setSheetStatus(vault.type === 'xmss' ? 'Building XMSS witness spend…' : (kcc ? 'Signing SCRIPT_HASH witness + CLTV…' : 'Signing P2SH redeem…'));
+  let result;
+  if (kcc) {
+    result = await sweepKcc20Capsule({ wallet, vault, utxos: utxosV, onStatus: (m) => setSheetStatus(m) });
+  } else if (vault.type === 'xmss') {
+    const feeUtxos = await fetchOwnedUtxos(wallet);
+    result = await spendXmssVault({
+      wallet, vault, utxos: utxosV, feeUtxos, witness: opts.witness, dest: wallet.address
+    });
+  } else {
+    result = await sweepVault({
       wallet,
       vault,
       utxos: utxosV,
@@ -3739,6 +3831,7 @@ async function unlockVault(vault, opts = {}) {
       escrowRelease: !!opts.escrowRelease,
       secretHex: opts.secretHex || vault.params?.secretHex || ''
     });
+  }
   updateVault(vault.address, { status: 'swept', unlockTxId: result.txId, fundedSompi: 0, tokenAmount: kcc ? '0' : vault.tokenAmount });
   if (kcc && result.tokenAmount) applyLocalTokenDelta(vault.tick, 'kcc20', result.tokenAmount);
   afterTx();

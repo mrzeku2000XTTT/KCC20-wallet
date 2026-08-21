@@ -12,7 +12,7 @@
   <link rel="icon" href="assets/icon.png">
   <title>KCC20 Wallet</title>
   <meta http-equiv="Cache-Control" content="no-store, no-cache, must-revalidate">
-  <link rel="stylesheet" href="css/app.css?v=72">
+  <link rel="stylesheet" href="css/app.css?v=73">
 </head>
 <body>
   <img class="bg-poster" src="assets/bg.jpg" alt="">
@@ -133,7 +133,7 @@
                 <span class="chat-ready">getting ready for DAGKnight</span>
               </div>
               <div class="chat" id="chat-log">
-                <div class="bubble ai">I’m <strong>Argent</strong> — this wallet’s vault agent. Typos are fine. Try <em>lock .15 kas for 3 minutes</em> or <em>freeze 10 kdag 1 min</em>. I map messy English onto Time Capsule, KCC20 Freeze, escrow, and 2-of-2.</div>
+                <div class="bubble ai">I’m <strong>Argent</strong>. Tap a tile, or type <em>lock .15 kas for 3 minutes</em>. XMSS: paste a public kit from this repo’s keygen — keys stay offline.</div>
               </div>
               <div class="chatbar">
                 <input id="chat-input" placeholder="Tell Argent what to lock…" autocomplete="off" enterkeyhint="send">
@@ -369,7 +369,7 @@
     })();
   </script>
   <script type="module">
-    import('./js/app.js?v=72').catch(function (err) {
+    import('./js/app.js?v=73').catch(function (err) {
       console.error(err);
       var phone = document.getElementById('phone');
       var d = document.createElement('div');

@@ -22,70 +22,84 @@ export const SEED_TOKENS = [
   }
 ];
 
+export const VAULT_GROUPS = [
+  { id: 'simple', title: 'Everyday', hint: 'Lock, hold for someone, or freeze tokens. One PIN.' },
+  { id: 'alive', title: 'Stay alive', hint: 'Tap Check in before the timer, or coins move to the heir / payee.' },
+  { id: 'quantum', title: 'Quantum-safe', hint: 'Hash lock in this app. Full XMSS from this GitHub repo: paste a public kit.' }
+];
+
 export const VAULT_PRODUCTS = [
   {
     id: 'timelock',
+    group: 'simple',
     name: 'Time Capsule',
     type: 'timelock',
-    tag: 'CLTV',
-    status: 'mainnet',
-    blurb: 'Lock KAS until a DAA. This wallet auto-sweeps it back when the timer ends. Same CLTV redeem as covenants/time_capsule, with Schnorr spend.'
-  },
-  {
-    id: 'sentinel',
-    name: 'Sentinel',
-    type: 'sentinel',
-    tag: 'DMS',
-    status: 'mainnet',
-    blurb: 'Dead-man hop chain: Check-in moves coins to the next hop (resets the window). If you miss it, anyone can release to the beneficiary. Same IF/ELSE + OpTxOutput* tail as covenants/sentinel.'
-  },
-  {
-    id: 'recurring',
-    name: 'Recurring',
-    type: 'recurring',
-    tag: 'PAY',
-    status: 'mainnet',
-    blurb: 'Sentinel-x402 pattern: each Check-in pays the payee and relocks the rest. Miss a window and leftover refunds to you.'
-  },
-  {
-    id: 'xmss',
-    name: 'Hash Vault',
-    type: 'hashlock',
-    tag: 'HTLC',
-    status: 'mainnet',
-    blurb: 'SHA-256 hash lock + timeout refund (HTLC). Claim with the secret, or refund after the timer. Full 130KB XMSS vaults stay in covenants/xmsslock CLI (mass/fees).'
+    tag: '⏱',
+    why: 'Lock KAS. It comes back by itself when time is up.',
+    blurb: 'Pick how long. We send KAS into a capsule and sweep it back when the timer ends.'
   },
   {
     id: 'escrow',
-    name: 'Escrow',
+    group: 'simple',
+    name: 'Hold for buyer',
     type: 'escrow',
-    tag: 'IF',
-    status: 'mainnet',
-    blurb: 'Seller refunds any time (ELSE). Buyer claims if that kaspa:q wallet is imported (IF).'
+    tag: '🤝',
+    why: 'You can refund. Buyer can claim if their wallet is imported here.',
+    blurb: 'Seller refunds any time. Buyer claims if that kaspa:q wallet is also in this app.'
   },
   {
     id: 'multisig',
-    name: '2-of-2 Multisig',
+    group: 'simple',
+    name: 'Two keys',
     type: 'multisig',
-    tag: '2-2',
-    status: 'mainnet',
-    blurb: 'Both Schnorr keys must sign. Counterparty must be another wallet in this app.'
+    tag: '2',
+    why: 'Both wallets on this phone must agree to spend.',
+    blurb: 'Import the other person\'s wallet on You first, then lock. Sweep signs both keys.'
   },
   {
     id: 'kcc20freeze',
-    name: 'KCC20 Freeze',
+    group: 'simple',
+    name: 'Freeze tokens',
     type: 'kcc20lock',
-    tag: 'CLTV+',
-    status: 'mainnet',
-    blurb: 'Fund ~0.2 KAS CLTV, then move KCC20 into SCRIPT_HASH. Auto-sweeps tokens + leftover KAS when the timer ends.'
+    tag: '❄',
+    why: 'Freeze KCC20 for a while. They return when time is up.',
+    blurb: 'Same two steps as Time Capsule: a little KAS witness, then tokens into SCRIPT_HASH.'
   },
   {
-    id: 'kcc20',
-    name: 'KCC20 Transfer',
-    type: 'kcc20',
-    tag: 'KCC20',
-    status: 'standard',
-    blurb: 'Opens Tokens to send KCC20. Not a lock.'
+    id: 'sentinel',
+    group: 'alive',
+    name: 'Dead-man switch',
+    type: 'sentinel',
+    tag: '♥',
+    why: 'Check in to prove you are around. Miss it and the heir can take the KAS.',
+    blurb: 'Same hop chain as covenants/sentinel. Check-in moves to the next hop. Timeout pays the beneficiary.'
+  },
+  {
+    id: 'recurring',
+    group: 'alive',
+    name: 'Pay on a timer',
+    type: 'recurring',
+    tag: '↻',
+    why: 'Each check-in pays someone and relocks the rest.',
+    blurb: 'Sentinel-x402 style. Miss a window and leftover refunds to you.'
+  },
+  {
+    id: 'hashlock',
+    group: 'quantum',
+    name: 'Secret lock',
+    type: 'hashlock',
+    tag: '#',
+    why: 'Claim with a secret, or refund when time is up.',
+    blurb: 'SHA-256 hash lock (HTLC). Easy in-app quantum-adjacent lock.'
+  },
+  {
+    id: 'xmss',
+    group: 'quantum',
+    name: 'XMSS vault',
+    type: 'xmss',
+    tag: '⚛',
+    why: 'The real post-quantum vault from this repo. Paste a public kit, fund, spend with a witness.',
+    blurb: 'Same deploy/spend as covenants/xmsslock. Keys stay offline (xmss_keygen.py / xmss_sign.py). This wallet only funds the P2SH and broadcasts the witness. Spend needs ~0.32 KAS extra for the large script fee.'
   }
 ];
 

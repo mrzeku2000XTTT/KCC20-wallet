@@ -3,16 +3,16 @@ import {
   isValidKaspaAddress, validateKaspaAddress, shortAddr, hexToBytes, privKeyToHex,
   derivePublicKey, kaspaAddressFromPubkey, bytesToHex, kasToSompi, sompiToKasString,
   validateAndCleanUtxo
-} from './crypto.js?v=78';
+} from './crypto.js?v=79';
 import {
   NATIVE_KAS, VAULT_PRODUCTS, loadWatchlist, addToken, removeToken,
   loadVaults, saveVault, updateVault, formatAmount, formatTokenUnits, tokenColor,
   fetchKcc20Portfolio, fetchKrc20Portfolio, fetchKcc20PortfolioMany, fetchKrc20PortfolioMany,
   krc20Logo, toTokenRaw, setVaultOwner, kcc20Identicon, VAULT_GROUPS
-} from './kcc20.js?v=78';
-import { parseIntent, describeIntent, askFor, parseDurationField, interpretVaultChat, normalizeChat } from './intent.js?v=78';
-import { payloadFromAddress } from './script.js?v=78';
-import { explainTransaction, scorpionAnswer } from './scorpion.js?v=78';
+} from './kcc20.js?v=79';
+import { parseIntent, describeIntent, askFor, parseDurationField, interpretVaultChat, normalizeChat } from './intent.js?v=79';
+import { payloadFromAddress } from './script.js?v=79';
+import { explainTransaction, scorpionAnswer } from './scorpion.js?v=79';
 import {
   sendKas, fetchAddressUtxos, fetchAddressBalance, loadKaspaSdk,
   buildTimelockCovenant, buildEscrowCovenant, buildMultisigCovenant, currentDaa,
@@ -20,16 +20,16 @@ import {
   compoundUtxos, sendKrc20, sendKcc20, loadKrc20Pending, lockKcc20Timelock, sweepKcc20Capsule,
   fetchOwnedUtxos, buildSentinelChain, buildRecurringChain, buildHashlockCovenant,
   newHashlockSecret, checkinHop, currentHop, parseXmssKit, p2shFromRedeemHex, spendXmssVault
-} from './tx.js?v=78';
-import { kronMarkets, quoteKronTrade, executeKronTrade, formatKasSompi, lookupKronTick, tradeCostLines, attachKronLogos } from './kronTrade.js?v=78';
+} from './tx.js?v=79';
+import { kronMarkets, quoteKronTrade, executeKronTrade, formatKasSompi, lookupKronTick, tradeCostLines, attachKronLogos } from './kronTrade.js?v=79';
 import {
   migrateReceiveBook, ownedAddresses, markAddressUsed, currentReceive,
   deriveReceiveBatch, unusedReceiveCount, ensurePrivacyBook
-} from './receive.js?v=78';
-import { knsResolve, knsPrimary, knsDomainsFor, knsOwnerMatches, knsAppUrl, looksLikeKasDomain, normalizeKasDomain } from './kns.js?v=78';
-import { runPhoneStudio, runServerStudio } from './studio.js?v=78';
+} from './receive.js?v=79';
+import { knsResolve, knsPrimary, knsDomainsFor, knsOwnerMatches, knsAppUrl, looksLikeKasDomain, normalizeKasDomain } from './kns.js?v=79';
+import { runPhoneStudio, runServerStudio } from './studio.js?v=79';
 
-export const BUILD = '78';
+export const BUILD = '79';
 
 function errText(e) {
   if (e == null) return 'Unknown error';
@@ -306,6 +306,7 @@ function showPage(id) {
   }
   if (id === 'activity') {
     try { renderActivity(window.__txs || []); } catch (e) { console.error(e); }
+    refreshActivityNow();
   }
 }
 
@@ -1426,10 +1427,12 @@ function pushTokenActivity(ev, addr) {
     label: ev.label || (ev.dir === 'out' ? 'Sent' : 'Received'),
     wallet: loadWalletList().find(w => w.address === use)?.name || ''
   };
-  const dup = list.find(x =>
-    x.tick === row.tick && x.dir === row.dir && x.amount === row.amount &&
-    ((row.txId && x.txId === row.txId) || Math.abs((x.time || 0) - row.time) < 180000)
-  );
+  const dup = list.find(x => {
+    if (x.tick !== row.tick || x.dir !== row.dir || x.amount !== row.amount) return false;
+    if ((x.label || '') !== (row.label || '')) return false;
+    if (row.txId && x.txId) return x.txId === row.txId;
+    return Math.abs((x.time || 0) - row.time) < 180000;
+  });
   if (dup) {
     if (row.txId && !dup.txId) {
       dup.txId = row.txId;
@@ -1443,6 +1446,50 @@ function pushTokenActivity(ev, addr) {
   saveTokenActivity(list, use);
   if (currentTab === 'activity') renderActivity(window.__txs || []);
   return row;
+}
+
+function isVaultActivityLabel(label) {
+  return /^(Vault created|Locked|Unlocked|Checked in|Frozen|Unfrozen)$/i.test(String(label || ''));
+}
+
+function noteVaultActivity({ vault, label, dir = 'out', amount, txId = '', tick, protocol, decimals, addr } = {}) {
+  const kcc = !!(vault && (vault.tick || vault.tokenAmount) && (protocol === 'kcc20' || tick));
+  const useTick = String(tick || (kcc ? vault.tick : 'KAS') || 'KAS').toUpperCase();
+  const useProto = protocol || (useTick !== 'KAS' ? 'kcc20' : 'kas');
+  let amt = amount;
+  if (amt == null) {
+    if (useProto !== 'kas') amt = vault?.tokenAmount || vault?.params?.amountToken || '0';
+    else {
+      const kas = Number(vault?.params?.amountKas);
+      amt = Number.isFinite(kas) ? String(Math.round(kas * 1e8)) : String(vault?.fundedSompi || 0);
+    }
+  }
+  return pushTokenActivity({
+    dir,
+    tick: useTick,
+    protocol: useProto,
+    amount: String(amt || '0'),
+    decimals: Number(decimals != null ? decimals : (useProto === 'kas' ? 8 : (vault?.decimals || 0))),
+    txId: txId || '',
+    label: label || 'Locked'
+  }, addr);
+}
+
+function refreshActivityNow() {
+  if (!wallet?.address) {
+    if (currentTab === 'activity') renderActivity(window.__txs || []);
+    return;
+  }
+  const addr = wallet.address;
+  if (currentTab === 'activity') renderActivity(window.__txs || []);
+  fetchWalletTxs(addr).then(txs => {
+    if (!wallet || wallet.address !== addr) return;
+    window.__txs = txs;
+    rememberActiveSnap();
+    if (currentTab === 'activity') renderActivity(txs);
+  }).catch(() => {
+    if (currentTab === 'activity') renderActivity(window.__txs || []);
+  });
 }
 
 async function attachKcc20ReceiveTxid(ev) {
@@ -1520,8 +1567,13 @@ function rowsForWallet(addr, txs, walletName) {
     const tok = tokenActs.find(a => a.txId && a.txId === id);
     const row = summarizeTx(tx, addr);
     if (tok) {
-      row.label = (tok.dir === 'in' ? 'Received ' : 'Sent ') + tok.tick;
-      row.tokenLabel = activityVal(tok);
+      if (isVaultActivityLabel(tok.label)) {
+        row.label = tok.tick && tok.tick !== 'KAS' ? `${tok.label} ${tok.tick}` : tok.label;
+        if (tok.tick && tok.tick !== 'KAS') row.tokenLabel = activityVal(tok);
+      } else {
+        row.label = (tok.dir === 'in' ? 'Received ' : 'Sent ') + tok.tick;
+        row.tokenLabel = activityVal(tok);
+      }
     }
     const expl = explainTransaction(tx, { address: addr, vaults: loadVaults() });
     rows.push({
@@ -1539,16 +1591,21 @@ function rowsForWallet(addr, txs, walletName) {
   for (const a of tokenActs) {
     if (a.txId && chainIds.has(a.txId)) continue;
     const proto = a.protocol === 'krc20' ? 'KRC-20' : (a.protocol === 'kas' || a.tick === 'KAS' ? 'KAS' : 'KCC20');
+    const vaultish = isVaultActivityLabel(a.label);
+    const lab = a.label || (a.dir === 'in' ? 'Received' : 'Sent');
+    const titleCore = vaultish
+      ? (a.tick && a.tick !== 'KAS' ? `${lab} ${a.tick}` : lab)
+      : (lab + (a.tick ? ' ' + a.tick : ''));
     rows.push({
       kind: 'token',
       id: a.txId || '',
       actId: a.id,
       time: Number(a.time || 0),
       dir: a.dir,
-      title: tag + (a.label || (a.dir === 'in' ? 'Received' : 'Sent')) + ' ' + a.tick,
-      sub: [proto, a.txId ? a.txId.slice(0, 10) + '…' : 'live credit', new Date(a.time || Date.now()).toLocaleString()].filter(Boolean).join(' · '),
+      title: tag + titleCore,
+      sub: [proto, a.txId ? a.txId.slice(0, 10) + '…' : (vaultish ? 'this device' : 'live credit'), new Date(a.time || Date.now()).toLocaleString()].filter(Boolean).join(' · '),
       val: activityVal(a),
-      feeLine: a.txId ? '' : 'Indexed to this wallet',
+      feeLine: a.txId ? '' : (vaultish ? 'Saved on this device' : 'Indexed to this wallet'),
       tokId: a.id
     });
   }
@@ -2170,6 +2227,7 @@ function afterTx() {
   setLiveFast(true);
   clearTimeout(tokenFastOff);
   tokenFastOff = setTimeout(() => setLiveFast(false), 45000);
+  refreshActivityNow();
   tickLive(true);
   kickTokenRefresh();
   refreshAllWalletSnaps({ tokens: true }).catch(() => {});
@@ -3631,6 +3689,16 @@ async function executeKcc20Freeze(params) {
     });
     saveVault(result.vault);
     applyLocalTokenDelta(tick, 'kcc20', '-' + result.tokenAmount);
+    noteVaultActivity({
+      vault: result.vault,
+      label: 'Frozen',
+      dir: 'out',
+      tick,
+      protocol: 'kcc20',
+      amount: result.tokenAmount,
+      decimals: result.decimals,
+      txId: result.txId || result.revealId || ''
+    });
     afterTx();
     renderVault();
     openSheet(tick + ' frozen', `
@@ -3795,6 +3863,7 @@ async function buildCovenant(p, explicit) {
       fundedSompi: 0
     };
     saveVault(vault);
+    noteVaultActivity({ vault, label: 'Vault created', dir: 'out' });
     if (p.type === 'escrow' && payload.buyerAddress) mirrorVaultTo(payload.buyerAddress, vault);
     if (p.type === 'multisig' && payload.counterparty) mirrorVaultTo(payload.counterparty, vault);
     if (p.type === 'sentinel' && payload.beneficiary && payload.beneficiary !== wallet.address) {
@@ -3864,6 +3933,13 @@ async function fundVault(vault) {
     fundedSompi: lockedSompi,
     fundFeeKas: result.feeKas || 0,
     params: { ...(vault.params || {}), amountKas: result.amountKas || amt }
+  });
+  noteVaultActivity({
+    vault,
+    label: 'Locked',
+    dir: 'out',
+    amount: String(lockedSompi),
+    txId: result.txId || ''
   });
   afterTx();
   const lockedKas = Number(result.amountKas || amt);
@@ -3968,6 +4044,13 @@ async function runCheckin(vault) {
   } else {
     updateVault(vault.address, { status: 'swept', unlockTxId: result.txId, fundedSompi: 0 });
   }
+  noteVaultActivity({
+    vault,
+    label: 'Checked in',
+    dir: 'out',
+    amount: String(vault.fundedSompi || 0),
+    txId: result.txId || ''
+  });
   afterTx();
   renderVault();
   openSheet('Checked in', `
@@ -4038,6 +4121,16 @@ async function unlockVault(vault, opts = {}) {
   }
   updateVault(vault.address, { status: 'swept', unlockTxId: result.txId, fundedSompi: 0, tokenAmount: kcc ? '0' : vault.tokenAmount });
   if (kcc && result.tokenAmount) applyLocalTokenDelta(vault.tick, 'kcc20', result.tokenAmount);
+  noteVaultActivity({
+    vault,
+    label: kcc ? 'Unfrozen' : 'Unlocked',
+    dir: 'in',
+    tick: kcc ? vault.tick : 'KAS',
+    protocol: kcc ? 'kcc20' : 'kas',
+    amount: kcc ? (result.tokenAmount || vault.tokenAmount) : String(Math.round(Number(result.amountKas || 0) * 1e8)),
+    decimals: kcc ? vault.decimals : 8,
+    txId: result.txId || ''
+  });
   afterTx();
   openSheet('Swept', `
     ${kcc && result.tokenAmount ? `<div class="kv"><span class="k">Returned</span><span class="v">${esc(formatTokenUnits(result.tokenAmount, vault.decimals))} ${esc(vault.tick)}</span></div>` : ''}
@@ -4066,11 +4159,28 @@ async function sweepAllVaults() {
         const result = await sweepKcc20Capsule({ wallet, vault: v, utxos: utxosV });
         updateVault(v.address, { status: 'swept', fundedSompi: 0, tokenAmount: '0' });
         if (result.tokenAmount) applyLocalTokenDelta(v.tick, 'kcc20', result.tokenAmount);
+        noteVaultActivity({
+          vault: v,
+          label: 'Unfrozen',
+          dir: 'in',
+          tick: v.tick,
+          protocol: 'kcc20',
+          amount: result.tokenAmount || v.tokenAmount,
+          decimals: v.decimals,
+          txId: result.txId || ''
+        });
       } else {
         const extraPrivKey = v.type === 'multisig' ? vaultCounterpartyKey(v) : '';
         const escrowRelease = v.type === 'escrow' && wallet?.address === v.params?.buyerAddress;
-        await sweepVault({ wallet, vault: v, utxos: utxosV, extraPrivKey, escrowRelease });
+        const result = await sweepVault({ wallet, vault: v, utxos: utxosV, extraPrivKey, escrowRelease });
         updateVault(v.address, { status: 'swept', fundedSompi: 0 });
+        noteVaultActivity({
+          vault: v,
+          label: 'Unlocked',
+          dir: 'in',
+          amount: String(Math.round(Number(result.amountKas || 0) * 1e8)),
+          txId: result.txId || ''
+        });
       }
       ok++;
     } catch (e) {
@@ -4078,6 +4188,7 @@ async function sweepAllVaults() {
     }
   }
   renderVault();
+  refreshActivityNow();
   refreshAll();
   if (!ok && errors.length) throw new Error(errors[0]);
   toast(`Swept ${ok} vault(s)` + (skipped ? `, skipped ${skipped}` : '') + (errors.length ? `. ${errors[0]}` : ''));

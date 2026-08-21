@@ -110,7 +110,12 @@ function paintStill(visual, w = 1280, h = 720) {
 }
 
 function pickMime() {
-  const types = ['video/webm;codecs=vp9,opus', 'video/webm;codecs=vp8,opus', 'video/webm'];
+  const types = [
+    'video/webm;codecs=vp9,opus',
+    'video/webm;codecs=vp8,opus',
+    'video/webm',
+    'video/mp4'
+  ];
   if (typeof MediaRecorder === 'undefined') return '';
   return types.find(t => MediaRecorder.isTypeSupported(t)) || '';
 }
@@ -119,43 +124,128 @@ function wait(ms) {
   return new Promise(r => setTimeout(r, ms));
 }
 
-export async function assembleKenBurns(scenes, { music = true, onTick } = {}) {
+const VOWEL_F = {
+  a: [730, 1090, 2440], e: [530, 1840, 2480], i: [270, 2290, 3010],
+  o: [570, 840, 2410], u: [300, 870, 2240], y: [300, 1870, 2200]
+};
+
+const VOICE_PITCH = { nova: 188, echo: 128, onyx: 98, alloy: 145, shimmer: 200, fable: 160 };
+
+function phonemes(word) {
+  const w = String(word || '').toLowerCase().replace(/[^a-z']/g, '');
+  const out = [];
+  for (const c of w) {
+    if (VOWEL_F[c]) out.push({ t: 'v', f: VOWEL_F[c] });
+    else if ('mnlrw'.includes(c)) out.push({ t: 'n', f: [360, 1100, 2400] });
+    else if ('szfthpck'.includes(c)) out.push({ t: 'u' });
+    else out.push({ t: 's', f: [480, 1480, 2500] });
+  }
+  return out.length ? out : [{ t: 'v', f: VOWEL_F.a }];
+}
+
+/** Formant narrator baked into the file (speechSynthesis cannot be recorded). */
+function synthesizeNarration(ctx, text, duration, pitchHz) {
+  const sr = ctx.sampleRate;
+  const n = Math.max(Math.floor(duration * sr), sr);
+  const buf = ctx.createBuffer(1, n, sr);
+  const d = buf.getChannelData(0);
+  const words = String(text || '').trim().split(/\s+/).filter(Boolean);
+  if (!words.length) return buf;
+  const units = words.reduce((a, w) => a + phonemes(w).length + 1, 0);
+  const glottal = pitchHz || 140;
+  let pos = Math.floor(0.08 * sr);
+  for (const word of words) {
+    const ph = phonemes(word);
+    for (const p of ph) {
+      const dur = Math.max(0.045, (duration * 0.86 / units) * (p.t === 'v' ? 1.7 : 0.65));
+      const len = Math.floor(dur * sr);
+      const aAtk = Math.max(1, 0.012 * sr);
+      const aRel = Math.max(1, 0.03 * sr);
+      for (let i = 0; i < len && pos + i < n; i++) {
+        const t = i / sr;
+        const env = Math.min(i / aAtk, 1) * Math.min((len - i) / aRel, 1);
+        let s = 0;
+        if (p.t === 'u') {
+          s = (Math.random() * 2 - 1) * 0.1 * env;
+        } else {
+          const buzz = ((t * glottal) % 1 < 0.18 ? 1 : 0.12) * (0.45 + 0.2 * Math.sin(2 * Math.PI * glottal * t));
+          const f = p.f || VOWEL_F.a;
+          s = buzz * env * 0.28 * (
+            Math.sin(2 * Math.PI * f[0] * t) * 0.62 +
+            Math.sin(2 * Math.PI * f[1] * t) * 0.28 +
+            Math.sin(2 * Math.PI * f[2] * t) * 0.1
+          );
+        }
+        d[pos + i] += s;
+      }
+      pos += len;
+    }
+    pos += Math.floor(0.07 * sr);
+  }
+  let peak = 0.001;
+  for (let i = 0; i < n; i++) peak = Math.max(peak, Math.abs(d[i]));
+  const g = 0.78 / peak;
+  for (let i = 0; i < n; i++) d[i] *= g;
+  return buf;
+}
+
+export async function assembleKenBurns(scenes, { music = true, voice = 'nova', onTick } = {}) {
   const mime = pickMime();
-  if (!mime) throw new Error('This browser cannot record video (needs MediaRecorder / WebM). Try Chrome or Edge.');
+  if (!mime) throw new Error('This browser cannot record video (needs MediaRecorder). Try Chrome or Edge.');
   const w = 960, h = 540, fps = 24;
   const canvas = document.createElement('canvas');
   canvas.width = w; canvas.height = h;
   const ctx = canvas.getContext('2d');
   const vStream = canvas.captureStream(fps);
   const audioCtx = new AudioContext();
+  if (audioCtx.state === 'suspended') await audioCtx.resume();
   const dest = audioCtx.createMediaStreamDestination();
+  const master = audioCtx.createGain();
+  master.gain.value = 1;
+  master.connect(dest);
+
   if (music) {
     for (const f of [110, 164.81, 220]) {
       const o = audioCtx.createOscillator();
       const g = audioCtx.createGain();
       o.type = 'sine';
       o.frequency.value = f;
-      g.gain.value = 0.04;
-      o.connect(g); g.connect(dest);
+      g.gain.value = 0.016;
+      o.connect(g); g.connect(master);
       o.start();
     }
   }
+
+  const pitch = VOICE_PITCH[voice] || 145;
+  let when = audioCtx.currentTime + 0.12;
+  for (const sc of scenes) {
+    const dur = sc.duration || sceneDuration(sc.narration);
+    const buf = synthesizeNarration(audioCtx, sc.narration, dur, pitch);
+    const src = audioCtx.createBufferSource();
+    src.buffer = buf;
+    const g = audioCtx.createGain();
+    g.gain.value = 0.95;
+    src.connect(g); g.connect(master);
+    src.start(when);
+    when += dur;
+  }
+
   const mixed = new MediaStream([
     ...vStream.getVideoTracks(),
     ...dest.stream.getAudioTracks()
   ]);
-  const rec = new MediaRecorder(mixed, { mimeType: mime, videoBitsPerSecond: 2_400_000 });
+  const rec = new MediaRecorder(mixed, { mimeType: mime, videoBitsPerSecond: 2_800_000 });
   const chunks = [];
   rec.ondataavailable = e => { if (e.data.size) chunks.push(e.data); };
   const stopped = new Promise(res => { rec.onstop = res; });
-  rec.start(200);
+  rec.start(120);
 
   for (let i = 0; i < scenes.length; i++) {
     const sc = scenes[i];
     const dur = sc.duration || sceneDuration(sc.narration);
     const still = sc.canvas || paintStill(sc.visual);
     const frames = Math.max(Math.round(dur * fps), 8);
-    onTick?.('film', `Scene ${i + 1} / ${scenes.length}`);
+    onTick?.('film', `Recording voice · scene ${i + 1} / ${scenes.length}`);
     for (let f = 0; f < frames; f++) {
       const t = f / frames;
       const z = 1 + 0.08 * t;
@@ -167,11 +257,11 @@ export async function assembleKenBurns(scenes, { music = true, onTick } = {}) {
       ctx.fillStyle = '#050506';
       ctx.fillRect(0, 0, w, h);
       ctx.drawImage(still, sx, sy, sw, sh, 0, 0, w, h);
-      ctx.fillStyle = 'rgba(0,0,0,0.35)';
-      ctx.fillRect(0, h - 86, w, 86);
-      ctx.fillStyle = 'rgba(243,226,191,0.92)';
-      ctx.font = '500 16px -apple-system, sans-serif';
-      wrapText(ctx, sc.narration, 24, h - 54, w - 48, 20);
+      ctx.fillStyle = 'rgba(0,0,0,0.42)';
+      ctx.fillRect(0, h - 96, w, 96);
+      ctx.fillStyle = 'rgba(243,226,191,0.95)';
+      ctx.font = '500 17px -apple-system, sans-serif';
+      wrapText(ctx, sc.narration, 22, h - 58, w - 44, 21);
       const fade = t < 0.08 ? t / 0.08 : (t > 0.92 ? (1 - t) / 0.08 : 1);
       ctx.fillStyle = `rgba(5,5,6,${1 - fade})`;
       ctx.fillRect(0, 0, w, h);
@@ -180,8 +270,8 @@ export async function assembleKenBurns(scenes, { music = true, onTick } = {}) {
   }
   rec.stop();
   await stopped;
-  try { audioCtx.close(); } catch {}
-  const blob = new Blob(chunks, { type: mime });
+  try { await audioCtx.close(); } catch {}
+  const blob = new Blob(chunks, { type: mime.split(';')[0] });
   if (!blob.size) throw new Error('Recorder produced an empty file');
   return blob;
 }
@@ -203,23 +293,28 @@ function wrapText(ctx, text, x, y, maxW, lh) {
   if (line) ctx.fillText(line, x, yy);
 }
 
-export async function runPhoneStudio({ topic, nScenes, music, onProgress }) {
+export async function runPhoneStudio({ topic, nScenes, music, voice, onProgress }) {
   onProgress?.('script', 'Writing script…');
   const job = writeScript(topic, nScenes);
   job.scenes.forEach(s => { s.duration = sceneDuration(s.narration); s.canvas = paintStill(s.visual); });
   onProgress?.('script_done', { title: job.title, scenes: job.scenes });
-  onProgress?.('voice', 'Timing narration…');
-  await wait(200);
+  onProgress?.('voice', 'Building narrator track…');
+  await wait(120);
   onProgress?.('image', 'Painting stills…');
   onProgress?.('image_done', { scenes: job.scenes });
-  onProgress?.('film', 'Recording Ken Burns film…');
+  onProgress?.('film', 'Recording picture + voice…');
   const blob = await assembleKenBurns(job.scenes, {
     music,
+    voice: voice || 'nova',
     onTick: (k, msg) => onProgress?.(k, msg)
   });
   const url = URL.createObjectURL(blob);
-  onProgress?.('done', { url, blob, title: job.title, duration: job.scenes.reduce((a, s) => a + s.duration, 0) });
-  return { ...job, blob, url };
+  const ext = blob.type.includes('mp4') ? 'mp4' : 'webm';
+  onProgress?.('done', {
+    url, blob, ext, title: job.title,
+    duration: job.scenes.reduce((a, s) => a + s.duration, 0)
+  });
+  return { ...job, blob, url, ext };
 }
 
 export async function runServerStudio({ baseUrl, topic, voice, nScenes, music, onProgress }) {
@@ -257,12 +352,6 @@ export async function runServerStudio({ baseUrl, topic, voice, nScenes, music, o
   });
 }
 
-export function speakScenes(scenes) {
-  if (!window.speechSynthesis) return;
-  window.speechSynthesis.cancel();
-  for (const s of scenes || []) {
-    const u = new SpeechSynthesisUtterance(s.narration);
-    u.rate = 0.92; u.pitch = 0.95;
-    window.speechSynthesis.speak(u);
-  }
+export function speakScenes() {
+  /* Live speechSynthesis is not in the file. Voice is mixed into the WebM. */
 }

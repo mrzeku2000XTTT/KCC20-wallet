@@ -12,7 +12,7 @@
   <link rel="icon" href="assets/icon.png">
   <title>KCC20 Wallet</title>
   <meta http-equiv="Cache-Control" content="no-store, no-cache, must-revalidate">
-  <link rel="stylesheet" href="css/app.css?v=75">
+  <link rel="stylesheet" href="css/app.css?v=76">
 </head>
 <body>
   <img class="bg-poster" src="assets/bg.jpg" alt="">
@@ -342,7 +342,7 @@
             </div>
             <input id="studio-url" class="hidden" placeholder="http://127.0.0.1:8000" value="http://127.0.0.1:8000">
             <button class="btn btn-gold" id="studio-go" type="button">Generate video</button>
-            <p class="studio-hint" id="studio-hint">Phone engine paints cinematic stills, Ken-Burns them to narration length, and records a WebM you can save.</p>
+            <p class="studio-hint" id="studio-hint">The narrator is mixed into the file. After Generate you get a full-screen player — Pause, scrub, then Save.</p>
           </div>
           <div class="studio-stage" id="studio-stage">
             <ol class="studio-steps" id="studio-steps">
@@ -353,8 +353,15 @@
             </ol>
             <p class="studio-status" id="studio-status">Ready.</p>
             <div class="studio-stills" id="studio-stills"></div>
-            <video id="studio-video" class="hidden" controls playsinline></video>
-            <a class="btn btn-glass hidden" id="studio-dl" download="faceless.webm">Download</a>
+            <div class="studio-player hidden" id="studio-player">
+              <video id="studio-video" playsinline webkit-playsinline></video>
+              <div class="studio-bar">
+                <button type="button" class="studio-play" id="studio-pause" aria-label="Play or pause">Pause</button>
+                <input id="studio-seek" type="range" min="0" max="1000" value="0" aria-label="Seek">
+                <span id="studio-time">0:00</span>
+                <a class="studio-save" id="studio-dl" download="faceless.webm">Save</a>
+              </div>
+            </div>
           </div>
         </div>
 
@@ -472,7 +479,7 @@
     })();
   </script>
   <script type="module">
-    import('./js/app.js?v=75').catch(function (err) {
+    import('./js/app.js?v=76').catch(function (err) {
       console.error(err);
       var phone = document.getElementById('phone');
       var d = document.createElement('div');

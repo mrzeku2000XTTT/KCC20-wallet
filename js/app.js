@@ -3,16 +3,16 @@ import {
   isValidKaspaAddress, validateKaspaAddress, shortAddr, hexToBytes, privKeyToHex,
   derivePublicKey, kaspaAddressFromPubkey, bytesToHex, kasToSompi, sompiToKasString,
   validateAndCleanUtxo
-} from './crypto.js?v=75';
+} from './crypto.js?v=76';
 import {
   NATIVE_KAS, VAULT_PRODUCTS, loadWatchlist, addToken, removeToken,
   loadVaults, saveVault, updateVault, formatAmount, formatTokenUnits, tokenColor,
   fetchKcc20Portfolio, fetchKrc20Portfolio, fetchKcc20PortfolioMany, fetchKrc20PortfolioMany,
   krc20Logo, toTokenRaw, setVaultOwner, kcc20Identicon, VAULT_GROUPS
-} from './kcc20.js?v=75';
-import { parseIntent, describeIntent, askFor, parseDurationField, interpretVaultChat, normalizeChat } from './intent.js?v=75';
-import { payloadFromAddress } from './script.js?v=75';
-import { explainTransaction, scorpionAnswer } from './scorpion.js?v=75';
+} from './kcc20.js?v=76';
+import { parseIntent, describeIntent, askFor, parseDurationField, interpretVaultChat, normalizeChat } from './intent.js?v=76';
+import { payloadFromAddress } from './script.js?v=76';
+import { explainTransaction, scorpionAnswer } from './scorpion.js?v=76';
 import {
   sendKas, fetchAddressUtxos, fetchAddressBalance, loadKaspaSdk,
   buildTimelockCovenant, buildEscrowCovenant, buildMultisigCovenant, currentDaa,
@@ -20,16 +20,16 @@ import {
   compoundUtxos, sendKrc20, sendKcc20, loadKrc20Pending, lockKcc20Timelock, sweepKcc20Capsule,
   fetchOwnedUtxos, buildSentinelChain, buildRecurringChain, buildHashlockCovenant,
   newHashlockSecret, checkinHop, currentHop, parseXmssKit, p2shFromRedeemHex, spendXmssVault
-} from './tx.js?v=75';
-import { kronMarkets, quoteKronTrade, executeKronTrade, formatKasSompi, lookupKronTick, tradeCostLines, attachKronLogos } from './kronTrade.js?v=75';
+} from './tx.js?v=76';
+import { kronMarkets, quoteKronTrade, executeKronTrade, formatKasSompi, lookupKronTick, tradeCostLines, attachKronLogos } from './kronTrade.js?v=76';
 import {
   migrateReceiveBook, ownedAddresses, markAddressUsed, currentReceive,
   deriveReceiveBatch, unusedReceiveCount, ensurePrivacyBook
-} from './receive.js?v=75';
+} from './receive.js?v=76';
 import { knsResolve, knsPrimary, knsDomainsFor, knsOwnerMatches, knsAppUrl, looksLikeKasDomain, normalizeKasDomain } from './kns.js?v=75';
-import { runPhoneStudio, runServerStudio, speakScenes } from './studio.js?v=75';
+import { runPhoneStudio, runServerStudio } from './studio.js?v=76';
 
-export const BUILD = '75';
+export const BUILD = '76';
 
 function errText(e) {
   if (e == null) return 'Unknown error';
@@ -1630,6 +1630,11 @@ function showBuildApp(name) {
   if (view === 'studio') {
     $('studio-url')?.classList.toggle('hidden', $('studio-engine')?.value !== 'server');
   }
+  if (view !== 'studio') {
+    $('app-studio')?.classList.remove('playing');
+    const v = $('studio-video');
+    if (v) { v.pause(); }
+  }
 }
 
 function openBuildRoadmap() {
@@ -1646,6 +1651,51 @@ function closeBuildRoadmap() {
   $('build-screen')?.setAttribute('aria-hidden', 'true');
   showBuildApp('home');
   if (wallet && sessionOpen()) $('tabbar')?.classList.add('show');
+}
+
+function fmtStudioTime(sec) {
+  const s = Math.max(0, Math.floor(Number(sec) || 0));
+  return Math.floor(s / 60) + ':' + String(s % 60).padStart(2, '0');
+}
+
+function syncStudioPauseBtn() {
+  const v = $('studio-video');
+  const b = $('studio-pause');
+  if (!v || !b) return;
+  b.textContent = v.paused ? 'Play' : 'Pause';
+}
+
+function enterStudioPlayer(data) {
+  const v = $('studio-video');
+  const a = $('studio-dl');
+  const seek = $('studio-seek');
+  $('studio-player')?.classList.remove('hidden');
+  $('app-studio')?.classList.add('playing');
+  if (v) {
+    v.src = data.url;
+    v.controls = false;
+    v.setAttribute('playsinline', '');
+    v.setAttribute('webkit-playsinline', '');
+    const play = v.play();
+    if (play && play.catch) play.catch(() => syncStudioPauseBtn());
+  }
+  if (a) {
+    a.href = data.url;
+    a.download = 'faceless.' + (data.ext || 'webm');
+  }
+  if (seek) seek.value = 0;
+  if ($('studio-status')) {
+    $('studio-status').textContent = (data.title || 'Film') + ' · tap Pause · voice is in the file';
+  }
+  syncStudioPauseBtn();
+}
+
+function toggleStudioPlay() {
+  const v = $('studio-video');
+  if (!v || !v.src) return;
+  if (v.paused) v.play().catch(() => {});
+  else v.pause();
+  syncStudioPauseBtn();
 }
 
 function setStudioStep(name, cls) {
@@ -1670,8 +1720,10 @@ async function generateStudio() {
   setStudioStep('script', 'on');
   if ($('studio-status')) $('studio-status').textContent = 'Starting…';
   $('studio-stills').innerHTML = '';
-  $('studio-video')?.classList.add('hidden');
-  $('studio-dl')?.classList.add('hidden');
+  $('studio-player')?.classList.add('hidden');
+  $('app-studio')?.classList.remove('playing');
+  const vid0 = $('studio-video');
+  if (vid0) { vid0.pause(); vid0.removeAttribute('src'); }
   const onProgress = (ev, data) => {
     if (ev === 'script' || ev === 'script_done') {
       setStudioStep('script', ev === 'script_done' ? 'done' : 'on');
@@ -1700,11 +1752,7 @@ async function generateStudio() {
     if (typeof data === 'string' && $('studio-status')) $('studio-status').textContent = data;
     if (ev === 'done' && data?.url) {
       setStudioStep('film', 'done');
-      const v = $('studio-video');
-      if (v) { v.src = data.url; v.classList.remove('hidden'); }
-      const a = $('studio-dl');
-      if (a) { a.href = data.url; a.classList.remove('hidden'); }
-      if ($('studio-status')) $('studio-status').textContent = (data.title || 'Film') + ' · ' + Math.round(data.duration || 0) + 's';
+      enterStudioPlayer(data);
     }
   };
   try {
@@ -1719,8 +1767,11 @@ async function generateStudio() {
         onProgress
       });
     } else {
-      const job = await runPhoneStudio({ topic, nScenes: n, music, onProgress });
-      speakScenes(job.scenes);
+      await runPhoneStudio({
+        topic, nScenes: n, music,
+        voice: $('studio-voice')?.value || 'nova',
+        onProgress
+      });
     }
     toast('Video ready');
   } catch (e) {
@@ -4308,6 +4359,27 @@ function bind() {
   click('build-close', closeBuildRoadmap);
   click('build-back', () => showBuildApp('home'));
   click('studio-go', () => generateStudio().catch(err => toast(errText(err))));
+  click('studio-pause', toggleStudioPlay);
+  $('studio-video')?.addEventListener('click', toggleStudioPlay);
+  $('studio-video')?.addEventListener('play', syncStudioPauseBtn);
+  $('studio-video')?.addEventListener('pause', syncStudioPauseBtn);
+  $('studio-video')?.addEventListener('ended', syncStudioPauseBtn);
+  $('studio-video')?.addEventListener('timeupdate', () => {
+    const v = $('studio-video');
+    const seek = $('studio-seek');
+    const t = $('studio-time');
+    if (!v || !v.duration) return;
+    if (seek && document.activeElement !== seek) {
+      seek.value = String(Math.round((v.currentTime / v.duration) * 1000));
+    }
+    if (t) t.textContent = fmtStudioTime(v.currentTime) + ' / ' + fmtStudioTime(v.duration);
+  });
+  $('studio-seek')?.addEventListener('input', () => {
+    const v = $('studio-video');
+    const seek = $('studio-seek');
+    if (!v?.duration || !seek) return;
+    v.currentTime = (Number(seek.value) / 1000) * v.duration;
+  });
   $('studio-engine')?.addEventListener('change', () => {
     $('studio-url')?.classList.toggle('hidden', $('studio-engine').value !== 'server');
   });

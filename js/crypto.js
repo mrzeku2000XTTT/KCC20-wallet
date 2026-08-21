@@ -28,21 +28,38 @@ function checksumToArray(checksum) {
   return result;
 }
 
-function convertbits(data, frombits, tobits, pad) {
-  let acc = 0, bits = 0, ret = [];
+/** Bech32 5↔8 conversion. pad=false enforces canonical leftover bits (KasPriv / @KodinglsFun). */
+export function convertBits(data, frombits, tobits, pad) {
+  let acc = 0, bits = 0;
+  const ret = [];
   const maxv = (1 << tobits) - 1;
-  for (const v of data) {
-    acc = (acc << frombits) | v;
+  const maxAcc = (1 << (frombits + tobits - 1)) - 1;
+  for (const raw of data) {
+    const v = Number(raw);
+    if (!Number.isInteger(v) || v < 0 || (v >> frombits) !== 0) return null;
+    acc = ((acc << frombits) | v) & maxAcc;
     bits += frombits;
-    while (bits >= tobits) { bits -= tobits; ret.push((acc >> bits) & maxv); }
+    while (bits >= tobits) {
+      bits -= tobits;
+      ret.push((acc >> bits) & maxv);
+    }
   }
-  if (pad) { if (bits) ret.push((acc << (tobits - bits)) & maxv); }
-  else if (bits >= frombits || ((acc << (tobits - bits)) & maxv)) return null;
+  if (pad) {
+    if (bits) ret.push((acc << (tobits - bits)) & maxv);
+  } else {
+    if (bits >= frombits) return null;
+    if ((acc & ((1 << bits) - 1)) !== 0) return null;
+  }
   return ret;
+}
+
+function convertbits(data, frombits, tobits, pad) {
+  return convertBits(data, frombits, tobits, pad);
 }
 
 export function kaspaCashaddrEncode(prefix, versionByte, payloadBytes) {
   const data5 = convertbits([versionByte, ...Array.from(payloadBytes)], 8, 5, true);
+  if (!data5) throw new Error('Address encode failed');
   const checksumInput = cashaddrPrefixExpand(prefix).concat(data5).concat([0, 0, 0, 0, 0, 0, 0, 0]);
   const chk = cashaddrPolymod(checksumInput);
   const combined = data5.concat(checksumToArray(chk));
@@ -50,19 +67,24 @@ export function kaspaCashaddrEncode(prefix, versionByte, payloadBytes) {
 }
 
 export function kaspaCashaddrDecode(addrStr) {
-  const parts = (addrStr || '').split(':');
+  if (typeof addrStr !== 'string') return null;
+  const trimmed = addrStr.trim();
+  const parts = trimmed.split(':');
   if (parts.length !== 2) return null;
-  const prefix = parts[0], body = parts[1];
+  const prefix = parts[0].toLowerCase();
+  const body = parts[1].toLowerCase();
+  if (!body) return null;
   const data5 = [];
   for (const ch of body) {
     const idx = CHARSET.indexOf(ch);
     if (idx < 0) return null;
     data5.push(idx);
   }
+  if (data5.length < 9) return null;
   const payload = data5.slice(0, -8);
   if (cashaddrPolymod(cashaddrPrefixExpand(prefix).concat(data5)) !== 0n) return null;
   const bytes8 = convertbits(payload, 5, 8, false);
-  if (!bytes8) return null;
+  if (!bytes8 || bytes8.length < 2) return null;
   return { prefix, versionByte: bytes8[0], payloadBytes: new Uint8Array(bytes8.slice(1)) };
 }
 
@@ -74,8 +96,60 @@ export function kaspaAddressFromScriptHash(scriptHash32) {
   return kaspaCashaddrEncode('kaspa', 8, scriptHash32);
 }
 
-export function isValidKaspaAddress(addrStr) {
-  return !!(addrStr && addrStr.startsWith('kaspa:') && kaspaCashaddrDecode(addrStr));
+const NETWORK_HRP = {
+  mainnet: 'kaspa',
+  'testnet-10': 'kaspatest',
+  'testnet-11': 'kaspatest',
+  testnet: 'kaspatest',
+  devnet: 'kaspadev'
+};
+
+export function validateKaspaAddress(addrStr, network = 'mainnet') {
+  if (!addrStr || typeof addrStr !== 'string') return { isValid: false, error: 'Address is required' };
+  const trimmed = addrStr.trim();
+  const parts = trimmed.split(':');
+  if (parts.length !== 2) return { isValid: false, error: 'Address must contain exactly one colon' };
+  const expected = NETWORK_HRP[network] || 'kaspa';
+  const hrp = parts[0].toLowerCase();
+  if (hrp !== expected) {
+    return { isValid: false, error: `Invalid network prefix. Expected ${expected}, got ${hrp}` };
+  }
+  const decoded = kaspaCashaddrDecode(trimmed);
+  if (!decoded) return { isValid: false, error: 'Address checksum verification failed' };
+  if (decoded.prefix !== expected) {
+    return { isValid: false, error: `Invalid network prefix. Expected ${expected}` };
+  }
+  if (decoded.versionByte !== 0 && decoded.versionByte !== 8) {
+    return { isValid: false, error: `Unsupported address version 0x${decoded.versionByte.toString(16)}` };
+  }
+  if (decoded.payloadBytes.length !== 32) {
+    return { isValid: false, error: `Invalid payload length (${decoded.payloadBytes.length} bytes, expected 32)` };
+  }
+  return { isValid: true, versionByte: decoded.versionByte, prefix: decoded.prefix, payloadBytes: decoded.payloadBytes };
+}
+
+export function isValidKaspaAddress(addrStr, network = 'mainnet') {
+  return validateKaspaAddress(addrStr, network).isValid;
+}
+
+/** P2PK = 20 <32-byte x-only> ac. P2SH = aa 20 <32-byte script hash> 87. */
+export function addressToScriptPublicKeyBytes(addrStr, network = 'mainnet') {
+  const v = validateKaspaAddress(addrStr, network);
+  if (!v.isValid) throw new Error(`Invalid address or network mismatch: ${v.error || 'validation failed'}`);
+  const payload = v.payloadBytes;
+  if (v.versionByte === 8) {
+    const script = new Uint8Array(35);
+    script[0] = 0xaa;
+    script[1] = 0x20;
+    script.set(payload, 2);
+    script[34] = 0x87;
+    return script;
+  }
+  const script = new Uint8Array(34);
+  script[0] = 0x20;
+  script.set(payload, 1);
+  script[33] = 0xac;
+  return script;
 }
 
 export function privKeyToHex(key) {
@@ -95,10 +169,92 @@ export function concatBytes(...parts) {
 }
 
 export function hexToBytes(hex) {
-  const clean = hex.trim().replace(/^0x/, '');
+  if (hex instanceof Uint8Array) return hex;
+  if (typeof hex !== 'string') throw new Error('Invalid hex string');
+  const clean = hex.trim().replace(/^0x/i, '');
+  if (!clean) return new Uint8Array();
+  if (!/^[0-9a-fA-F]*$/.test(clean)) throw new Error('Invalid hex string: contains non-hexadecimal characters');
+  if (clean.length % 2 !== 0) throw new Error('Invalid hex string: must have an even length');
   const arr = new Uint8Array(clean.length / 2);
   for (let i = 0; i < clean.length; i += 2) arr[i / 2] = parseInt(clean.slice(i, i + 2), 16);
   return arr;
+}
+
+/** Parse a KAS decimal string with BigInt only — never IEEE-754 floats. */
+export function kasToSompi(kas) {
+  const s = String(kas ?? '').trim().replace(/,/g, '').replace(/^\./, '0.');
+  if (!s) throw new Error('Invalid amount');
+  if (!/^\d+(\.\d+)?$/.test(s)) throw new Error('Invalid amount');
+  const [w, f = ''] = s.split('.');
+  if (f.length > 8) throw new Error('Too many decimal places');
+  const frac = (f + '00000000').slice(0, 8);
+  return BigInt(w || '0') * 100000000n + BigInt(frac);
+}
+
+export function sompiToKasString(sompi) {
+  const n = BigInt(sompi || 0n);
+  const neg = n < 0n;
+  const a = neg ? -n : n;
+  const w = a / 100000000n;
+  const f = (a % 100000000n).toString().padStart(8, '0').replace(/0+$/, '');
+  return (neg ? '-' : '') + (f ? `${w}.${f}` : String(w));
+}
+
+export function deepCloneAndFreeze(obj) {
+  if (obj === null || typeof obj !== 'object') return obj;
+  if (typeof obj === 'bigint') return obj;
+  if (Array.isArray(obj)) return Object.freeze(obj.map(item => deepCloneAndFreeze(item)));
+  if (obj instanceof Uint8Array) {
+    const copy = new Uint8Array(obj);
+    Object.freeze(copy);
+    return copy;
+  }
+  if (obj instanceof Date) return Object.freeze(new Date(obj.getTime()));
+  const copy = {};
+  for (const key of Object.keys(obj)) copy[key] = deepCloneAndFreeze(obj[key]);
+  return Object.freeze(copy);
+}
+
+function asTxidHex(v) {
+  if (v == null) return '';
+  try {
+    const s = typeof v === 'string' ? v : (typeof v.toString === 'function' ? v.toString() : String(v));
+    return s.replace(/^0x/i, '').toLowerCase();
+  } catch {
+    return '';
+  }
+}
+
+export function validateAndCleanUtxo(u) {
+  if (!u || typeof u !== 'object') return null;
+  const e = u.utxoEntry || u.entry || u;
+  const out = u.outpoint || e.outpoint || {};
+  const txid = asTxidHex(out.transactionId || out.transaction_id);
+  if (!/^[0-9a-f]{64}$/.test(txid)) return null;
+  const index = Number(out.index ?? 0);
+  if (!Number.isInteger(index) || index < 0 || index > 1_000_000) return null;
+  let amount;
+  try { amount = BigInt(e.amount ?? u.amount); } catch { return null; }
+  if (amount <= 0n) return null;
+  const spk = e.scriptPublicKey || e.script_public_key || u.scriptPublicKey || {};
+  let script = '';
+  if (typeof spk === 'string') script = spk;
+  else if (spk?.script instanceof Uint8Array) script = bytesToHex(spk.script);
+  else if (spk?.scriptPublicKey instanceof Uint8Array) script = bytesToHex(spk.scriptPublicKey);
+  else script = String(spk.scriptPublicKey || spk.script_public_key || spk.script || '');
+  script = script.replace(/^0x/i, '');
+  if (!/^[0-9a-fA-F]+$/.test(script) || script.length < 20 || script.length % 2 !== 0) return null;
+  const version = Number((typeof spk === 'object' && spk && spk.version) || 0);
+  if (!Number.isFinite(version) || version < 0 || version > 255) return null;
+  let blockDaa = 0n;
+  try { blockDaa = BigInt(e.blockDaaScore || e.block_daa_score || 0); } catch { blockDaa = 0n; }
+  return {
+    outpoint: { transactionId: txid, index },
+    amount,
+    scriptPublicKey: { version, script: script.toLowerCase() },
+    blockDaaScore: blockDaa,
+    isCoinbase: !!(e.isCoinbase || e.is_coinbase)
+  };
 }
 
 export function shortAddr(addr, head = 10, tail = 6) {

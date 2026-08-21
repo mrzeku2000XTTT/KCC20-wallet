@@ -1,5 +1,8 @@
 /* Official rusty-kaspa WASM: P2SH covenants + signed send/fund. */
-import { hexToBytes, kaspaAddressFromScriptHash } from './crypto.js?v=70';
+import {
+  hexToBytes, kaspaAddressFromScriptHash, validateKaspaAddress,
+  validateAndCleanUtxo, deepCloneAndFreeze, kasToSompi
+} from './crypto.js?v=71';
 
 const API = 'https://api.kaspa.org';
 
@@ -27,19 +30,9 @@ export async function loadKaspaSdk() {
 function restUtxosToEntries(utxos, address) {
   const list = Array.isArray(utxos) ? utxos : [];
   return list.map(u => {
-    const e = u.utxoEntry || u;
-    const spk = e.scriptPublicKey || e.script_public_key || {};
-    const script = spk.scriptPublicKey || spk.script_public_key || spk.script || '';
-    const txid = u.outpoint?.transactionId || u.outpoint?.transaction_id;
-    if (!txid || !script) return null;
-    return {
-      address,
-      outpoint: { transactionId: txid, index: Number(u.outpoint.index || 0) },
-      amount: BigInt(e.amount),
-      scriptPublicKey: { version: Number(spk.version || 0), script },
-      blockDaaScore: BigInt(e.blockDaaScore || e.block_daa_score || 0),
-      isCoinbase: !!e.isCoinbase
-    };
+    const c = validateAndCleanUtxo(u);
+    if (!c) return null;
+    return { address, ...c };
   }).filter(Boolean);
 }
 
@@ -406,17 +399,66 @@ function privForInput(k, tx, i, fallbackPriv, entries) {
 }
 
 function signP2pkInputs(k, tx, priv, entries) {
+  return signWalletInputs(k, tx, priv, entries);
+}
+
+function findEntryForInput(tx, i, entries) {
+  try {
+    const prev = tx.inputs[i].previousOutpoint;
+    const id = String(prev.transactionId);
+    const idx = Number(prev.index);
+    return (entries || []).find(e =>
+      e.outpoint && String(e.outpoint.transactionId) === id && Number(e.outpoint.index) === idx
+    ) || null;
+  } catch {
+    return null;
+  }
+}
+
+function signWalletInputs(k, tx, priv, entries) {
   const scripts = [];
   const n = tx.inputs.length;
   for (let i = 0; i < n; i++) {
-    const use = privForInput(k, tx, i, priv, entries);
-    const sig = k.createInputSignature(tx, i, use, k.SighashType.All);
-    const hex = hexish(sig);
-    if (!hex || hex.length < 20) throw new Error('Signing failed — empty P2PK signature');
-    tx.inputs[i].signatureScript = hex;
-    scripts.push(hex);
+    const hit = findEntryForInput(tx, i, entries);
+    const use = hit?.privKey ? new k.PrivateKey(hit.privKey) : privForInput(k, tx, i, priv, entries);
+    const sig = hexish(k.createInputSignature(tx, i, use, k.SighashType.All));
+    if (!sig || sig.length < 20) throw new Error('Signing failed — empty signature');
+    if (hit?.redeemHex) {
+      const script = p2shWitness(k, hit.redeemHex, { sigs: [sig], flag: null });
+      tx.inputs[i].signatureScript = script;
+      scripts.push(script);
+    } else {
+      tx.inputs[i].signatureScript = sig;
+      scripts.push(sig);
+    }
   }
   return scripts;
+}
+
+function assertSimpleSendOutputs(k, tx, destStr, changeAddr, isFinal = true) {
+  const outs = [...tx.outputs];
+  if (outs.length < 1 || outs.length > 2) {
+    throw new Error('Refusing to sign: send must have 1 or 2 outputs (recipient and change)');
+  }
+  const addrs = [];
+  for (const o of outs) {
+    if (BigInt(o.value) <= 0n) throw new Error('Refusing to sign: non-positive output');
+    let a = '';
+    try { a = String(k.addressFromScriptPublicKey(o.scriptPublicKey, 'mainnet')); } catch {}
+    if (!a) throw new Error('Refusing to sign: output address could not be decoded');
+    addrs.push(a);
+  }
+  if (!isFinal) {
+    for (const a of addrs) {
+      if (a !== changeAddr) throw new Error('Refusing to sign: intermediate output is not change');
+    }
+    return;
+  }
+  const allowed = new Set([destStr, changeAddr]);
+  for (const a of addrs) {
+    if (!allowed.has(a)) throw new Error('Refusing to sign: unauthorized output to ' + a);
+  }
+  if (!addrs.includes(destStr)) throw new Error('Refusing to sign: missing recipient output');
 }
 
 async function submitSignedRpc(k, rpc, url, tx, { sigOpCount, computeBudget, lockTime, scripts }) {
@@ -473,26 +515,24 @@ async function submitSignedRpc(k, rpc, url, tx, { sigOpCount, computeBudget, loc
   throw new Error('Node did not return a transaction id');
 }
 
+function nodeEntryToUtxo(e, fallbackAddress) {
+  const cleaned = validateAndCleanUtxo(e);
+  if (!cleaned) return null;
+  return { address: String(e.address || fallbackAddress || ''), ...cleaned };
+}
+
 async function fetchNodeUtxos(rpc, address) {
   const res = await rpc.getUtxosByAddresses({ addresses: [address] });
   const entries = res?.entries || [];
-  return [...entries].map(e => {
-    const prev = e.outpoint || e.previousOutpoint || {};
-    const id = String(prev.transactionId || prev.transaction_id || '');
-    const idx = Number(prev.index ?? 0);
-    const inner = e.utxoEntry || e.entry || e;
-    const amount = inner.amount ?? e.amount;
-    const spk = inner.scriptPublicKey || e.scriptPublicKey || {};
-    const script = spk.script || spk.scriptPublicKey || '';
-    return {
-      address,
-      outpoint: { transactionId: id, index: idx },
-      amount: BigInt(amount || 0),
-      scriptPublicKey: { version: Number(spk.version || 0), script: hexish(script) },
-      blockDaaScore: BigInt(inner.blockDaaScore || inner.block_daa_score || 0),
-      isCoinbase: !!(inner.isCoinbase || inner.is_coinbase)
-    };
-  }).filter(x => x.outpoint.transactionId && x.amount > 0n && x.scriptPublicKey.script);
+  return [...entries].map(e => nodeEntryToUtxo(e, address)).filter(Boolean);
+}
+
+async function fetchNodeUtxosMany(rpc, addresses) {
+  const addrs = [...new Set((addresses || []).filter(Boolean))];
+  if (!addrs.length) return [];
+  const res = await rpc.getUtxosByAddresses({ addresses: addrs });
+  const entries = res?.entries || [];
+  return [...entries].map(e => nodeEntryToUtxo(e, '')).filter(Boolean);
 }
 
 async function waitFreshNodeUtxos(rpc, address, spentKeys, needSompi, onStatus) {
@@ -515,19 +555,34 @@ async function waitFreshNodeUtxos(rpc, address, spentKeys, needSompi, onStatus) 
 
 export async function sendKas({ wallet, dest, amountKas, utxos, exact = false }) {
   const k = await loadKaspaSdk();
-  const requested = k.kaspaToSompi(String(amountKas));
+  const destCheck = validateKaspaAddress(String(dest || ''), 'mainnet');
+  if (!destCheck.isValid) throw new Error(destCheck.error || 'Invalid destination address');
+  let requested;
+  try {
+    requested = kasToSompi(amountKas);
+  } catch {
+    requested = k.kaspaToSompi(String(amountKas));
+  }
   if (requested == null) throw new Error('Invalid amount');
+  const intent = deepCloneAndFreeze({
+    dest: String(dest).trim(),
+    amountSompi: String(requested),
+    change: wallet.address,
+    network: 'mainnet',
+    exact: !!exact
+  });
   let entries;
   if (wallet?.receiveAddrs?.length > 1 && !(utxos && utxos.length && utxos[0]?.privKey)) {
     entries = await fetchOwnedUtxos(wallet);
   } else {
     entries = restUtxosToEntries(utxos || [], wallet.address)
-      .map(e => ({ ...e, privKey: e.privKey || wallet.privKey }));
+      .map(e => ({ ...e, privKey: e.privKey || wallet.privKey, redeemHex: e.redeemHex || '' }));
   }
   if (!entries.length) throw new Error('No UTXOs yet — receive KAS first');
   entries = [...entries].sort((a, b) => (a.amount < b.amount ? 1 : -1));
 
-  const destStr = String(dest);
+  const destStr = intent.dest;
+  const changeAddr = intent.change;
   const isCovenantDest = destStr.startsWith('kaspa:p');
   const { rpc, url } = await connectPublicNode();
   const feeRate = await nodeFeeRate(rpc);
@@ -561,7 +616,7 @@ export async function sendKas({ wallet, dest, amountKas, utxos, exact = false })
       const built = await k.createTransactions({
         entries: plan.entries,
         outputs: [{ address: destStr, amount }],
-        changeAddress: wallet.address,
+        changeAddress: changeAddr,
         priorityFee: 0n,
         feeRate,
         sigOpCount: 1,
@@ -574,7 +629,7 @@ export async function sendKas({ wallet, dest, amountKas, utxos, exact = false })
   }
   if (!pendingList.length) {
     const outputs = [{ address: destStr, amount }];
-    if (plan.change > 0n) outputs.push({ address: wallet.address, amount: plan.change });
+    if (plan.change > 0n) outputs.push({ address: changeAddr, amount: plan.change });
     const tx = k.createTransaction(plan.entries, outputs, 0n, undefined, 1);
     pendingList = [{ transaction: tx }];
   }
@@ -588,17 +643,19 @@ export async function sendKas({ wallet, dest, amountKas, utxos, exact = false })
     const pending = pendingList[p];
     const tx = pending.transaction;
     tx.version = 1;
-    prepInputs(tx, { sigOpCount: 0, computeBudget: 10 });
     const isFinal = p === pendingList.length - 1;
+    const p2shBudget = plan.entries.some(e => e.redeemHex) ? 40 : 10;
+    prepInputs(tx, { sigOpCount: 0, computeBudget: p2shBudget });
     const protect = (exact || (isCovenantDest && isFinal)) ? destOutputIndex(k, tx, destStr) : -1;
     if (isCovenantDest && isFinal) covenantId = bindCovenantOutputs(k, tx, destStr);
     try { k.updateTransactionMass('mainnet', tx); } catch {}
+    assertSimpleSendOutputs(k, tx, destStr, changeAddr, isFinal);
     let scripts = meetToccataFee(k, tx, priv, plan.entries, 0n, protect);
     if (exact) assertExactDest(k, tx, destStr, requested);
     try {
       txId = await submitSignedRpc(k, rpc, url, tx, {
         sigOpCount: 0,
-        computeBudget: 10,
+        computeBudget: p2shBudget,
         lockTime: 0,
         scripts
       });
@@ -608,10 +665,11 @@ export async function sendKas({ wallet, dest, amountKas, utxos, exact = false })
       if (need && need > paid) {
         shrinkOutputsForFee(tx, need - paid + 50_000n, protect);
         if (exact) assertExactDest(k, tx, destStr, requested);
-        scripts = signP2pkInputs(k, tx, priv, plan.entries);
+        assertSimpleSendOutputs(k, tx, destStr, changeAddr, isFinal);
+        scripts = signWalletInputs(k, tx, priv, plan.entries);
         txId = await submitSignedRpc(k, rpc, url, tx, {
           sigOpCount: 0,
-          computeBudget: 10,
+          computeBudget: p2shBudget,
           lockTime: 0,
           scripts
         });
@@ -795,20 +853,65 @@ function meetToccataFee(k, tx, priv, entries, floor = 0n, protectIndex = -1) {
   return scripts;
 }
 
-export async function fetchOwnedUtxos(wallet) {
-  const addrs = (wallet?.receiveAddrs && wallet.receiveAddrs.length)
+function ownedSpendRows(wallet) {
+  const src = (wallet?.receiveAddrs && wallet.receiveAddrs.length)
     ? wallet.receiveAddrs
-    : [{ address: wallet.address, privateKey: wallet.privKey }];
-  const bags = await Promise.all(addrs.slice(0, 12).map(async a => {
-    try {
-      const raw = await fetchAddressUtxos(a.address);
-      const key = a.privateKey || a.privKey || wallet.privKey;
-      return restUtxosToEntries(raw, a.address).map(e => ({ ...e, privKey: key }));
-    } catch {
-      return [];
+    : [{ address: wallet.address, privateKey: wallet.privKey, pubKey: wallet.pubKey }];
+  const rows = [];
+  const seen = new Set();
+  for (const a of src) {
+    const key = a.privateKey || a.privKey || wallet.privKey;
+    if (a.address && !seen.has(a.address)) {
+      seen.add(a.address);
+      rows.push({ address: a.address, privKey: key, redeemHex: '' });
     }
-  }));
-  return bags.flat();
+    if (a.privacyAddress && a.privacyRedeem && !seen.has(a.privacyAddress)) {
+      seen.add(a.privacyAddress);
+      rows.push({ address: a.privacyAddress, privKey: key, redeemHex: a.privacyRedeem });
+    }
+  }
+  return rows;
+}
+
+function attachSpendMeta(entries, rows) {
+  const byAddr = new Map(rows.map(r => [r.address, r]));
+  return entries.map(e => {
+    const row = byAddr.get(e.address);
+    return {
+      ...e,
+      privKey: row?.privKey || e.privKey || '',
+      redeemHex: row?.redeemHex || e.redeemHex || ''
+    };
+  }).filter(e => e.privKey && e.outpoint?.transactionId && e.amount > 0n);
+}
+
+export async function fetchOwnedUtxos(wallet) {
+  const rows = ownedSpendRows(wallet);
+  if (!rows.length) return [];
+  try {
+    const { rpc } = await connectPublicNode();
+    const raw = await fetchNodeUtxosMany(rpc, rows.map(r => r.address));
+    const tagged = attachSpendMeta(raw, rows);
+    if (tagged.length || raw.length === 0) return tagged;
+  } catch {}
+  const bags = [];
+  for (let i = 0; i < rows.length; i += 8) {
+    const chunk = rows.slice(i, i + 8);
+    const part = await Promise.all(chunk.map(async a => {
+      try {
+        const raw = await fetchAddressUtxos(a.address);
+        return restUtxosToEntries(raw, a.address).map(e => ({
+          ...e,
+          privKey: a.privKey,
+          redeemHex: a.redeemHex || ''
+        }));
+      } catch {
+        return [];
+      }
+    }));
+    bags.push(...part.flat());
+  }
+  return bags;
 }
 
 function requiredFeeFromError(e) {

@@ -68,7 +68,12 @@ export function parseDuration(text) {
 
 export function parseAddress(text) {
   const m = String(text || '').match(ADDR_RE);
-  return m ? m[0].toLowerCase() : null;
+  if (!m) return null;
+  const a = m[0].toLowerCase();
+  const parts = a.split(':');
+  if (parts.length !== 2 || parts[0] !== 'kaspa') return null;
+  if (!/^[qpz][a-z0-9]{20,}$/.test(parts[1])) return null;
+  return a;
 }
 
 function detectType(text, prev) {

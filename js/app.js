@@ -1,31 +1,33 @@
 import {
   loadCryptoLibs, generatePrivateKey, createKeypairFromHex,
-  isValidKaspaAddress, shortAddr, hexToBytes, privKeyToHex, derivePublicKey, kaspaAddressFromPubkey, bytesToHex
-} from './crypto.js?v=70';
+  isValidKaspaAddress, validateKaspaAddress, shortAddr, hexToBytes, privKeyToHex,
+  derivePublicKey, kaspaAddressFromPubkey, bytesToHex, kasToSompi, sompiToKasString,
+  validateAndCleanUtxo
+} from './crypto.js?v=71';
 import {
   NATIVE_KAS, VAULT_PRODUCTS, loadWatchlist, addToken, removeToken,
   loadVaults, saveVault, updateVault, formatAmount, formatTokenUnits, tokenColor,
   fetchKcc20Portfolio, fetchKrc20Portfolio, fetchKcc20PortfolioMany, fetchKrc20PortfolioMany,
   krc20Logo, toTokenRaw, setVaultOwner, kcc20Identicon
-} from './kcc20.js?v=70';
-import { parseIntent, describeIntent, askFor, parseDurationField, interpretVaultChat, normalizeChat } from './intent.js?v=70';
-import { payloadFromAddress } from './script.js?v=70';
-import { explainTransaction, scorpionAnswer } from './scorpion.js?v=70';
+} from './kcc20.js?v=71';
+import { parseIntent, describeIntent, askFor, parseDurationField, interpretVaultChat, normalizeChat } from './intent.js?v=71';
+import { payloadFromAddress } from './script.js?v=71';
+import { explainTransaction, scorpionAnswer } from './scorpion.js?v=71';
 import {
   sendKas, fetchAddressUtxos, fetchAddressBalance, loadKaspaSdk,
   buildTimelockCovenant, buildEscrowCovenant, buildMultisigCovenant, currentDaa,
   pingPublicNode, sweepVault, toRpcTransaction, p2shSpendScript, planKasPayment, storageMassOk,
   compoundUtxos, sendKrc20, sendKcc20, loadKrc20Pending, lockKcc20Timelock, sweepKcc20Capsule,
   fetchOwnedUtxos
-} from './tx.js?v=70';
-import { kronMarkets, quoteKronTrade, executeKronTrade, formatKasSompi, lookupKronTick, tradeCostLines, attachKronLogos } from './kronTrade.js?v=70';
+} from './tx.js?v=71';
+import { kronMarkets, quoteKronTrade, executeKronTrade, formatKasSompi, lookupKronTick, tradeCostLines, attachKronLogos } from './kronTrade.js?v=71';
 import {
   migrateReceiveBook, ownedAddresses, markAddressUsed, currentReceive,
-  deriveReceiveBatch, unusedReceiveCount
-} from './receive.js?v=70';
-import { knsResolve, knsPrimary, knsDomainsFor, knsOwnerMatches, knsAppUrl, looksLikeKasDomain, normalizeKasDomain } from './kns.js?v=70';
+  deriveReceiveBatch, unusedReceiveCount, ensurePrivacyBook
+} from './receive.js?v=71';
+import { knsResolve, knsPrimary, knsDomainsFor, knsOwnerMatches, knsAppUrl, looksLikeKasDomain, normalizeKasDomain } from './kns.js?v=71';
 
-export const BUILD = '70';
+export const BUILD = '71';
 
 function errText(e) {
   if (e == null) return 'Unknown error';
@@ -574,14 +576,25 @@ async function sha256Hex(text) {
   return [...new Uint8Array(buf)].map(b => b.toString(16).padStart(2, '0')).join('');
 }
 
-async function hashPin(pin, salt) {
+async function pbkdf2PinHex(pin, saltHex) {
+  const key = await crypto.subtle.importKey('raw', new TextEncoder().encode(pin), 'PBKDF2', false, ['deriveBits']);
+  const bits = await crypto.subtle.deriveBits(
+    { name: 'PBKDF2', hash: 'SHA-256', salt: hexToBytes(saltHex), iterations: 120000 },
+    key,
+    256
+  );
+  return bytesToHex(new Uint8Array(bits));
+}
+
+async function hashPin(pin, salt, rec) {
+  if (rec?.kdf === 'pbkdf2-sha256') return pbkdf2PinHex(pin, salt);
   return sha256Hex(`${salt}:${pin}`);
 }
 
 async function savePin(pin) {
   const salt = [...crypto.getRandomValues(new Uint8Array(16))].map(b => b.toString(16).padStart(2, '0')).join('');
-  const hash = await hashPin(pin, salt);
-  const rec = { salt, hash, len: pin.length };
+  const hash = await pbkdf2PinHex(pin, salt);
+  const rec = { salt, hash, len: pin.length, kdf: 'pbkdf2-sha256' };
   if (wallet) {
     wallet.pin = rec;
     saveWallet();
@@ -592,7 +605,7 @@ async function savePin(pin) {
 async function pinMatches(pin) {
   const rec = loadPin();
   if (!rec) return false;
-  return (await hashPin(pin, rec.salt)) === rec.hash;
+  return (await hashPin(pin, rec.salt, rec)) === rec.hash;
 }
 
 async function pinPress(key) {
@@ -1197,10 +1210,15 @@ function renderHoldings() {
 }
 
 function asUtxoList(raw) {
-  if (Array.isArray(raw)) return raw;
-  if (Array.isArray(raw?.utxos)) return raw.utxos;
-  if (Array.isArray(raw?.result)) return raw.result;
-  return [];
+  const list = Array.isArray(raw) ? raw
+    : Array.isArray(raw?.utxos) ? raw.utxos
+    : Array.isArray(raw?.result) ? raw.result
+    : [];
+  return list.map(u => {
+    const c = validateAndCleanUtxo(u);
+    if (!c) return null;
+    return { outpoint: c.outpoint, amount: c.amount, scriptPublicKey: c.scriptPublicKey, blockDaaScore: c.blockDaaScore, isCoinbase: c.isCoinbase };
+  }).filter(Boolean);
 }
 
 function paintUtxoCount() {
@@ -1945,17 +1963,22 @@ async function tickLive(full) {
   try {
     migrateReceiveBook(wallet);
     const owned = ownedAddresses(wallet);
-    const home = owned.find(o => o.role === 'home') || owned[0];
-    const [bals, uRes] = await Promise.all([
+    const [bals, ownedBag] = await Promise.all([
       Promise.all(owned.map(o => fetchAddressBalance(o.address).catch(() => 0))),
-      fetch(`${API_BASE}/addresses/${encodeURIComponent(home?.address || addr)}/utxos`)
+      fetchOwnedUtxos(wallet).catch(() => null)
     ]);
     if (!wallet || wallet.address !== addr) return;
     let nextBal = bals.reduce((a, n) => a + Number(n || 0), 0);
     owned.forEach((o, i) => {
       if (o.role !== 'home' && Number(bals[i] || 0) > 0) markAddressUsed(wallet, o.address, true);
     });
-    if (uRes.ok) utxos = asUtxoList(await uRes.json());
+    if (Array.isArray(ownedBag)) {
+      utxos = ownedBag;
+      const uSum = ownedBag.reduce((a, e) => {
+        try { return a + Number(e.amount || 0n); } catch { return a; }
+      }, 0);
+      if (uSum > nextBal) nextBal = uSum;
+    }
     paintUtxoCount();
     saveWallet();
     const balChanged = seenBalance != null && nextBal !== seenBalance;
@@ -2762,11 +2785,14 @@ async function prepareSend(prefill) {
       return;
     }
   }
-  if (!isValidKaspaAddress(dest)) { toast('Invalid Kaspa address — use kaspa:q… or a .kas domain'); return; }
+  const destOk = validateKaspaAddress(dest, 'mainnet');
+  if (!destOk.isValid) { toast(destOk.error || 'Invalid Kaspa address — use kaspa:q… or a .kas domain'); return; }
   if (!form.amount) { toast('Enter an amount'); return; }
   if (asset.native || asset.protocol === 'kas') {
-    const amount = Number(form.amount);
-    if (!amount || amount <= 0) { toast('Enter an amount'); return; }
+    let sompi;
+    try { sompi = kasToSompi(form.amount); } catch { toast('Enter an amount'); return; }
+    if (sompi <= 0n) { toast('Enter an amount'); return; }
+    const amount = sompiToKasString(sompi);
     const feeEst = 0.0045;
     openSheet('Review send', `
       <div class="kv"><span class="k">Asset</span><span class="v">KAS</span></div>
@@ -2936,15 +2962,39 @@ function defaultRecvIndex() {
   return book.length - 1;
 }
 
+function recvDisplayedAddress(row) {
+  const privacy = !!window.__recvPrivacy && !window.__recvTick;
+  if (privacy && row?.privacyAddress) return row.privacyAddress;
+  return row?.address || '';
+}
+
+function paintRecvMode() {
+  const privacy = !!window.__recvPrivacy && !window.__recvTick;
+  document.querySelectorAll('#recv-mode button').forEach(b => {
+    b.classList.toggle('on', (b.dataset.mode === 'p') === privacy);
+  });
+  const hint = $('recv-privacy-hint');
+  if (hint) {
+    hint.textContent = privacy
+      ? 'Privacy P2SH (kaspa:p) hides your Schnorr pubkey until you spend. KCC20 and KRC-20 cannot land here — use Public for tokens.'
+      : 'Public (kaspa:q) is the default. Needed for KCC20 / KRC-20. Rotate unused keys with ‹ ›.';
+  }
+}
+
 async function paintRecvSlot(idx) {
   const book = recvBook();
   if (!book.length) return;
   const i = Math.max(0, Math.min(idx, book.length - 1));
   window.__recvIdx = i;
   const row = book[i];
-  window.__recvAddr = row.address;
-  if ($('recv-addr')) $('recv-addr').textContent = row.address;
-  if ($('recv-label')) $('recv-label').textContent = row.role === 'home' ? 'Home' : (row.label || 'Receive');
+  const shown = recvDisplayedAddress(row);
+  window.__recvAddr = shown;
+  paintRecvMode();
+  if ($('recv-addr')) $('recv-addr').textContent = shown;
+  if ($('recv-label')) {
+    const kind = (window.__recvPrivacy && !window.__recvTick && row.privacyAddress) ? ' · Privacy P2SH' : '';
+    $('recv-label').textContent = (row.role === 'home' ? 'Home' : (row.label || 'Receive')) + kind;
+  }
   if ($('recv-pager')) $('recv-pager').textContent = (i + 1) + ' / ' + book.length;
   if ($('recv-prev')) $('recv-prev').disabled = i <= 0;
   if ($('recv-next')) $('recv-next').disabled = i >= book.length - 1;
@@ -2952,14 +3002,16 @@ async function paintRecvSlot(idx) {
     $('recv-fresh').className = 'recv-pill wait';
     $('recv-fresh').textContent = 'Checking…';
   }
-  if ($('recv-status')) $('recv-status').textContent = 'Watching ' + shortAddr(row.address, 8, 6) + '…';
-  await paintReceiveQr(row.address);
+  if ($('recv-status')) $('recv-status').textContent = 'Watching ' + shortAddr(shown, 8, 6) + '…';
+  await paintReceiveQr(shown);
   try {
-    const n = await fetchTxCount(row.address);
-    row.txCount = n;
-    if (n > 0) markAddressUsed(wallet, row.address, true);
-    else if (row.role !== 'home') row.used = false;
-    saveWallet();
+    const n = await fetchTxCount(shown);
+    if (shown === row.address) {
+      row.txCount = n;
+      if (n > 0) markAddressUsed(wallet, row.address, true);
+      else if (row.role !== 'home') row.used = false;
+      saveWallet();
+    }
     const fresh = n === 0;
     if ($('recv-fresh')) {
       $('recv-fresh').className = 'recv-pill ' + (fresh ? 'fresh' : 'used');
@@ -2978,14 +3030,24 @@ async function openReceive(prefill) {
   receiveWatch = true;
   setLiveFast(true);
   migrateReceiveBook(wallet);
+  try { await ensurePrivacyBook(wallet); } catch {}
   saveWallet();
   const tick = String(prefill?.token?.ticker || prefill?.tick || '').toUpperCase();
+  window.__recvTick = tick;
+  window.__recvPrivacy = false;
   const title = tick ? 'Receive ' + tick : 'Receive KAS';
   const book = recvBook();
   const start = defaultRecvIndex();
   const row = book[start] || book[0];
+  const modeHtml = tick ? '' : `
+    <div class="recv-mode" id="recv-mode">
+      <button type="button" class="on" data-mode="q">Public kaspa:q</button>
+      <button type="button" data-mode="p">Privacy kaspa:p</button>
+    </div>
+    <p class="muted" id="recv-privacy-hint" style="text-align:left;padding:0 0 8px;font-size:12px;">Public (kaspa:q) is the default. Needed for KCC20 / KRC-20. Rotate unused keys with ‹ ›.</p>`;
   openSheet(title, `
     <p class="muted" style="text-align:left;padding:0 0 8px;">Scroll every derived receive key with <b>‹ ›</b>. Fresh means this address has 0 txs on Kaspa. When unused keys run out, derive 20 more.</p>
+    ${modeHtml}
     <div class="recv-nav">
       <button class="recv-arrow" id="recv-prev" type="button" aria-label="Previous address">‹</button>
       <div class="recv-pager" id="recv-pager">${start + 1} / ${Math.max(book.length, 1)}</div>
@@ -3009,6 +3071,12 @@ async function openReceive(prefill) {
   };
   $('recv-prev').onclick = () => paintRecvSlot((window.__recvIdx || 0) - 1);
   $('recv-next').onclick = () => paintRecvSlot((window.__recvIdx || 0) + 1);
+  $('recv-mode')?.addEventListener('click', async (e) => {
+    const btn = e.target.closest('button[data-mode]');
+    if (!btn) return;
+    window.__recvPrivacy = btn.dataset.mode === 'p';
+    await paintRecvSlot(window.__recvIdx || 0);
+  });
   $('recv-derive').onclick = async () => {
     const btn = $('recv-derive');
     if (btn) { btn.disabled = true; btn.textContent = 'Deriving…'; }
@@ -3892,7 +3960,7 @@ async function init() {
     img.remove();
     if (parent && !parent.textContent.trim()) parent.append(fb);
   }, true);
-  window.__kcc = { parseIntent, isValidKaspaAddress, describeIntent, pingPublicNode, toRpcTransaction, p2shSpendScript, planKasPayment, storageMassOk };
+  window.__kcc = { parseIntent, isValidKaspaAddress, validateKaspaAddress, describeIntent, pingPublicNode, toRpcTransaction, p2shSpendScript, planKasPayment, storageMassOk, kasToSompi };
   window.__kccLoad = loadKaspaSdk;
   setClock();
   setInterval(setClock, 1000);

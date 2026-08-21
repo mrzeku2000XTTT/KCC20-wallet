@@ -618,6 +618,20 @@ img { display: block; max-width: 100%; }
 .recv-pill.fresh { background: rgba(48,209,88,0.16); color: var(--green); }
 .recv-pill.used { background: rgba(255,255,255,0.08); color: var(--label-2); }
 .recv-pill.wait { background: rgba(212,176,122,0.14); color: var(--gold-2); }
+.recv-mode {
+  display: flex; gap: 6px; justify-content: center; margin: 0 0 8px;
+}
+.recv-mode button {
+  flex: 1; max-width: 160px; height: 34px; border-radius: 999px;
+  border: 0.5px solid var(--hairline);
+  background: rgba(255,255,255,0.06);
+  color: var(--label-2); font-size: 11px; font-weight: 700; letter-spacing: 0.02em;
+}
+.recv-mode button.on {
+  background: rgba(212,176,122,0.22);
+  color: var(--gold-2);
+  border-color: rgba(212,176,122,0.4);
+}
 .seg {
   display: flex; background: rgba(255,255,255,0.08); border-radius: 12px; padding: 3px; margin-bottom: 16px;
 }

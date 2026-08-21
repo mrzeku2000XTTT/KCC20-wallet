@@ -1,6 +1,6 @@
 /* Local Kaspa redeem-script + P2SH address construction. */
-import { hexToBytes, bytesToHex, concatBytes, kaspaAddressFromScriptHash, kaspaCashaddrDecode } from './crypto.js';
-import { loadCryptoLibs } from './crypto.js';
+import { hexToBytes, bytesToHex, concatBytes, kaspaAddressFromScriptHash, kaspaCashaddrDecode, validateKaspaAddress } from './crypto.js?v=71';
+import { loadCryptoLibs } from './crypto.js?v=71';
 
 export const OP = {
   FALSE: 0x00, IF: 0x63, ELSE: 0x67, ENDIF: 0x68,
@@ -64,8 +64,18 @@ export function pubkeyFromWallet(wallet) {
 }
 
 export function payloadFromAddress(addr) {
+  const v = validateKaspaAddress(addr, 'mainnet');
+  if (!v.isValid) return null;
   const d = kaspaCashaddrDecode(addr);
   return d ? d.payloadBytes : null;
+}
+
+/** KasPriv-style P2SH wrap: script hash of `<x-only pubkey> CHECKSIG`. Hides the Schnorr pubkey until spend. */
+export async function buildPrivacyAddress(pubkeyHex) {
+  const pub = hexToBytes(pubkeyHex);
+  const xOnly = pub.length === 33 ? pub.slice(1) : pub;
+  if (xOnly.length !== 32) throw new Error('Privacy address needs a 32-byte Schnorr public key');
+  return { ...(await addressFromRedeem(p2pkScript(xOnly))), type: 'privacy' };
 }
 
 export async function currentDaa() {

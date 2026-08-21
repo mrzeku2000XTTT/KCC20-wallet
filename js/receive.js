@@ -1,5 +1,6 @@
 /* KaChing-style fresh receive addresses. Keys stay on-device. */
-import { generatePrivateKey, createKeypairFromHex } from './crypto.js?v=70';
+import { generatePrivateKey, createKeypairFromHex } from './crypto.js?v=71';
+import { buildPrivacyAddress } from './script.js?v=71';
 
 function rid() {
   try { return crypto.randomUUID(); } catch { return String(Date.now()) + Math.random().toString(16).slice(2); }
@@ -60,8 +61,26 @@ export async function deriveFreshReceiveAddress(wallet, opts = {}) {
     role: tick ? 'kcc20' : (opts.role || 'kas'),
     tick
   };
+  await attachPrivacyRow(row);
   wallet.receiveAddrs.push(row);
   return row;
+}
+
+export async function attachPrivacyRow(row) {
+  if (!row || row.privacyAddress) return row;
+  if (!row.pubKey) return row;
+  try {
+    const p = await buildPrivacyAddress(row.pubKey);
+    row.privacyAddress = p.address;
+    row.privacyRedeem = p.redeemHex;
+  } catch {}
+  return row;
+}
+
+export async function ensurePrivacyBook(wallet) {
+  migrateReceiveBook(wallet);
+  for (const row of wallet.receiveAddrs || []) await attachPrivacyRow(row);
+  return wallet;
 }
 
 export function markAddressUsed(wallet, address, used = true) {
@@ -113,7 +132,9 @@ export async function deriveReceiveBatch(wallet, n = 20, opts = {}) {
 export function keyringFor(wallet) {
   const map = new Map();
   for (const a of ownedAddresses(wallet)) {
-    if (a.address && (a.privateKey || a.privKey)) map.set(a.address, a.privateKey || a.privKey);
+    const key = a.privateKey || a.privKey;
+    if (a.address && key) map.set(a.address, key);
+    if (a.privacyAddress && key) map.set(a.privacyAddress, key);
   }
   if (wallet?.address && wallet?.privKey) map.set(wallet.address, wallet.privKey);
   return map;

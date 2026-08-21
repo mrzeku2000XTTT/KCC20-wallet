@@ -3,16 +3,16 @@ import {
   isValidKaspaAddress, validateKaspaAddress, shortAddr, hexToBytes, privKeyToHex,
   derivePublicKey, kaspaAddressFromPubkey, bytesToHex, kasToSompi, sompiToKasString,
   validateAndCleanUtxo
-} from './crypto.js?v=73';
+} from './crypto.js?v=74';
 import {
   NATIVE_KAS, VAULT_PRODUCTS, loadWatchlist, addToken, removeToken,
   loadVaults, saveVault, updateVault, formatAmount, formatTokenUnits, tokenColor,
   fetchKcc20Portfolio, fetchKrc20Portfolio, fetchKcc20PortfolioMany, fetchKrc20PortfolioMany,
   krc20Logo, toTokenRaw, setVaultOwner, kcc20Identicon, VAULT_GROUPS
-} from './kcc20.js?v=73';
-import { parseIntent, describeIntent, askFor, parseDurationField, interpretVaultChat, normalizeChat } from './intent.js?v=73';
-import { payloadFromAddress } from './script.js?v=73';
-import { explainTransaction, scorpionAnswer } from './scorpion.js?v=73';
+} from './kcc20.js?v=74';
+import { parseIntent, describeIntent, askFor, parseDurationField, interpretVaultChat, normalizeChat } from './intent.js?v=74';
+import { payloadFromAddress } from './script.js?v=74';
+import { explainTransaction, scorpionAnswer } from './scorpion.js?v=74';
 import {
   sendKas, fetchAddressUtxos, fetchAddressBalance, loadKaspaSdk,
   buildTimelockCovenant, buildEscrowCovenant, buildMultisigCovenant, currentDaa,
@@ -20,15 +20,15 @@ import {
   compoundUtxos, sendKrc20, sendKcc20, loadKrc20Pending, lockKcc20Timelock, sweepKcc20Capsule,
   fetchOwnedUtxos, buildSentinelChain, buildRecurringChain, buildHashlockCovenant,
   newHashlockSecret, checkinHop, currentHop, parseXmssKit, p2shFromRedeemHex, spendXmssVault
-} from './tx.js?v=73';
-import { kronMarkets, quoteKronTrade, executeKronTrade, formatKasSompi, lookupKronTick, tradeCostLines, attachKronLogos } from './kronTrade.js?v=73';
+} from './tx.js?v=74';
+import { kronMarkets, quoteKronTrade, executeKronTrade, formatKasSompi, lookupKronTick, tradeCostLines, attachKronLogos } from './kronTrade.js?v=74';
 import {
   migrateReceiveBook, ownedAddresses, markAddressUsed, currentReceive,
   deriveReceiveBatch, unusedReceiveCount, ensurePrivacyBook
-} from './receive.js?v=73';
-import { knsResolve, knsPrimary, knsDomainsFor, knsOwnerMatches, knsAppUrl, looksLikeKasDomain, normalizeKasDomain } from './kns.js?v=73';
+} from './receive.js?v=74';
+import { knsResolve, knsPrimary, knsDomainsFor, knsOwnerMatches, knsAppUrl, looksLikeKasDomain, normalizeKasDomain } from './kns.js?v=74';
 
-export const BUILD = '73';
+export const BUILD = '74';
 
 function errText(e) {
   if (e == null) return 'Unknown error';
@@ -274,7 +274,12 @@ function showPage(id) {
     $('nav-title').textContent = titles[id] || 'KCC20';
   }
   $('nav-left').innerHTML = '';
-  if (id === 'home') {
+  if (id === 'you') {
+    $('nav-right').innerHTML = `<button class="icon-btn" id="nav-build" type="button" aria-label="Proof of Fact roadmap" title="Build">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"/></svg>
+    </button>`;
+    $('nav-build')?.addEventListener('click', openBuildRoadmap);
+  } else if (id === 'home') {
     $('nav-right').innerHTML = `
       ${loadPin() ? `<button class="icon-btn" id="btn-lock-now" aria-label="Lock" title="Lock">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="5" y="11" width="14" height="10" rx="2"/><path d="M8 11V8a4 4 0 018 0v3"/></svg>
@@ -1596,13 +1601,71 @@ function renderActivity(txs = []) {
       </button>`).join('');
 }
 
+const BUILD_PHASES = [
+  'SHA-256 of { aiOutput, model, time }. Same fingerprint the Node MVP returns from POST /api/v1/anchor-truth.',
+  'Kaspa tx: 1 sompi dust + payload = the 64-char hash. Bitcoin called this OP_RETURN. Kaspa uses the tx payload field.',
+  'Sign in this wallet (PIN) and submit over wRPC — same path as Send. MVP status: PENDING_BLOCKDAG_INCLUSION.',
+  'Once accepted on L1 the hash is public proof. Kaspa Hub grant: AI integrity without a new chain or a custodian.'
+];
+
+function setBuildPhase(i) {
+  const n = Math.max(0, Math.min(3, Number(i) || 0));
+  document.querySelectorAll('#build-screen .build-phase').forEach(b => {
+    b.classList.toggle('on', Number(b.dataset.phase) === n);
+  });
+  if ($('build-copy')) $('build-copy').textContent = BUILD_PHASES[n];
+}
+
+function openBuildRoadmap() {
+  haptic();
+  setBuildPhase(0);
+  $('build-screen')?.classList.remove('hidden');
+  $('build-screen')?.setAttribute('aria-hidden', 'false');
+  $('tabbar')?.classList.remove('show');
+}
+
+function closeBuildRoadmap() {
+  $('build-screen')?.classList.add('hidden');
+  $('build-screen')?.setAttribute('aria-hidden', 'true');
+  if (wallet && sessionOpen()) $('tabbar')?.classList.add('show');
+}
+
+async function stampTruth() {
+  const aiOutput = ($('truth-in')?.value || '').trim();
+  if (!aiOutput) { toast('Paste AI text first'); return; }
+  const modelMetadata = { model: 'kcc20-wallet', build: BUILD };
+  const dataString = JSON.stringify({ aiOutput, modelMetadata, timestamp: Date.now() });
+  const buf = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(dataString));
+  const truthHash = bytesToHex(new Uint8Array(buf));
+  window.__truthPayload = {
+    kaspaTargetAddress: wallet?.address || '',
+    microKasAmount: 1,
+    opReturnData: truthHash,
+    kaspaPayloadHex: truthHash,
+    status: 'PENDING_BLOCKDAG_INCLUSION'
+  };
+  if ($('truth-hash')) $('truth-hash').textContent = truthHash;
+  if ($('truth-status')) {
+    $('truth-status').textContent = 'Fingerprint ready. Next: dust tx to your address with this hash in payload. Not broadcast yet.';
+  }
+  setBuildPhase(1);
+  toast('Truth hash ready');
+}
+
+async function copyTruthHash() {
+  const h = $('truth-hash')?.textContent || '';
+  if (!h || h.includes('appears')) { toast('Stamp first'); return; }
+  await copyText(h);
+}
+
 function renderProfile() {
   if (!wallet) return;
   const addr = wallet.address || '';
   if ($('profile-addr')) $('profile-addr').textContent = addr;
-  if ($('profile-bal')) $('profile-bal').textContent = formatAmount(balanceSompi) + ' KAS';
-  if ($('profile-script')) $('profile-script').textContent = String(addr).startsWith('kaspa:p') ? 'P2SH covenant' : 'P2PK Schnorr key';
+  if ($('profile-bal')) $('profile-bal').textContent = formatAmount(balanceSompi);
+  if ($('profile-script')) $('profile-script').textContent = String(addr).startsWith('kaspa:p') ? 'P2SH' : 'P2PK';
   if ($('profile-name')) $('profile-name').textContent = wallet.name || 'Wallet';
+  if ($('profile-avatar')) $('profile-avatar').textContent = String(wallet.name || 'K').replace(/^Wallet\s*/i, '').slice(0, 1).toUpperCase() || 'K';
   if ($('profile-utxos')) {
     const n = Array.isArray(utxos) ? utxos.length : 0;
     $('profile-utxos').textContent = n === 1 ? '1' : String(n);
@@ -4140,6 +4203,15 @@ function bind() {
       return;
     }
     if (row?.dataset.tokenAct) openTokenActivity(row.dataset.tokenAct);
+  });
+  click('profile-build', openBuildRoadmap);
+  click('build-close', closeBuildRoadmap);
+  click('truth-stamp', () => stampTruth().catch(err => toast(errText(err))));
+  click('truth-copy', copyTruthHash);
+  $('build-screen')?.addEventListener('click', e => {
+    const b = e.target.closest('[data-phase]');
+    if (!b) return;
+    setBuildPhase(Number(b.dataset.phase));
   });
   click('profile-kns', openKnsSheet);
   click('profile-copy', async () => {

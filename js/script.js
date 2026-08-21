@@ -1,6 +1,6 @@
 /* Local Kaspa redeem-script + P2SH address construction. */
-import { hexToBytes, bytesToHex, concatBytes, kaspaAddressFromScriptHash, kaspaCashaddrDecode, validateKaspaAddress } from './crypto.js?v=73';
-import { loadCryptoLibs } from './crypto.js?v=73';
+import { hexToBytes, bytesToHex, concatBytes, kaspaAddressFromScriptHash, kaspaCashaddrDecode, validateKaspaAddress } from './crypto.js?v=74';
+import { loadCryptoLibs } from './crypto.js?v=74';
 
 export const OP = {
   FALSE: 0x00, IF: 0x63, ELSE: 0x67, ENDIF: 0x68,

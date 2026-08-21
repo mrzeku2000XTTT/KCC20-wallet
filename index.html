@@ -12,7 +12,7 @@
   <link rel="icon" href="assets/icon.png">
   <title>KCC20 Wallet</title>
   <meta http-equiv="Cache-Control" content="no-store, no-cache, must-revalidate">
-  <link rel="stylesheet" href="css/app.css?v=73">
+  <link rel="stylesheet" href="css/app.css?v=74">
 </head>
 <body>
   <img class="bg-poster" src="assets/bg.jpg" alt="">
@@ -176,18 +176,28 @@
         <!-- PROFILE / SETTINGS -->
         <section class="page" id="page-you">
           <div class="glass profile-card">
-            <div class="profile-avatar">K</div>
-            <div class="card-label" id="profile-name">Wallet</div>
-            <div class="card-label">Your Kaspa address</div>
+            <div class="profile-top">
+              <div class="profile-avatar" id="profile-avatar">K</div>
+              <div class="profile-id">
+                <div class="profile-name" id="profile-name">Wallet</div>
+                <div class="card-label" id="profile-kns-name">Not linked</div>
+              </div>
+              <button class="build-fab" id="profile-build" type="button" aria-label="Open Proof of Fact roadmap" title="Build">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+                  <path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"/>
+                </svg>
+              </button>
+            </div>
             <p class="profile-addr" id="profile-addr">kaspa:…</p>
-            <div class="btn-row" style="margin-top:12px;">
-              <button class="btn btn-gold" id="profile-copy" type="button">Copy address</button>
+            <div class="profile-stats">
+              <div><b id="profile-bal">0</b><span>KAS</span></div>
+              <div><b id="profile-utxos">0</b><span>UTXOs</span></div>
+              <div><b id="profile-script">P2PK</b><span>Script</span></div>
+            </div>
+            <div class="btn-row" style="margin-top:10px;">
+              <button class="btn btn-gold" id="profile-copy" type="button">Copy</button>
               <button class="btn btn-glass" id="profile-qr" type="button">QR</button>
             </div>
-            <div class="kv"><span class="k">KNS</span><span class="v" id="profile-kns-name">Not linked</span></div>
-            <div class="kv"><span class="k">Balance</span><span class="v" id="profile-bal">0 KAS</span></div>
-            <div class="kv"><span class="k">Script</span><span class="v" id="profile-script">P2PK</span></div>
-            <div class="kv"><span class="k">UTXOs</span><span class="v" id="profile-utxos">0</span></div>
             <a class="profile-link" id="profile-explorer" href="#" target="_blank" rel="noopener">Open on kaspa.stream</a>
           </div>
 
@@ -274,6 +284,42 @@
           <h3 id="sheet-title">Sheet</h3>
           <div id="sheet-body"></div>
           <div class="btn-row" id="sheet-actions" style="margin-top:16px;"></div>
+        </div>
+      </div>
+
+      <div class="build-screen hidden" id="build-screen" aria-hidden="true">
+        <div class="build-head">
+          <button type="button" class="trade-x" id="build-close">Close</button>
+          <h2>Proof of Fact</h2>
+          <span class="build-mark" aria-hidden="true">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"/></svg>
+          </span>
+        </div>
+        <p class="build-lede">Stamp AI output onto Kaspa L1. Hash locally, then a dust tx carries the fingerprint in <b>payload</b> (not Bitcoin OP_RETURN).</p>
+        <div class="build-phases">
+          <button type="button" class="build-phase on" data-phase="0">
+            <em>1</em><b>Hash</b><span>SHA-256 truth</span>
+          </button>
+          <button type="button" class="build-phase" data-phase="1">
+            <em>2</em><b>Pack</b><span>1 sompi + payload</span>
+          </button>
+          <button type="button" class="build-phase" data-phase="2">
+            <em>3</em><b>Sign</b><span>Wallet / wRPC</span>
+          </button>
+          <button type="button" class="build-phase" data-phase="3">
+            <em>4</em><b>Anchor</b><span>BlockDAG inclusion</span>
+          </button>
+        </div>
+        <p class="build-copy" id="build-copy">SHA-256 of { aiOutput, model, time }. Same fingerprint the Node MVP returns from POST /api/v1/anchor-truth.</p>
+        <div class="build-demo glass">
+          <label for="truth-in">AI text</label>
+          <textarea id="truth-in" rows="2" placeholder="Paste model output to fingerprint…"></textarea>
+          <div class="build-demo-row">
+            <button class="btn btn-gold" id="truth-stamp" type="button">Stamp</button>
+            <button class="btn btn-glass" id="truth-copy" type="button">Copy hash</button>
+          </div>
+          <code class="build-hash" id="truth-hash">hash appears here</code>
+          <p class="build-status" id="truth-status">Local only until you broadcast. Needs ~1 sompi dust + payload hex.</p>
         </div>
       </div>
 
@@ -369,7 +415,7 @@
     })();
   </script>
   <script type="module">
-    import('./js/app.js?v=73').catch(function (err) {
+    import('./js/app.js?v=74').catch(function (err) {
       console.error(err);
       var phone = document.getElementById('phone');
       var d = document.createElement('div');

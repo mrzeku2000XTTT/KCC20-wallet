@@ -2,7 +2,7 @@
 import {
   hexToBytes, kaspaAddressFromScriptHash, validateKaspaAddress,
   validateAndCleanUtxo, deepCloneAndFreeze, kasToSompi
-} from './crypto.js?v=73';
+} from './crypto.js?v=74';
 
 const API = 'https://api.kaspa.org';
 

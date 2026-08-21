@@ -12,7 +12,7 @@
   <link rel="icon" href="assets/icon.png">
   <title>KCC20 Wallet</title>
   <meta http-equiv="Cache-Control" content="no-store, no-cache, must-revalidate">
-  <link rel="stylesheet" href="css/app.css?v=81">
+  <link rel="stylesheet" href="css/app.css?v=82">
 </head>
 <body>
   <img class="bg-poster" src="assets/bg.jpg" alt="">
@@ -309,8 +309,11 @@
               <label class="field small"><span>Scenes</span>
                 <input id="studio-scenes" type="number" min="4" max="8" value="5">
               </label>
+              <label class="field check" title="Ambient bed">
+                <span>Bed</span>
+                <input id="studio-music" type="checkbox" checked>
+              </label>
             </div>
-            <label class="field check"><input id="studio-music" type="checkbox" checked> Ambient bed</label>
             <div class="studio-row">
               <label class="field grow"><span>Engine</span>
                 <select id="studio-engine">
@@ -320,8 +323,8 @@
               </label>
             </div>
             <input id="studio-url" class="hidden" placeholder="http://127.0.0.1:8000" value="http://127.0.0.1:8000">
-            <button class="btn btn-gold" id="studio-go" type="button">Generate video</button>
-            <p class="studio-hint" id="studio-hint">The narrator is mixed into the file. After Generate you get a full-screen player — Pause, scrub, then Save.</p>
+            <button class="btn btn-gold" id="studio-go" type="button">Generate MP4</button>
+            <p class="studio-hint" id="studio-hint">Saves an MP4 with the narrator in the file. Generate fills this screen — Pause, scrub, then Save.</p>
           </div>
           <div class="studio-stage" id="studio-stage">
             <ol class="studio-steps" id="studio-steps">
@@ -331,6 +334,9 @@
               <li data-st="film">Film</li>
             </ol>
             <p class="studio-status" id="studio-status">Ready.</p>
+            <div class="studio-live" id="studio-live">
+              <canvas id="studio-canvas" width="960" height="540"></canvas>
+            </div>
             <div class="studio-stills" id="studio-stills"></div>
             <div class="studio-player hidden" id="studio-player">
               <video id="studio-video" playsinline webkit-playsinline></video>
@@ -338,7 +344,7 @@
                 <button type="button" class="studio-play" id="studio-pause" aria-label="Play or pause">Pause</button>
                 <input id="studio-seek" type="range" min="0" max="1000" value="0" aria-label="Seek">
                 <span id="studio-time">0:00</span>
-                <a class="studio-save" id="studio-dl" download="faceless.webm">Save</a>
+                <a class="studio-save" id="studio-dl" download="faceless.mp4">Save MP4</a>
               </div>
             </div>
           </div>
@@ -458,7 +464,7 @@
     })();
   </script>
   <script type="module">
-    import('./js/app.js?v=81').catch(function (err) {
+    import('./js/app.js?v=82').catch(function (err) {
       console.error(err);
       var phone = document.getElementById('phone');
       var d = document.createElement('div');

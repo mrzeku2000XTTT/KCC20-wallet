@@ -3,16 +3,16 @@ import {
   isValidKaspaAddress, validateKaspaAddress, shortAddr, hexToBytes, privKeyToHex,
   derivePublicKey, kaspaAddressFromPubkey, bytesToHex, kasToSompi, sompiToKasString,
   validateAndCleanUtxo
-} from './crypto.js?v=81';
+} from './crypto.js?v=82';
 import {
   NATIVE_KAS, VAULT_PRODUCTS, loadWatchlist, addToken, removeToken,
   loadVaults, saveVault, updateVault, formatAmount, formatTokenUnits, tokenColor,
   fetchKcc20Portfolio, fetchKrc20Portfolio, fetchKcc20PortfolioMany, fetchKrc20PortfolioMany,
   krc20Logo, toTokenRaw, setVaultOwner, kcc20Identicon, VAULT_GROUPS
-} from './kcc20.js?v=81';
-import { parseIntent, describeIntent, askFor, parseDurationField, interpretVaultChat, normalizeChat } from './intent.js?v=81';
-import { payloadFromAddress } from './script.js?v=81';
-import { explainTransaction, scorpionAnswer } from './scorpion.js?v=81';
+} from './kcc20.js?v=82';
+import { parseIntent, describeIntent, askFor, parseDurationField, interpretVaultChat, normalizeChat } from './intent.js?v=82';
+import { payloadFromAddress } from './script.js?v=82';
+import { explainTransaction, scorpionAnswer } from './scorpion.js?v=82';
 import {
   sendKas, fetchAddressUtxos, fetchAddressBalance, loadKaspaSdk,
   buildTimelockCovenant, buildEscrowCovenant, buildMultisigCovenant, currentDaa,
@@ -20,16 +20,16 @@ import {
   compoundUtxos, sendKrc20, sendKcc20, loadKrc20Pending, lockKcc20Timelock, sweepKcc20Capsule,
   fetchOwnedUtxos, buildSentinelChain, buildRecurringChain, buildHashlockCovenant,
   newHashlockSecret, checkinHop, currentHop, parseXmssKit, p2shFromRedeemHex, spendXmssVault
-} from './tx.js?v=81';
-import { kronMarkets, quoteKronTrade, executeKronTrade, formatKasSompi, lookupKronTick, tradeCostLines, attachKronLogos } from './kronTrade.js?v=81';
+} from './tx.js?v=82';
+import { kronMarkets, quoteKronTrade, executeKronTrade, formatKasSompi, lookupKronTick, tradeCostLines, attachKronLogos } from './kronTrade.js?v=82';
 import {
   migrateReceiveBook, ownedAddresses, markAddressUsed, currentReceive,
   deriveReceiveBatch, unusedReceiveCount, ensurePrivacyBook
-} from './receive.js?v=81';
-import { knsResolve, knsPrimary, knsDomainsFor, knsOwnerMatches, knsAppUrl, looksLikeKasDomain, normalizeKasDomain } from './kns.js?v=81';
-import { runPhoneStudio, runServerStudio } from './studio.js?v=81';
+} from './receive.js?v=82';
+import { knsResolve, knsPrimary, knsDomainsFor, knsOwnerMatches, knsAppUrl, looksLikeKasDomain, normalizeKasDomain } from './kns.js?v=82';
+import { runPhoneStudio, runServerStudio } from './studio.js?v=82';
 
-export const BUILD = '81';
+export const BUILD = '82';
 
 function errText(e) {
   if (e == null) return 'Unknown error';
@@ -1681,7 +1681,7 @@ function showBuildApp(name) {
     $('studio-url')?.classList.toggle('hidden', $('studio-engine')?.value !== 'server');
   }
   if (view !== 'studio') {
-    $('app-studio')?.classList.remove('playing');
+    $('app-studio')?.classList.remove('playing', 'working');
     const v = $('studio-video');
     if (v) { v.pause(); }
   }
@@ -1720,6 +1720,7 @@ function enterStudioPlayer(data) {
   const a = $('studio-dl');
   const seek = $('studio-seek');
   $('studio-player')?.classList.remove('hidden');
+  $('app-studio')?.classList.remove('working');
   $('app-studio')?.classList.add('playing');
   if (v) {
     v.src = data.url;
@@ -1731,11 +1732,12 @@ function enterStudioPlayer(data) {
   }
   if (a) {
     a.href = data.url;
-    a.download = 'faceless.' + (data.ext || 'webm');
+    a.download = 'faceless.mp4';
+    a.textContent = 'Save MP4';
   }
   if (seek) seek.value = 0;
   if ($('studio-status')) {
-    $('studio-status').textContent = (data.title || 'Film') + ' · tap Pause · voice is in the file';
+    $('studio-status').textContent = (data.title || 'Film') + ' · MP4 · tap Pause · voice is in the file';
   }
   syncStudioPauseBtn();
 }
@@ -1772,6 +1774,7 @@ async function generateStudio() {
   $('studio-stills').innerHTML = '';
   $('studio-player')?.classList.add('hidden');
   $('app-studio')?.classList.remove('playing');
+  $('app-studio')?.classList.add('working');
   const vid0 = $('studio-video');
   if (vid0) { vid0.pause(); vid0.removeAttribute('src'); }
   const onProgress = (ev, data) => {
@@ -1820,15 +1823,17 @@ async function generateStudio() {
       await runPhoneStudio({
         topic, nScenes: n, music,
         voice: $('studio-voice')?.value || 'nova',
+        liveCanvas: $('studio-canvas'),
         onProgress
       });
     }
-    toast('Video ready');
+    toast('MP4 ready');
   } catch (e) {
+    $('app-studio')?.classList.remove('working');
     if ($('studio-status')) $('studio-status').textContent = errText(e);
     toast(errText(e));
   }
-  if (btn) { btn.disabled = false; btn.textContent = 'Generate video'; }
+  if (btn) { btn.disabled = false; btn.textContent = 'Generate MP4'; }
 }
 
 async function stampTruth() {

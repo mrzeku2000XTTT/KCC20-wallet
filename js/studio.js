@@ -1,4 +1,5 @@
-/* Faceless Video Studio — in-phone Ken Burns film (zip pipeline, no server). */
+/* Faceless Video Studio — in-phone Ken Burns film, H.264 MP4. */
+import { Muxer, ArrayBufferTarget } from '../vendor/mp4-muxer.mjs';
 
 const PLACES = [
   'a rain-streaked kitchen window at dusk',
@@ -111,13 +112,49 @@ function paintStill(visual, w = 1280, h = 720) {
 
 function pickMime() {
   const types = [
-    'video/webm;codecs=vp9,opus',
-    'video/webm;codecs=vp8,opus',
-    'video/webm',
+    'video/mp4;codecs=avc1.4D001F,mp4a.40.2',
+    'video/mp4;codecs=avc1.42001E,mp4a.40.2',
+    'video/mp4;codecs=avc1,mp4a.40.2',
     'video/mp4'
   ];
   if (typeof MediaRecorder === 'undefined') return '';
   return types.find(t => MediaRecorder.isTypeSupported(t)) || '';
+}
+
+async function pickVideoCodec(w, h) {
+  if (typeof VideoEncoder === 'undefined' || typeof VideoEncoder.isConfigSupported !== 'function') return null;
+  const codecs = ['avc1.4D001F', 'avc1.42001E', 'avc1.64001F', 'avc1.42001F'];
+  for (const codec of codecs) {
+    for (const hw of ['prefer-hardware', 'prefer-software', 'no-preference']) {
+      const cfg = { codec, width: w, height: h, bitrate: 2_400_000, framerate: 24, avc: { format: 'avc' }, hardwareAcceleration: hw };
+      try {
+        const s = await VideoEncoder.isConfigSupported(cfg);
+        if (s?.supported) return { mux: 'avc', config: { ...cfg, ...(s.config || {}) } };
+      } catch {}
+    }
+  }
+  return null;
+}
+
+async function pickAudioCodec(sampleRate) {
+  if (typeof AudioEncoder === 'undefined' || typeof AudioEncoder.isConfigSupported !== 'function') return null;
+  const opts = [
+    { codec: 'mp4a.40.2', mux: 'aac' },
+    { codec: 'mp4a.40.02', mux: 'aac' },
+    { codec: 'opus', mux: 'opus' }
+  ];
+  for (const o of opts) {
+    const cfg = { codec: o.codec, numberOfChannels: 1, sampleRate, bitrate: o.mux === 'opus' ? 64000 : 96000 };
+    try {
+      const s = await AudioEncoder.isConfigSupported(cfg);
+      if (s?.supported) return { mux: o.mux, config: { ...cfg, ...(s.config || {}) } };
+    } catch {}
+  }
+  return null;
+}
+
+async function drainEncoder(enc) {
+  while (enc && enc.encodeQueueSize > 6) await wait(4);
 }
 
 function wait(ms) {
@@ -189,13 +226,151 @@ function synthesizeNarration(ctx, text, duration, pitchHz) {
   return buf;
 }
 
-export async function assembleKenBurns(scenes, { music = true, voice = 'nova', onTick } = {}) {
+function drawKenBurnsFrame(ctx, still, sc, f, frames, w, h) {
+  const t = f / frames;
+  const z = 1 + 0.08 * t;
+  const ox = Math.sin(f / 40) * 12;
+  const oy = Math.cos(f / 35) * 8;
+  const sw = still.width / z, sh = still.height / z;
+  const sx = (still.width - sw) / 2 + ox;
+  const sy = (still.height - sh) / 2 + oy;
+  ctx.fillStyle = '#050506';
+  ctx.fillRect(0, 0, w, h);
+  ctx.drawImage(still, sx, sy, sw, sh, 0, 0, w, h);
+  ctx.fillStyle = 'rgba(0,0,0,0.42)';
+  ctx.fillRect(0, h - 96, w, 96);
+  ctx.fillStyle = 'rgba(243,226,191,0.95)';
+  ctx.font = '500 17px -apple-system, sans-serif';
+  wrapText(ctx, sc.narration, 22, h - 58, w - 44, 21);
+  const fade = t < 0.08 ? t / 0.08 : (t > 0.92 ? (1 - t) / 0.08 : 1);
+  ctx.fillStyle = `rgba(5,5,6,${1 - fade})`;
+  ctx.fillRect(0, 0, w, h);
+}
+
+async function mixFilmAudio(scenes, { music, voice, sampleRate = 44100 }) {
+  const totalDur = scenes.reduce((a, s) => a + (s.duration || sceneDuration(s.narration)), 0) + 0.2;
+  const off = new OfflineAudioContext(1, Math.max(1, Math.ceil(totalDur * sampleRate)), sampleRate);
+  const master = off.createGain();
+  master.gain.value = 1;
+  master.connect(off.destination);
+  if (music) {
+    for (const f of [110, 164.81, 220]) {
+      const o = off.createOscillator();
+      const g = off.createGain();
+      o.type = 'sine';
+      o.frequency.value = f;
+      g.gain.value = 0.016;
+      o.connect(g); g.connect(master);
+      o.start(0);
+      o.stop(totalDur);
+    }
+  }
+  const pitch = VOICE_PITCH[voice] || 145;
+  let when = 0.08;
+  for (const sc of scenes) {
+    const dur = sc.duration || sceneDuration(sc.narration);
+    const buf = synthesizeNarration(off, sc.narration, dur, pitch);
+    const src = off.createBufferSource();
+    src.buffer = buf;
+    const g = off.createGain();
+    g.gain.value = 0.95;
+    src.connect(g); g.connect(master);
+    src.start(when);
+    when += dur;
+  }
+  return off.startRendering();
+}
+
+async function encodeMp4(scenes, { canvas, ctx, w, h, fps, music, voice, onTick }) {
+  const vPick = await pickVideoCodec(w, h);
+  if (!vPick) throw new Error('no-webcodecs');
+  const audioBuf = await mixFilmAudio(scenes, { music, voice, sampleRate: 44100 });
+  const aPick = await pickAudioCodec(audioBuf.sampleRate);
+  if (!aPick) throw new Error('no-webcodecs-audio');
+
+  const target = new ArrayBufferTarget();
+  const muxer = new Muxer({
+    target,
+    video: { codec: 'avc', width: w, height: h },
+    audio: {
+      codec: aPick.mux,
+      numberOfChannels: 1,
+      sampleRate: audioBuf.sampleRate
+    },
+    fastStart: 'in-memory',
+    firstTimestampBehavior: 'offset'
+  });
+
+  let vErr = null;
+  const vEnc = new VideoEncoder({
+    output: (chunk, meta) => muxer.addVideoChunk(chunk, meta),
+    error: e => { vErr = e; }
+  });
+  vEnc.configure(vPick.config);
+
+  const aEnc = new AudioEncoder({
+    output: (chunk, meta) => muxer.addAudioChunk(chunk, meta),
+    error: e => { vErr = e; }
+  });
+  aEnc.configure(aPick.config);
+
+  const ch = audioBuf.getChannelData(0);
+  const sr = audioBuf.sampleRate;
+  const slice = 1024;
+  for (let i = 0; i < ch.length; i += slice) {
+    if (vErr) throw vErr;
+    const n = Math.min(slice, ch.length - i);
+    const data = new Float32Array(n);
+    data.set(ch.subarray(i, i + n));
+    const ad = new AudioData({
+      format: 'f32-planar',
+      sampleRate: sr,
+      numberOfFrames: n,
+      numberOfChannels: 1,
+      timestamp: Math.round((i / sr) * 1e6),
+      data
+    });
+    aEnc.encode(ad);
+    ad.close();
+    await drainEncoder(aEnc);
+  }
+  await aEnc.flush();
+  aEnc.close();
+
+  let frameIndex = 0;
+  const frameDur = Math.round(1e6 / fps);
+  for (let i = 0; i < scenes.length; i++) {
+    const sc = scenes[i];
+    const dur = sc.duration || sceneDuration(sc.narration);
+    const still = sc.canvas || paintStill(sc.visual);
+    const frames = Math.max(Math.round(dur * fps), 8);
+    onTick?.('film', `Filming scene ${i + 1} / ${scenes.length}`);
+    for (let f = 0; f < frames; f++) {
+      if (vErr) throw vErr;
+      drawKenBurnsFrame(ctx, still, sc, f, frames, w, h);
+      const vf = new VideoFrame(canvas, {
+        timestamp: frameIndex * frameDur,
+        duration: frameDur
+      });
+      vEnc.encode(vf, { keyFrame: f === 0 || frameIndex % fps === 0 });
+      vf.close();
+      frameIndex++;
+      await drainEncoder(vEnc);
+      if (f % 6 === 0) await wait(0);
+    }
+  }
+  await vEnc.flush();
+  vEnc.close();
+  if (vErr) throw vErr;
+  muxer.finalize();
+  const blob = new Blob([target.buffer], { type: 'video/mp4' });
+  if (!blob.size) throw new Error('MP4 encoder produced an empty file');
+  return blob;
+}
+
+async function recordMp4Fallback(scenes, { canvas, ctx, w, h, fps, music, voice, onTick }) {
   const mime = pickMime();
-  if (!mime) throw new Error('This browser cannot record video (needs MediaRecorder). Try Chrome or Edge.');
-  const w = 960, h = 540, fps = 24;
-  const canvas = document.createElement('canvas');
-  canvas.width = w; canvas.height = h;
-  const ctx = canvas.getContext('2d');
+  if (!mime) throw new Error('This browser cannot write MP4. Try Chrome, Edge, or Safari.');
   const vStream = canvas.captureStream(fps);
   const audioCtx = new AudioContext();
   if (audioCtx.state === 'suspended') await audioCtx.resume();
@@ -203,7 +378,6 @@ export async function assembleKenBurns(scenes, { music = true, voice = 'nova', o
   const master = audioCtx.createGain();
   master.gain.value = 1;
   master.connect(dest);
-
   if (music) {
     for (const f of [110, 164.81, 220]) {
       const o = audioCtx.createOscillator();
@@ -215,7 +389,6 @@ export async function assembleKenBurns(scenes, { music = true, voice = 'nova', o
       o.start();
     }
   }
-
   const pitch = VOICE_PITCH[voice] || 145;
   let when = audioCtx.currentTime + 0.12;
   for (const sc of scenes) {
@@ -229,7 +402,6 @@ export async function assembleKenBurns(scenes, { music = true, voice = 'nova', o
     src.start(when);
     when += dur;
   }
-
   const mixed = new MediaStream([
     ...vStream.getVideoTracks(),
     ...dest.stream.getAudioTracks()
@@ -239,41 +411,44 @@ export async function assembleKenBurns(scenes, { music = true, voice = 'nova', o
   rec.ondataavailable = e => { if (e.data.size) chunks.push(e.data); };
   const stopped = new Promise(res => { rec.onstop = res; });
   rec.start(120);
-
   for (let i = 0; i < scenes.length; i++) {
     const sc = scenes[i];
     const dur = sc.duration || sceneDuration(sc.narration);
     const still = sc.canvas || paintStill(sc.visual);
     const frames = Math.max(Math.round(dur * fps), 8);
-    onTick?.('film', `Recording voice · scene ${i + 1} / ${scenes.length}`);
+    onTick?.('film', `Recording MP4 · scene ${i + 1} / ${scenes.length}`);
     for (let f = 0; f < frames; f++) {
-      const t = f / frames;
-      const z = 1 + 0.08 * t;
-      const ox = Math.sin(f / 40) * 12;
-      const oy = Math.cos(f / 35) * 8;
-      const sw = still.width / z, sh = still.height / z;
-      const sx = (still.width - sw) / 2 + ox;
-      const sy = (still.height - sh) / 2 + oy;
-      ctx.fillStyle = '#050506';
-      ctx.fillRect(0, 0, w, h);
-      ctx.drawImage(still, sx, sy, sw, sh, 0, 0, w, h);
-      ctx.fillStyle = 'rgba(0,0,0,0.42)';
-      ctx.fillRect(0, h - 96, w, 96);
-      ctx.fillStyle = 'rgba(243,226,191,0.95)';
-      ctx.font = '500 17px -apple-system, sans-serif';
-      wrapText(ctx, sc.narration, 22, h - 58, w - 44, 21);
-      const fade = t < 0.08 ? t / 0.08 : (t > 0.92 ? (1 - t) / 0.08 : 1);
-      ctx.fillStyle = `rgba(5,5,6,${1 - fade})`;
-      ctx.fillRect(0, 0, w, h);
+      drawKenBurnsFrame(ctx, still, sc, f, frames, w, h);
       await wait(1000 / fps);
     }
   }
   rec.stop();
   await stopped;
   try { await audioCtx.close(); } catch {}
-  const blob = new Blob(chunks, { type: mime.split(';')[0] });
+  const type = rec.mimeType || mime;
+  if (!/mp4/i.test(type)) {
+    throw new Error('This browser would only record WebM. Use Chrome, Edge, or Safari for MP4.');
+  }
+  const blob = new Blob(chunks, { type: 'video/mp4' });
   if (!blob.size) throw new Error('Recorder produced an empty file');
   return blob;
+}
+
+export async function assembleKenBurns(scenes, { music = true, voice = 'nova', onTick, liveCanvas } = {}) {
+  const w = 960, h = 540, fps = 24;
+  const canvas = liveCanvas || document.createElement('canvas');
+  canvas.width = w;
+  canvas.height = h;
+  const ctx = canvas.getContext('2d', { alpha: false });
+  try {
+    return await encodeMp4(scenes, { canvas, ctx, w, h, fps, music, voice, onTick });
+  } catch (e) {
+    try {
+      return await recordMp4Fallback(scenes, { canvas, ctx, w, h, fps, music, voice, onTick });
+    } catch (e2) {
+      throw (e && !String(e.message || e).includes('no-webcodecs')) ? e : e2;
+    }
+  }
 }
 
 function wrapText(ctx, text, x, y, maxW, lh) {
@@ -293,28 +468,28 @@ function wrapText(ctx, text, x, y, maxW, lh) {
   if (line) ctx.fillText(line, x, yy);
 }
 
-export async function runPhoneStudio({ topic, nScenes, music, voice, onProgress }) {
+export async function runPhoneStudio({ topic, nScenes, music, voice, onProgress, liveCanvas }) {
   onProgress?.('script', 'Writing script…');
   const job = writeScript(topic, nScenes);
   job.scenes.forEach(s => { s.duration = sceneDuration(s.narration); s.canvas = paintStill(s.visual); });
   onProgress?.('script_done', { title: job.title, scenes: job.scenes });
   onProgress?.('voice', 'Building narrator track…');
-  await wait(120);
+  await wait(40);
   onProgress?.('image', 'Painting stills…');
   onProgress?.('image_done', { scenes: job.scenes });
-  onProgress?.('film', 'Recording picture + voice…');
+  onProgress?.('film', 'Encoding MP4…');
   const blob = await assembleKenBurns(job.scenes, {
     music,
     voice: voice || 'nova',
+    liveCanvas: liveCanvas || (typeof document !== 'undefined' ? document.getElementById('studio-canvas') : null),
     onTick: (k, msg) => onProgress?.(k, msg)
   });
   const url = URL.createObjectURL(blob);
-  const ext = blob.type.includes('mp4') ? 'mp4' : 'webm';
   onProgress?.('done', {
-    url, blob, ext, title: job.title,
+    url, blob, ext: 'mp4', title: job.title,
     duration: job.scenes.reduce((a, s) => a + s.duration, 0)
   });
-  return { ...job, blob, url, ext };
+  return { ...job, blob, url, ext: 'mp4' };
 }
 
 export async function runServerStudio({ baseUrl, topic, voice, nScenes, music, onProgress }) {
@@ -336,7 +511,7 @@ export async function runServerStudio({ baseUrl, topic, voice, nScenes, music, o
     es.addEventListener('assemble', () => onProgress?.('film', 'Assembling…'));
     es.addEventListener('done', e => {
       const d = JSON.parse(e.data);
-      onProgress?.('done', { url: base + (d.video_url || ''), title: d.title, duration: d.duration });
+      onProgress?.('done', { url: base + (d.video_url || ''), title: d.title, duration: d.duration, ext: 'mp4' });
     });
     es.addEventListener('complete', () => { es.close(); resolve(); });
     es.addEventListener('error', e => {
@@ -353,5 +528,5 @@ export async function runServerStudio({ baseUrl, topic, voice, nScenes, music, o
 }
 
 export function speakScenes() {
-  /* Live speechSynthesis is not in the file. Voice is mixed into the WebM. */
+  /* Live speechSynthesis is not in the file. Voice is mixed into the MP4. */
 }

@@ -24,36 +24,44 @@ export const SEED_TOKENS = [
 
 export const VAULT_PRODUCTS = [
   {
-    id: 'xmss',
-    name: 'Quantum Vault',
-    type: 'timelock',
-    tag: 'CLTV',
-    status: 'mainnet',
-    blurb: 'Same working Time Capsule (CLTV). XMSS / post-quantum spend is not on this path yet — this tile still locks KAS you can sweep when the timer ends.'
-  },
-  {
     id: 'timelock',
     name: 'Time Capsule',
     type: 'timelock',
     tag: 'CLTV',
     status: 'mainnet',
-    blurb: 'Sends KAS to a capsule until a timer. When it expires, this wallet sweeps it back automatically.'
+    blurb: 'Lock KAS until a DAA. This wallet auto-sweeps it back when the timer ends. Same CLTV redeem as covenants/time_capsule, with Schnorr spend.'
   },
   {
-    id: 'kcc20freeze',
-    name: 'KCC20 Freeze',
-    type: 'kcc20lock',
-    tag: 'CLTV+',
+    id: 'sentinel',
+    name: 'Sentinel',
+    type: 'sentinel',
+    tag: 'DMS',
     status: 'mainnet',
-    blurb: 'Same two steps as Time Capsule: fund ~0.2 KAS CLTV, then move KCC20 into SCRIPT_HASH. Auto-sweeps tokens + leftover KAS when the timer ends.'
+    blurb: 'Dead-man hop chain: Check-in moves coins to the next hop (resets the window). If you miss it, anyone can release to the beneficiary. Same IF/ELSE + OpTxOutput* tail as covenants/sentinel.'
+  },
+  {
+    id: 'recurring',
+    name: 'Recurring',
+    type: 'recurring',
+    tag: 'PAY',
+    status: 'mainnet',
+    blurb: 'Sentinel-x402 pattern: each Check-in pays the payee and relocks the rest. Miss a window and leftover refunds to you.'
+  },
+  {
+    id: 'xmss',
+    name: 'Hash Vault',
+    type: 'hashlock',
+    tag: 'HTLC',
+    status: 'mainnet',
+    blurb: 'SHA-256 hash lock + timeout refund (HTLC). Claim with the secret, or refund after the timer. Full 130KB XMSS vaults stay in covenants/xmsslock CLI (mass/fees).'
   },
   {
     id: 'escrow',
     name: 'Escrow',
     type: 'escrow',
-    tag: 'KCC',
+    tag: 'IF',
     status: 'mainnet',
-    blurb: 'Seller can refund any time. Buyer can claim if that kaspa:q wallet is also imported here. No arbiter yet.'
+    blurb: 'Seller refunds any time (ELSE). Buyer claims if that kaspa:q wallet is imported (IF).'
   },
   {
     id: 'multisig',
@@ -61,15 +69,15 @@ export const VAULT_PRODUCTS = [
     type: 'multisig',
     tag: '2-2',
     status: 'mainnet',
-    blurb: 'Both keys must sign. Counterparty must be another wallet already in this app so Sweep can sign both.'
+    blurb: 'Both Schnorr keys must sign. Counterparty must be another wallet in this app.'
   },
   {
-    id: 'sentinel',
-    name: 'Sentinel',
-    type: 'timelock',
-    tag: 'CLTV',
+    id: 'kcc20freeze',
+    name: 'KCC20 Freeze',
+    type: 'kcc20lock',
+    tag: 'CLTV+',
     status: 'mainnet',
-    blurb: 'Same working Time Capsule timer. Dead-man check-in is not live — Sweep when the timer ends.'
+    blurb: 'Fund ~0.2 KAS CLTV, then move KCC20 into SCRIPT_HASH. Auto-sweeps tokens + leftover KAS when the timer ends.'
   },
   {
     id: 'kcc20',

@@ -2,7 +2,7 @@
 import {
   hexToBytes, kaspaAddressFromScriptHash, validateKaspaAddress,
   validateAndCleanUtxo, deepCloneAndFreeze, kasToSompi
-} from './crypto.js?v=71';
+} from './crypto.js?v=72';
 
 const API = 'https://api.kaspa.org';
 
@@ -207,6 +207,166 @@ export async function buildMultisigCovenant({ ownerPubHex, otherPubHex }) {
   const p2sh = sb.createPayToScriptHashScript();
   const addr = k.addressFromScriptPublicKey(p2sh, 'mainnet');
   return { address: String(addr), redeemHex, spkHex: p2sh.script, type: 'multisig' };
+}
+
+function versionedSpk(scriptHex) {
+  const s = hexToBytes(hexish(scriptHex));
+  const out = new Uint8Array(2 + s.length);
+  out[0] = 0;
+  out[1] = 0;
+  out.set(s, 2);
+  return out;
+}
+
+function finishP2sh(k, sb, extra = {}) {
+  const redeemHex = sb.toString();
+  const p2sh = sb.createPayToScriptHashScript();
+  const addr = k.addressFromScriptPublicKey(p2sh, 'mainnet');
+  if (!addr) throw new Error('SDK did not produce a P2SH address');
+  return { address: String(addr), redeemHex, spkHex: hexish(p2sh.script), ...extra };
+}
+
+function spkHexFromAddr(k, addr) {
+  const spk = k.payToAddressScript(addr);
+  return hexish(spk.script);
+}
+
+/** Same IF/ELSE + OpTxOutputAmount/Spk tail as covenants/sentinel (Schnorr CHECKSIG in place of XMSS). */
+function buildEpochRedeem(k, { ownerPubHex, unlockDaa, nextSpkHex, nextAmt, destSpkHex, destAmt }) {
+  const sb = new k.ScriptBuilder();
+  sb.addOp(k.Opcodes.OpIf);
+  sb.addData(hexToBytes(ownerPubHex));
+  sb.addOp(k.Opcodes.OpCheckSigVerify);
+  sb.addData(versionedSpk(nextSpkHex));
+  sb.addI64(BigInt(nextAmt));
+  sb.addOp(k.Opcodes.OpElse);
+  sb.addI64(BigInt(unlockDaa));
+  sb.addOp(k.Opcodes.OpCheckLockTimeVerify);
+  sb.addData(versionedSpk(destSpkHex));
+  sb.addI64(BigInt(destAmt));
+  sb.addOp(k.Opcodes.OpEndif);
+  sb.addI64(0n);
+  sb.addOp(k.Opcodes.OpTxOutputAmount);
+  sb.addOp(k.Opcodes.OpEqualVerify);
+  sb.addI64(0n);
+  sb.addOp(k.Opcodes.OpTxOutputSpk);
+  sb.addOp(k.Opcodes.OpEqual);
+  return finishP2sh(k, sb, { unlockDaa, nextAmt: String(nextAmt), destAmt: String(destAmt) });
+}
+
+const HOP_FEE = 1_000_000n;
+
+export async function buildSentinelChain({
+  ownerPubHex, beneficiaryAddr, timeoutMinutes, hops: nHops = 6, depositSompi, extraStep = 0n
+}) {
+  const k = await loadKaspaSdk();
+  const n = Math.max(2, Math.min(8, Number(nHops) || 6));
+  const deposit = BigInt(depositSompi);
+  const step = HOP_FEE + BigInt(extraStep || 0);
+  if (deposit < step * BigInt(n) + HOP_FEE + 200_000n) {
+    throw new Error(`Need at least ${Number(step * BigInt(n) + HOP_FEE + 200_000n) / 1e8} KAS so each hop can pay the network fee`);
+  }
+  const daaNow = await currentDaa();
+  const window = Math.max(10, Math.round(Number(timeoutMinutes) * 60 * 10));
+  const destSpk = spkHexFromAddr(k, beneficiaryAddr);
+  const values = [];
+  for (let i = 0; i < n; i++) values.push(deposit - step * BigInt(i));
+  const hops = new Array(n);
+  let nextSpk = destSpk;
+  let nextAmt = values[n - 1] - HOP_FEE;
+  for (let i = n - 1; i >= 0; i--) {
+    const unlockDaa = daaNow + (i + 1) * window;
+    const destAmt = values[i] - HOP_FEE;
+    const hopNextAmt = i === n - 1 ? destAmt : values[i + 1];
+    const hopNextSpk = i === n - 1 ? destSpk : nextSpk;
+    const hop = buildEpochRedeem(k, {
+      ownerPubHex,
+      unlockDaa,
+      nextSpkHex: hopNextSpk,
+      nextAmt: hopNextAmt,
+      destSpkHex: destSpk,
+      destAmt
+    });
+    hops[i] = {
+      ...hop,
+      hopIndex: i,
+      value: String(values[i]),
+      nextAmt: String(hopNextAmt),
+      destAmt: String(destAmt),
+      nextAddress: i === n - 1 ? beneficiaryAddr : ''
+    };
+    nextSpk = hop.spkHex;
+  }
+  for (let i = 0; i < n - 1; i++) hops[i].nextAddress = hops[i + 1].address;
+  return {
+    type: 'sentinel',
+    hops,
+    hopIndex: 0,
+    address: hops[0].address,
+    redeemHex: hops[0].redeemHex,
+    spkHex: hops[0].spkHex,
+    unlockDaa: hops[0].unlockDaa,
+    daaNow,
+    windowDaa: window
+  };
+}
+
+export async function buildRecurringChain({
+  ownerPubHex, ownerAddr, payeeAddr, paySompi, periods = 4, timeoutMinutes, depositSompi
+}) {
+  const pay = BigInt(paySompi);
+  const n = Math.max(2, Math.min(8, Number(periods) || 4));
+  const deposit = BigInt(depositSompi);
+  const need = (pay + HOP_FEE) * BigInt(n) + 200_000n;
+  if (deposit < need) {
+    throw new Error(`Need at least ${Number(need) / 1e8} KAS (${n} × payment + hop fees)`);
+  }
+  const chain = await buildSentinelChain({
+    ownerPubHex,
+    beneficiaryAddr: ownerAddr,
+    timeoutMinutes,
+    hops: n,
+    depositSompi: deposit,
+    extraStep: pay
+  });
+  return { ...chain, type: 'recurring', paySompi: String(pay), payeeAddr };
+}
+
+export async function buildHashlockCovenant({
+  senderPubHex, receiverPubHex, secretHashHex, minutes
+}) {
+  const k = await loadKaspaSdk();
+  const daaNow = await currentDaa();
+  const unlockDaa = daaNow + Math.max(10, Math.round(Number(minutes) * 60 * 10));
+  const hash = hexToBytes(secretHashHex);
+  if (hash.length !== 32) throw new Error('Hash lock needs a 32-byte SHA-256');
+  const sb = new k.ScriptBuilder();
+  sb.addOp(k.Opcodes.OpIf);
+  sb.addOp(k.Opcodes.OpSHA256);
+  sb.addData(hash);
+  sb.addOp(k.Opcodes.OpEqualVerify);
+  sb.addData(hexToBytes(receiverPubHex));
+  sb.addOp(k.Opcodes.OpCheckSig);
+  sb.addOp(k.Opcodes.OpElse);
+  sb.addI64(BigInt(unlockDaa));
+  sb.addOp(k.Opcodes.OpCheckLockTimeVerify);
+  sb.addOp(k.Opcodes.OpDrop);
+  sb.addData(hexToBytes(senderPubHex));
+  sb.addOp(k.Opcodes.OpCheckSig);
+  sb.addOp(k.Opcodes.OpEndif);
+  return finishP2sh(k, sb, { unlockDaa, daaNow, type: 'hashlock', secretHashHex });
+}
+
+async function sha256Hex(bytes) {
+  const buf = await crypto.subtle.digest('SHA-256', bytes);
+  return hexish(new Uint8Array(buf));
+}
+
+export async function newHashlockSecret() {
+  const secret = new Uint8Array(32);
+  crypto.getRandomValues(secret);
+  const secretHex = hexish(secret);
+  return { secretHex, secretHashHex: await sha256Hex(secret) };
 }
 
 /* Same public nodes this repo uses in covenants/* deploy/spend scripts. */
@@ -724,11 +884,15 @@ export function p2shSpendScript(k, redeemHex, sigHex) {
   return p2shWitness(k, redeemHex, { sigs: [sigHex], flag: redeemHasCltvDrop(redeemHex) ? 'false' : null });
 }
 
-function p2shWitness(k, redeemHex, { sigs, flag }) {
+function p2shWitness(k, redeemHex, { sigs, flag, extra }) {
   const parts = (sigs || []).map(hexish).filter(Boolean);
-  if (!parts.length) throw new Error('Empty signature — cannot sweep');
+  if (extra) {
+    const push = hexish(new k.ScriptBuilder().addData(hexToBytes(hexish(extra))).toString());
+    if (push) parts.push(push);
+  }
   if (flag === 'true') parts.push('51');
   else if (flag === 'false' || (flag == null && redeemHasCltvDrop(redeemHex))) parts.push('00');
+  if (!parts.length) throw new Error('Empty signature — cannot sweep');
   const redeemPush = hexish(k.payToScriptHashSignatureScript(redeemHex, new Uint8Array()));
   return parts.join('') + redeemPush;
 }
@@ -738,16 +902,19 @@ function signP2shInputs(k, tx, priv, redeemHex, opts = {}) {
   const n = tx.inputs.length;
   const extra = opts.extraPriv || null;
   const flag = opts.flag != null ? opts.flag : (redeemHasCltvDrop(redeemHex) ? 'false' : null);
+  const noSig = !!opts.noSig;
   for (let i = 0; i < n; i++) {
-    const sigOwner = hexish(k.createInputSignature(tx, i, priv, k.SighashType.All));
-    let sigs;
-    if (extra) {
-      const sigOther = hexish(k.createInputSignature(tx, i, extra, k.SighashType.All));
-      sigs = [sigOther, sigOwner];
-    } else {
-      sigs = [sigOwner];
+    let sigs = [];
+    if (!noSig && priv) {
+      const sigOwner = hexish(k.createInputSignature(tx, i, priv, k.SighashType.All));
+      if (extra) {
+        const sigOther = hexish(k.createInputSignature(tx, i, extra, k.SighashType.All));
+        sigs = [sigOther, sigOwner];
+      } else {
+        sigs = [sigOwner];
+      }
     }
-    const script = p2shWitness(k, redeemHex, { sigs, flag });
+    const script = p2shWitness(k, redeemHex, { sigs, flag, extra: opts.extraHex });
     tx.inputs[i].signatureScript = script;
     scripts.push(script);
   }
@@ -919,7 +1086,118 @@ function requiredFeeFromError(e) {
   return m ? BigInt(m[1]) : null;
 }
 
-export async function sweepVault({ wallet, vault, utxos, extraPrivKey, escrowRelease = false }) {
+export async function spendExactP2sh({
+  wallet, vault, utxos, dest, amountSompi, extraOutputs = [],
+  flag, extraHex, extraPrivKey, noSig = false, lockTime = 0, computeBudget = 80
+}) {
+  const k = await loadKaspaSdk();
+  const redeemHex = vault?.scriptHex;
+  if (!redeemHex) throw new Error('This vault has no redeem script saved');
+  const entries = restUtxosToEntries(utxos, vault.address);
+  if (!entries.length) throw new Error('No coins at this vault address');
+  const total = entries.reduce((a, e) => a + e.amount, 0n);
+  const exact = BigInt(amountSompi);
+  const extraSum = extraOutputs.reduce((a, o) => a + BigInt(o.amount), 0n);
+  const fee = total - exact - extraSum;
+  if (fee < 400_000n) {
+    throw new Error(`Hop fee window too small (${Number(fee) / 1e8} KAS). Fund a larger capsule.`);
+  }
+  const priv = noSig ? null : new k.PrivateKey(wallet.privKey);
+  const extraPriv = extraPrivKey ? new k.PrivateKey(extraPrivKey) : null;
+  const { rpc, url } = await connectPublicNode();
+  const outputs = [{ address: dest, amount: exact }, ...extraOutputs];
+  const tx = k.createTransaction(entries, outputs, 0n, undefined, 1);
+  tx.version = 1;
+  tx.lockTime = BigInt(lockTime || 0);
+  for (const inp of tx.inputs) {
+    inp.sequence = 0n;
+    inp.sigOpCount = 0;
+    inp.computeBudget = computeBudget;
+  }
+  const scripts = signP2shInputs(k, tx, priv, redeemHex, {
+    flag, extraHex, extraPriv, noSig
+  });
+  for (const inp of tx.inputs) {
+    inp.sigOpCount = 0;
+    inp.computeBudget = computeBudget;
+  }
+  try { k.updateTransactionMass('mainnet', tx); } catch {}
+  const txId = await submitSignedRpc(k, rpc, url, tx, {
+    sigOpCount: 0,
+    computeBudget,
+    lockTime: Number(lockTime || 0),
+    scripts
+  });
+  return {
+    txId,
+    amountKas: Number(exact) / 1e8,
+    feeKas: Number(fee) / 1e8,
+    node: url
+  };
+}
+
+export function currentHop(vault) {
+  const hops = vault?.hops || [];
+  const i = Number(vault?.hopIndex || 0);
+  return hops[i] || null;
+}
+
+export async function checkinHop({ wallet, vault, utxos, extraPayee }) {
+  const hop = currentHop(vault);
+  if (!hop) throw new Error('No hop chain on this vault');
+  const hops = vault.hops;
+  const i = Number(vault.hopIndex || 0);
+  const next = hops[i + 1];
+  if (!next && vault.type === 'sentinel') {
+    throw new Error('Last check-in already used. Build a new Sentinel before this hop times out.');
+  }
+  const dest = next?.address || vault.params?.beneficiary || wallet.address;
+  const amount = BigInt(hop.nextAmt || next?.value || 0);
+  if (amount <= 0n) throw new Error('Next hop amount missing');
+  const extraOutputs = [];
+  if (vault.type === 'recurring' && vault.payeeAddr && vault.paySompi) {
+    extraOutputs.push({ address: vault.payeeAddr, amount: BigInt(vault.paySompi) });
+  }
+  if (extraPayee?.address && extraPayee?.amount) {
+    extraOutputs.push({ address: extraPayee.address, amount: BigInt(extraPayee.amount) });
+  }
+  const result = await spendExactP2sh({
+    wallet, vault: { ...vault, scriptHex: hop.redeemHex, address: hop.address },
+    utxos, dest, amountSompi: amount, extraOutputs,
+    flag: 'true', lockTime: 0, computeBudget: 80
+  });
+  return { ...result, nextHop: next || null, hopIndex: i + 1 };
+}
+
+export async function timeoutHop({ wallet, vault, utxos }) {
+  const hop = currentHop(vault) || vault;
+  const daaNow = await currentDaa();
+  const unlock = Number(hop.unlockDaa || vault.unlockDaa || 0);
+  if (unlock && daaNow < unlock) {
+    const waitSec = Math.ceil((unlock - daaNow) / 10);
+    throw new Error(`Still in the check-in window. Unlock DAA ${unlock}, now ${daaNow}. Wait ~${waitSec}s.`);
+  }
+  const dest = vault.params?.beneficiary || vault.payeeAddr || wallet.address;
+  const amount = BigInt(hop.destAmt || hop.nextAmt || 0);
+  if (amount <= 0n) throw new Error('Timeout amount missing from hop');
+  return spendExactP2sh({
+    wallet,
+    vault: { ...vault, scriptHex: hop.redeemHex || vault.scriptHex, address: hop.address || vault.address },
+    utxos,
+    dest,
+    amountSompi: amount,
+    flag: 'false',
+    noSig: true,
+    lockTime: Math.max(unlock, daaNow),
+    computeBudget: 80
+  });
+}
+
+export async function sweepVault({ wallet, vault, utxos, extraPrivKey, escrowRelease = false, secretHex = '' }) {
+  const type = vault?.type || '';
+  if (type === 'sentinel' || type === 'recurring') {
+    return timeoutHop({ wallet, vault, utxos });
+  }
   const k = await loadKaspaSdk();
   const redeemHex = vault?.scriptHex || await reconstructTimelockRedeem(vault, wallet.pubKey);
   if (!redeemHex) throw new Error('This vault has no redeem script saved — cannot sweep');
@@ -930,28 +1208,35 @@ export async function sweepVault({ wallet, vault, utxos, extraPrivKey, escrowRel
   const daaNow = await currentDaa();
   const unlock = Number(vault.unlockDaa || 0);
   const isCltv = redeemHasCltvDrop(redeemHex) || unlock > 0;
-  if (isCltv && unlock && daaNow < unlock) {
+  if (type !== 'hashlock' && isCltv && unlock && daaNow < unlock) {
     const waitSec = Math.ceil((unlock - daaNow) / 10);
     throw new Error(`Still time-locked. Unlock DAA ${unlock}, now ${daaNow}. Wait ~${waitSec}s then Sweep.`);
   }
+  if (type === 'hashlock' && !secretHex && isCltv && unlock && daaNow < unlock) {
+    throw new Error('Hash lock: paste the secret to claim now, or wait for the refund timer.');
+  }
 
-  const type = vault.type || (isCltv ? 'timelock' : '');
-  if (type === 'multisig' && !extraPrivKey) {
+  const kind = type || (isCltv ? 'timelock' : '');
+  if (kind === 'multisig' && !extraPrivKey) {
     throw new Error('2-of-2 needs the counterparty key. Import that wallet on You, then Sweep.');
   }
 
-  const lockTime = isCltv ? Math.max(unlock || 0, daaNow) : 0;
+  const claimHash = kind === 'hashlock' && !!secretHex;
+  const lockTime = (!claimHash && isCltv) ? Math.max(unlock || 0, daaNow) : 0;
   const priv = new k.PrivateKey(wallet.privKey);
   const extraPriv = extraPrivKey ? new k.PrivateKey(extraPrivKey) : null;
-  const flag = type === 'escrow' ? (escrowRelease ? 'true' : 'false') : (isCltv ? 'false' : null);
+  const flag = kind === 'escrow'
+    ? (escrowRelease ? 'true' : 'false')
+    : (claimHash ? 'true' : (isCltv ? 'false' : null));
   const { rpc, url } = await connectPublicNode();
 
   function assemble(fee) {
     if (total <= fee) throw new Error('Vault balance is too small to cover the network fee');
     const sendAmt = total - fee;
+    const payoutAddr = (claimHash && vault.params?.receiver) ? vault.params.receiver : wallet.address;
     const tx = k.createTransaction(
       entries,
-      [{ address: wallet.address, amount: sendAmt }],
+      [{ address: payoutAddr, amount: sendAmt }],
       0n,
       undefined,
       1
@@ -963,7 +1248,11 @@ export async function sweepVault({ wallet, vault, utxos, extraPrivKey, escrowRel
       inp.sigOpCount = 0;
       inp.computeBudget = 60;
     }
-    const scripts = signP2shInputs(k, tx, priv, redeemHex, { flag, extraPriv: type === 'multisig' ? extraPriv : null });
+    const scripts = signP2shInputs(k, tx, priv, redeemHex, {
+      flag,
+      extraPriv: kind === 'multisig' ? extraPriv : null,
+      extraHex: claimHash ? secretHex : ''
+    });
     for (const inp of tx.inputs) {
       inp.sigOpCount = 0;
       inp.computeBudget = 60;

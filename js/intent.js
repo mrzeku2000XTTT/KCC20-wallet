@@ -80,7 +80,9 @@ function detectType(text, prev) {
   const t = text.toLowerCase();
   if (/\b(escrow|buyer|seller|arbiter|arbitrator)\b/.test(t)) return 'escrow';
   if (/\b(multi-?sig|2\s*of\s*2|both must sign)\b/.test(t)) return 'multisig';
-  if (/\b(sentinel|dead.?man|check-?in)\b/.test(t)) return 'timelock';
+  if (/\b(sentinel|dead.?man|check-?in)\b/.test(t)) return 'sentinel';
+  if (/\b(recurring|subscription|x402)\b/.test(t)) return 'recurring';
+  if (/\b(hash\s*lock|htlc|hash vault)\b/.test(t)) return 'hashlock';
   if (/\b(send|pay|transfer)\b/.test(t) && parseAddress(t)) return 'send';
   if (/\b(lock|timelock|time\s*capsule|hold|freeze|vault)\b/.test(t) && parseTicker(t)) return 'kcc20lock';
   if (/\b(lock|timelock|time\s*capsule|hold|freeze|vault)\b/.test(t)) return 'timelock';
@@ -160,6 +162,9 @@ export function describeIntent(intent) {
   const dur = p.durationLabel || (p.lockMinutes ? `${p.lockMinutes} minutes` : (p.lockDays ? `${p.lockDays} days` : 'a duration'));
   if (intent.type === 'kcc20lock') return `KCC20 freeze: lock ${tokenAmt || ('KCC20' + (p.tick ? ' ' + p.tick : ''))} for ${dur}. Same CLTV as native KAS.`;
   if (intent.type === 'timelock') return `Time capsule: lock ${amt} for ${dur}.`;
+  if (intent.type === 'sentinel') return `Sentinel: lock ${amt} for ${dur}, check-in or release to heir.`;
+  if (intent.type === 'recurring') return `Recurring: lock ${amt} and pay on each check-in.`;
+  if (intent.type === 'hashlock') return `Hash vault: lock ${amt} for ${dur} (secret or refund).`;
   if (intent.type === 'escrow') return `Escrow ${amt} for buyer ${p.buyerAddress || '…'}.`;
   if (intent.type === 'multisig') return `2-of-2 vault of ${amt} with ${p.counterparty || 'a counterparty'}.`;
   if (intent.type === 'send') return `Send ${amt} to ${p.destination || '…'}.`;

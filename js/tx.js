@@ -1,5 +1,5 @@
 /* Official rusty-kaspa WASM: P2SH covenants + signed send/fund. */
-import { hexToBytes, kaspaAddressFromScriptHash } from './crypto.js?v=69';
+import { hexToBytes, kaspaAddressFromScriptHash } from './crypto.js?v=70';
 
 const API = 'https://api.kaspa.org';
 
@@ -658,24 +658,38 @@ function redeemHasCltvDrop(redeemHex) {
 }
 
 /**
- * Kaspa CLTV pops the locktime (Bitcoin does not). Our time-capsule redeem is
- * `<daa> CLTV DROP <pk> CHECKSIG`, so DROP would eat the signature unless
- * scriptSig is `<sig> <dummy> <redeem>`.
+ * Kaspa CLTV pops the locktime (Bitcoin does not). Time-capsule redeem is
+ * `<daa> CLTV DROP <pk> CHECKSIG`, so scriptSig is `<sig> <dummy> <redeem>`.
+ * Escrow IF/ELSE needs `<sig> <1|0> <redeem>`. 2-of-2 is `<sigOther> <sigOwner> <redeem>`.
  */
 export function p2shSpendScript(k, redeemHex, sigHex) {
-  const sigPart = hexish(sigHex);
-  if (!sigPart) throw new Error('Empty signature — cannot sweep');
-  const redeemPush = hexish(k.payToScriptHashSignatureScript(redeemHex, new Uint8Array()));
-  const pad = redeemHasCltvDrop(redeemHex) ? '00' : '';
-  return sigPart + pad + redeemPush;
+  return p2shWitness(k, redeemHex, { sigs: [sigHex], flag: redeemHasCltvDrop(redeemHex) ? 'false' : null });
 }
 
-function signP2shInputs(k, tx, priv, redeemHex) {
+function p2shWitness(k, redeemHex, { sigs, flag }) {
+  const parts = (sigs || []).map(hexish).filter(Boolean);
+  if (!parts.length) throw new Error('Empty signature — cannot sweep');
+  if (flag === 'true') parts.push('51');
+  else if (flag === 'false' || (flag == null && redeemHasCltvDrop(redeemHex))) parts.push('00');
+  const redeemPush = hexish(k.payToScriptHashSignatureScript(redeemHex, new Uint8Array()));
+  return parts.join('') + redeemPush;
+}
+
+function signP2shInputs(k, tx, priv, redeemHex, opts = {}) {
   const scripts = [];
   const n = tx.inputs.length;
+  const extra = opts.extraPriv || null;
+  const flag = opts.flag != null ? opts.flag : (redeemHasCltvDrop(redeemHex) ? 'false' : null);
   for (let i = 0; i < n; i++) {
-    const sig = k.createInputSignature(tx, i, priv, k.SighashType.All);
-    const script = p2shSpendScript(k, redeemHex, sig);
+    const sigOwner = hexish(k.createInputSignature(tx, i, priv, k.SighashType.All));
+    let sigs;
+    if (extra) {
+      const sigOther = hexish(k.createInputSignature(tx, i, extra, k.SighashType.All));
+      sigs = [sigOther, sigOwner];
+    } else {
+      sigs = [sigOwner];
+    }
+    const script = p2shWitness(k, redeemHex, { sigs, flag });
     tx.inputs[i].signatureScript = script;
     scripts.push(script);
   }
@@ -802,7 +816,7 @@ function requiredFeeFromError(e) {
   return m ? BigInt(m[1]) : null;
 }
 
-export async function sweepVault({ wallet, vault, utxos }) {
+export async function sweepVault({ wallet, vault, utxos, extraPrivKey, escrowRelease = false }) {
   const k = await loadKaspaSdk();
   const redeemHex = vault?.scriptHex || await reconstructTimelockRedeem(vault, wallet.pubKey);
   if (!redeemHex) throw new Error('This vault has no redeem script saved — cannot sweep');
@@ -812,13 +826,21 @@ export async function sweepVault({ wallet, vault, utxos }) {
   const total = entries.reduce((a, e) => a + e.amount, 0n);
   const daaNow = await currentDaa();
   const unlock = Number(vault.unlockDaa || 0);
-  if (unlock && daaNow < unlock) {
+  const isCltv = redeemHasCltvDrop(redeemHex) || unlock > 0;
+  if (isCltv && unlock && daaNow < unlock) {
     const waitSec = Math.ceil((unlock - daaNow) / 10);
     throw new Error(`Still time-locked. Unlock DAA ${unlock}, now ${daaNow}. Wait ~${waitSec}s then Sweep.`);
   }
 
-  const lockTime = Math.max(unlock || 0, daaNow);
+  const type = vault.type || (isCltv ? 'timelock' : '');
+  if (type === 'multisig' && !extraPrivKey) {
+    throw new Error('2-of-2 needs the counterparty key. Import that wallet on You, then Sweep.');
+  }
+
+  const lockTime = isCltv ? Math.max(unlock || 0, daaNow) : 0;
   const priv = new k.PrivateKey(wallet.privKey);
+  const extraPriv = extraPrivKey ? new k.PrivateKey(extraPrivKey) : null;
+  const flag = type === 'escrow' ? (escrowRelease ? 'true' : 'false') : (isCltv ? 'false' : null);
   const { rpc, url } = await connectPublicNode();
 
   function assemble(fee) {
@@ -838,7 +860,7 @@ export async function sweepVault({ wallet, vault, utxos }) {
       inp.sigOpCount = 0;
       inp.computeBudget = 60;
     }
-    const scripts = signP2shInputs(k, tx, priv, redeemHex);
+    const scripts = signP2shInputs(k, tx, priv, redeemHex, { flag, extraPriv: type === 'multisig' ? extraPriv : null });
     for (const inp of tx.inputs) {
       inp.sigOpCount = 0;
       inp.computeBudget = 60;

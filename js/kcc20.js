@@ -27,9 +27,9 @@ export const VAULT_PRODUCTS = [
     id: 'xmss',
     name: 'Quantum Vault',
     type: 'timelock',
-    tag: 'XMSS',
+    tag: 'CLTV',
     status: 'mainnet',
-    blurb: 'XMSS story from this repo. Today this tile funds a mainnet CLTV Time Capsule you can actually sweep — same path as Time Capsule.'
+    blurb: 'Same working Time Capsule (CLTV). XMSS / post-quantum spend is not on this path yet — this tile still locks KAS you can sweep when the timer ends.'
   },
   {
     id: 'timelock',
@@ -53,23 +53,23 @@ export const VAULT_PRODUCTS = [
     type: 'escrow',
     tag: 'KCC',
     status: 'mainnet',
-    blurb: 'Buyer, seller, optional arbiter. Release or refund by script.'
+    blurb: 'Seller can refund any time. Buyer can claim if that kaspa:q wallet is also imported here. No arbiter yet.'
   },
   {
     id: 'multisig',
     name: '2-of-2 Multisig',
     type: 'multisig',
-    tag: 'XMSS',
+    tag: '2-2',
     status: 'mainnet',
-    blurb: 'Two independent trees. Both must sign to move funds.'
+    blurb: 'Both keys must sign. Counterparty must be another wallet already in this app so Sweep can sign both.'
   },
   {
     id: 'sentinel',
     name: 'Sentinel',
     type: 'timelock',
-    tag: 'DMS',
+    tag: 'CLTV',
     status: 'mainnet',
-    blurb: 'Dead-man style timer. Today this builds a CLTV capsule — rebuild to check in. Sweep when the timer ends.'
+    blurb: 'Same working Time Capsule timer. Dead-man check-in is not live — Sweep when the timer ends.'
   },
   {
     id: 'kcc20',
@@ -77,7 +77,7 @@ export const VAULT_PRODUCTS = [
     type: 'kcc20',
     tag: 'KCC20',
     status: 'standard',
-    blurb: 'Watch and send a KCC20 fungible-token covenant UTXO.'
+    blurb: 'Opens Tokens to send KCC20. Not a lock.'
   }
 ];
 

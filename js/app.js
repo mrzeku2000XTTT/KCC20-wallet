@@ -1,31 +1,31 @@
 import {
   loadCryptoLibs, generatePrivateKey, createKeypairFromHex,
   isValidKaspaAddress, shortAddr, hexToBytes, privKeyToHex, derivePublicKey, kaspaAddressFromPubkey, bytesToHex
-} from './crypto.js?v=69';
+} from './crypto.js?v=70';
 import {
   NATIVE_KAS, VAULT_PRODUCTS, loadWatchlist, addToken, removeToken,
   loadVaults, saveVault, updateVault, formatAmount, formatTokenUnits, tokenColor,
   fetchKcc20Portfolio, fetchKrc20Portfolio, fetchKcc20PortfolioMany, fetchKrc20PortfolioMany,
   krc20Logo, toTokenRaw, setVaultOwner, kcc20Identicon
-} from './kcc20.js?v=69';
-import { parseIntent, describeIntent, askFor, parseDurationField, interpretVaultChat, normalizeChat } from './intent.js?v=69';
-import { payloadFromAddress } from './script.js?v=69';
-import { explainTransaction, scorpionAnswer } from './scorpion.js?v=69';
+} from './kcc20.js?v=70';
+import { parseIntent, describeIntent, askFor, parseDurationField, interpretVaultChat, normalizeChat } from './intent.js?v=70';
+import { payloadFromAddress } from './script.js?v=70';
+import { explainTransaction, scorpionAnswer } from './scorpion.js?v=70';
 import {
   sendKas, fetchAddressUtxos, fetchAddressBalance, loadKaspaSdk,
   buildTimelockCovenant, buildEscrowCovenant, buildMultisigCovenant, currentDaa,
   pingPublicNode, sweepVault, toRpcTransaction, p2shSpendScript, planKasPayment, storageMassOk,
   compoundUtxos, sendKrc20, sendKcc20, loadKrc20Pending, lockKcc20Timelock, sweepKcc20Capsule,
   fetchOwnedUtxos
-} from './tx.js?v=69';
-import { kronMarkets, quoteKronTrade, executeKronTrade, formatKasSompi, lookupKronTick, tradeCostLines, attachKronLogos } from './kronTrade.js?v=69';
+} from './tx.js?v=70';
+import { kronMarkets, quoteKronTrade, executeKronTrade, formatKasSompi, lookupKronTick, tradeCostLines, attachKronLogos } from './kronTrade.js?v=70';
 import {
   migrateReceiveBook, ownedAddresses, markAddressUsed, currentReceive,
   deriveReceiveBatch, unusedReceiveCount
-} from './receive.js?v=69';
-import { knsResolve, knsPrimary, knsDomainsFor, knsOwnerMatches, knsAppUrl, looksLikeKasDomain, normalizeKasDomain } from './kns.js?v=69';
+} from './receive.js?v=70';
+import { knsResolve, knsPrimary, knsDomainsFor, knsOwnerMatches, knsAppUrl, looksLikeKasDomain, normalizeKasDomain } from './kns.js?v=70';
 
-export const BUILD = '69';
+export const BUILD = '70';
 
 function errText(e) {
   if (e == null) return 'Unknown error';
@@ -55,6 +55,37 @@ function isVaultHistory(v) {
 function vaultTokenLabel(v) {
   if (!isKcc20Vault(v) || !v.tick) return '';
   return formatTokenUnits(v.tokenAmount || 0, v.decimals) + ' ' + v.tick;
+}
+
+function walletByAddress(addr) {
+  if (!addr) return null;
+  return loadWalletList().find(w => w.address === addr) || null;
+}
+
+function vaultCounterpartyKey(vault) {
+  const addr = vault?.params?.counterparty || vault?.params?.buyerAddress || '';
+  return walletByAddress(addr)?.privKey || '';
+}
+
+function canSweepVault(v, daa) {
+  if (!v?.address || v.status === 'swept' || v.status === 'unfunded') return false;
+  const now = daa || lastDaa;
+  if ((v.type === 'timelock' || isKcc20Vault(v) || v.unlockDaa) && v.unlockDaa) {
+    if (now && Number(now) < Number(v.unlockDaa)) return false;
+  }
+  if (v.type === 'multisig') return !!vaultCounterpartyKey(v);
+  if (v.type === 'escrow') return true;
+  if (v.type === 'timelock' || isKcc20Vault(v)) return Number(v.fundedSompi || 0) > 0 || Number(v.tokenAmount || 0) > 0;
+  return Number(v.fundedSompi || 0) > 0;
+}
+
+function mirrorVaultTo(addr, vault) {
+  if (!addr || !vault?.address || addr === wallet?.address) return;
+  if (!walletByAddress(addr)) return;
+  const here = wallet.address;
+  setVaultOwner(addr);
+  if (!loadVaults().some(v => v.address === vault.address)) saveVault({ ...vault, walletAddress: addr });
+  setVaultOwner(here);
 }
 
 const API_BASE = 'https://api.kaspa.org';
@@ -2425,7 +2456,13 @@ async function refreshVaultBalances() {
     if (!v.address || !v.address.startsWith('kaspa:')) continue;
     try {
       const bal = await fetchAddressBalance(v.address);
-      updateVault(v.address, { fundedSompi: bal, status: bal > 0 ? (v.unlockDaa && lastDaa < Number(v.unlockDaa) ? 'locked' : 'funded') : (v.status === 'swept' ? 'swept' : 'unfunded') });
+      const locked = v.unlockDaa && lastDaa && lastDaa < Number(v.unlockDaa);
+      let status = v.status;
+      if (v.status === 'swept') status = 'swept';
+      else if (isKcc20Vault(v) && Number(v.tokenAmount || 0) > 0) status = locked ? 'locked' : 'funded';
+      else if (bal > 0) status = locked ? 'locked' : (v.status === 'funding' ? 'funding' : 'funded');
+      else if (v.status !== 'unfunded' && v.status !== 'funding') status = 'unfunded';
+      updateVault(v.address, { fundedSompi: bal, status });
     } catch {}
   }
   if (currentTab === 'vault') renderVault();
@@ -3164,7 +3201,9 @@ async function executeKcc20Freeze(params) {
     setSheetStatus('Loading Kaspa engine…');
     await loadKaspaSdk();
     setSheetStatus('Fetching UTXOs…');
-    const availableUtxos = await fetchAddressUtxos(wallet.address);
+    const availableUtxos = wallet.receiveAddrs?.length > 1
+      ? await fetchOwnedUtxos(wallet)
+      : await fetchAddressUtxos(wallet.address);
     if (!availableUtxos.length) throw new Error('Need a little native KAS here for the 0.2 witness + fee');
     setSheetStatus('Connecting to public Kaspa node…');
     await pingPublicNode();
@@ -3231,6 +3270,14 @@ async function buildCovenant(p, explicit) {
   }
   if (p.type === 'escrow' && !params.buyerAddress) { toast('Need a buyer address'); return; }
   if (p.type === 'multisig' && !params.counterparty) { toast('Need a counterparty'); return; }
+  if (p.type === 'multisig' && params.counterparty === wallet.address) {
+    toast('2-of-2 needs a different wallet, not this one');
+    return;
+  }
+  if (p.type === 'multisig' && !walletByAddress(params.counterparty)) {
+    toast('Import the counterparty wallet on You first — Sweep needs both keys on this device');
+    return;
+  }
 
   toast('Building P2SH covenant…');
   const payload = backendParams(p.type, params);
@@ -3265,6 +3312,8 @@ async function buildCovenant(p, explicit) {
       fundedSompi: 0
     };
     saveVault(vault);
+    if (p.type === 'escrow' && payload.buyerAddress) mirrorVaultTo(payload.buyerAddress, vault);
+    if (p.type === 'multisig' && payload.counterparty) mirrorVaultTo(payload.counterparty, vault);
     renderVault();
     openVaultReady(vault);
   } catch (e) { toast(errText(e)); }
@@ -3300,10 +3349,18 @@ async function fundVault(vault) {
   const amt = Number(vault.params?.amountKas);
   if (!amt) throw new Error('Missing amount');
   if (!wallet?.address) throw new Error('No wallet');
+  try {
+    await requirePin('Confirm vault fund');
+  } catch (e) {
+    if (errText(e) === 'cancelled') return;
+    throw e;
+  }
   setSheetStatus('Loading Kaspa engine…');
   await loadKaspaSdk();
   setSheetStatus('Fetching UTXOs…');
-  const availableUtxos = await fetchAddressUtxos(wallet.address);
+  const availableUtxos = wallet.receiveAddrs?.length > 1
+    ? await fetchOwnedUtxos(wallet)
+    : await fetchAddressUtxos(wallet.address);
   if (!availableUtxos.length) throw new Error('No UTXOs — receive KAS first');
   setSheetStatus('Connecting to public Kaspa node (ivy / resolver)…');
   const ping = await pingPublicNode();
@@ -3336,32 +3393,43 @@ function openLockTimer(vault) {
   if (!vault) return;
   haptic();
   const sec = remainingLockSec(vault.unlockDaa);
-  const locked = sec == null || sec > 0;
+  const locked = (vault.unlockDaa && (sec == null || sec > 0));
   const tok = vaultTokenLabel(vault);
   const kcc = isKcc20Vault(vault);
+  const isEscrow = vault.type === 'escrow';
+  const isMsig = vault.type === 'multisig';
+  const iAmBuyer = isEscrow && wallet?.address === vault.params?.buyerAddress;
+  const msigReady = isMsig && !!vaultCounterpartyKey(vault);
+  let help = 'Sweep returns KAS to this wallet.';
+  if (kcc && locked) help = 'Still frozen. When the timer hits zero, Sweep returns the tokens plus leftover witness KAS.';
+  else if (kcc) help = 'Lock has expired. Sweep now, or wait — auto-return is on.';
+  else if (vault.unlockDaa && locked) help = 'Still frozen on-chain. When this timer hits zero, Sweep returns the KAS automatically.';
+  else if (vault.unlockDaa) help = 'Lock has expired. Sweep now, or wait — auto-return is on.';
+  else if (isEscrow && iAmBuyer) help = 'You are the buyer. Release sends the KAS to this wallet.';
+  else if (isEscrow) help = 'You are the seller. Refund returns the KAS to this wallet. Buyer can Release if their wallet is imported here.';
+  else if (isMsig && !msigReady) help = '2-of-2: import the counterparty wallet on You, switch back here, then Sweep.';
+  else if (isMsig) help = 'Both keys are on this device. Sweep signs 2-of-2 and returns KAS here.';
+  const sweepLabel = isEscrow ? (iAmBuyer ? 'Release to me' : 'Refund to me') : 'Sweep to wallet';
   openSheet(vault.name || 'Time Capsule', `
     <div class="kv"><span class="k">Locked</span><span class="v">${tok ? esc(tok) : formatAmount(vault.fundedSompi || 0) + ' KAS'}</span></div>
     ${kcc ? `<div class="kv"><span class="k">Witness dust</span><span class="v">${formatAmount(vault.fundedSompi || 0)} KAS</span></div>` : ''}
     ${vault.fundFeeKas ? `<div class="kv"><span class="k">Lock fee paid</span><span class="v">${Number(vault.fundFeeKas).toFixed(6)} KAS</span></div>` : ''}
-    <div class="kv"><span class="k">Time left</span><span class="v" id="lock-timer-live" data-unlock-daa="${esc(vault.unlockDaa || '')}" data-addr="${esc(vault.address || '')}">${esc(formatLockClock(sec))}</span></div>
+    ${vault.unlockDaa ? `<div class="kv"><span class="k">Time left</span><span class="v" id="lock-timer-live" data-unlock-daa="${esc(vault.unlockDaa || '')}" data-addr="${esc(vault.address || '')}">${esc(formatLockClock(sec))}</span></div>
     <div class="kv"><span class="k">Unlocks (UTC)</span><span class="v" id="lock-timer-utc">${esc(unlockAtUtc(sec))}</span></div>
-    ${vault.unlockDaa ? `<div class="kv"><span class="k">Unlock DAA</span><span class="v">${esc(vault.unlockDaa)} (now ${esc(lastDaa || '—')})</span></div>` : ''}
+    <div class="kv"><span class="k">Unlock DAA</span><span class="v">${esc(vault.unlockDaa)} (now ${esc(lastDaa || '—')})</span></div>` : ''}
+    ${isEscrow ? `<div class="kv"><span class="k">Buyer</span><span class="v">${esc(shortAddr(vault.params?.buyerAddress || '', 10, 6))}</span></div>` : ''}
+    ${isMsig ? `<div class="kv"><span class="k">Counterparty</span><span class="v">${esc(shortAddr(vault.params?.counterparty || '', 10, 6))}</span></div>` : ''}
     <div class="kv"><span class="k">Address</span><span class="v">${esc(vault.address)}</span></div>
-    <p class="muted" style="text-align:left;">${locked
-      ? (kcc
-        ? 'Still frozen on-chain. KCC20 is SCRIPT_HASH-owned by this CLTV capsule. When the timer hits zero, Sweep returns the tokens plus leftover witness KAS.'
-        : 'Still frozen on-chain. When this timer hits zero, this app Sweeps the KAS back to your kaspa:q… wallet automatically.')
-      : 'Lock has expired. Sweep now, or wait — auto-return is on.'}</p>
-    <button class="btn btn-gold" id="v-unlock" style="margin-top:14px;">Sweep to wallet</button>
-    ${kcc ? '' : `<div class="btn-row" style="margin-top:10px;">
+    <p class="muted" style="text-align:left;">${esc(help)}</p>
+    <button class="btn btn-gold" id="v-unlock" style="margin-top:14px;" ${isMsig && !msigReady ? 'disabled' : ''}>${esc(sweepLabel)}</button>
+    ${kcc ? `<div class="btn-row" style="margin-top:10px;"><button class="btn btn-glass" id="v-copy">Copy capsule</button></div>` : `<div class="btn-row" style="margin-top:10px;">
       <button class="btn btn-glass" id="v-copy">Copy</button>
       <button class="btn btn-glass" id="v-fund">Fund more</button>
     </div>`}
-    ${kcc ? `<div class="btn-row" style="margin-top:10px;"><button class="btn btn-glass" id="v-copy">Copy capsule</button></div>` : ''}
   `, { confirm: 'Close', cancel: false });
   $('v-copy').onclick = async () => { await navigator.clipboard.writeText(vault.address); toast('Copied'); };
   $('v-fund')?.addEventListener('click', () => fundVault(vault).catch(e => toast(errText(e))));
-  $('v-unlock').onclick = () => unlockVault(vault).catch(e => { setSheetStatus(errText(e), true); toast(errText(e)); });
+  $('v-unlock').onclick = () => unlockVault(vault, { escrowRelease: isEscrow && iAmBuyer }).catch(e => { setSheetStatus(errText(e), true); toast(errText(e)); });
 }
 
 async function openVaultDetail(address) {
@@ -3373,9 +3441,14 @@ async function openVaultDetail(address) {
   openLockTimer(vault);
 }
 
-async function unlockVault(vault) {
+async function unlockVault(vault, opts = {}) {
   autoSweepTried.add(vault.address);
   const kcc = isKcc20Vault(vault);
+  const extraPrivKey = vault.type === 'multisig' ? vaultCounterpartyKey(vault) : '';
+  if (vault.type === 'multisig' && !extraPrivKey) {
+    toast('Import the counterparty wallet first');
+    return;
+  }
   openSheet(kcc ? 'Unfreeze KCC20' : 'Sweep vault', `
     <p class="muted" style="text-align:left;">${kcc ? 'Spending the CLTV witness and returning ' + esc(vault.tick || 'KCC20') + ' to this wallet.' : 'Returning KAS from this covenant to your wallet.'}</p>
     <div class="kv"><span class="k">From</span><span class="v">${esc(vault.address || '')}</span></div>
@@ -3393,10 +3466,16 @@ async function unlockVault(vault) {
   if (!utxosV.length && !kcc) throw new Error('Nothing to sweep — this address has 0 UTXOs');
   setSheetStatus('Connecting to public node…');
   await pingPublicNode();
-  setSheetStatus(kcc ? 'Signing SCRIPT_HASH witness + CLTV…' : 'Signing P2SH redeem (CLTV + CHECKSIG)…');
+  setSheetStatus(kcc ? 'Signing SCRIPT_HASH witness + CLTV…' : 'Signing P2SH redeem…');
   const result = kcc
     ? await sweepKcc20Capsule({ wallet, vault, utxos: utxosV, onStatus: (m) => setSheetStatus(m) })
-    : await sweepVault({ wallet, vault, utxos: utxosV });
+    : await sweepVault({
+      wallet,
+      vault,
+      utxos: utxosV,
+      extraPrivKey,
+      escrowRelease: !!opts.escrowRelease
+    });
   updateVault(vault.address, { status: 'swept', unlockTxId: result.txId, fundedSompi: 0, tokenAmount: kcc ? '0' : vault.tokenAmount });
   if (kcc && result.tokenAmount) applyLocalTokenDelta(vault.tick, 'kcc20', result.tokenAmount);
   afterTx();
@@ -3419,16 +3498,18 @@ async function sweepAllVaults() {
   let ok = 0, skipped = 0;
   const errors = [];
   for (const v of mine) {
-    if (v.unlockDaa && daa < v.unlockDaa) { skipped++; continue; }
+    if (!canSweepVault(v, daa)) { skipped++; continue; }
     try {
       const utxosV = await fetchAddressUtxos(v.address);
-      if (!utxosV.length) { skipped++; continue; }
+      if (!utxosV.length && !isKcc20Vault(v)) { skipped++; continue; }
       if (isKcc20Vault(v)) {
         const result = await sweepKcc20Capsule({ wallet, vault: v, utxos: utxosV });
         updateVault(v.address, { status: 'swept', fundedSompi: 0, tokenAmount: '0' });
         if (result.tokenAmount) applyLocalTokenDelta(v.tick, 'kcc20', result.tokenAmount);
       } else {
-        await sweepVault({ wallet, vault: v, utxos: utxosV });
+        const extraPrivKey = v.type === 'multisig' ? vaultCounterpartyKey(v) : '';
+        const escrowRelease = v.type === 'escrow' && wallet?.address === v.params?.buyerAddress;
+        await sweepVault({ wallet, vault: v, utxos: utxosV, extraPrivKey, escrowRelease });
         updateVault(v.address, { status: 'swept', fundedSompi: 0 });
       }
       ok++;

@@ -1,30 +1,31 @@
 import {
   loadCryptoLibs, generatePrivateKey, createKeypairFromHex,
   isValidKaspaAddress, shortAddr, hexToBytes, privKeyToHex, derivePublicKey, kaspaAddressFromPubkey, bytesToHex
-} from './crypto.js?v=66';
+} from './crypto.js?v=67';
 import {
   NATIVE_KAS, VAULT_PRODUCTS, loadWatchlist, addToken, removeToken,
   loadVaults, saveVault, updateVault, formatAmount, formatTokenUnits, tokenColor,
   fetchKcc20Portfolio, fetchKrc20Portfolio, fetchKcc20PortfolioMany, fetchKrc20PortfolioMany,
   krc20Logo, toTokenRaw, setVaultOwner, kcc20Identicon
-} from './kcc20.js?v=66';
-import { parseIntent, describeIntent, askFor, parseDurationField, interpretVaultChat, normalizeChat } from './intent.js?v=66';
-import { payloadFromAddress } from './script.js?v=66';
-import { explainTransaction, scorpionAnswer } from './scorpion.js?v=66';
+} from './kcc20.js?v=67';
+import { parseIntent, describeIntent, askFor, parseDurationField, interpretVaultChat, normalizeChat } from './intent.js?v=67';
+import { payloadFromAddress } from './script.js?v=67';
+import { explainTransaction, scorpionAnswer } from './scorpion.js?v=67';
 import {
   sendKas, fetchAddressUtxos, fetchAddressBalance, loadKaspaSdk,
   buildTimelockCovenant, buildEscrowCovenant, buildMultisigCovenant, currentDaa,
   pingPublicNode, sweepVault, toRpcTransaction, p2shSpendScript, planKasPayment, storageMassOk,
   compoundUtxos, sendKrc20, sendKcc20, loadKrc20Pending, lockKcc20Timelock, sweepKcc20Capsule,
   fetchOwnedUtxos
-} from './tx.js?v=66';
-import { kronMarkets, quoteKronTrade, executeKronTrade, formatKasSompi, lookupKronTick, tradeCostLines, attachKronLogos } from './kronTrade.js?v=66';
+} from './tx.js?v=67';
+import { kronMarkets, quoteKronTrade, executeKronTrade, formatKasSompi, lookupKronTick, tradeCostLines, attachKronLogos } from './kronTrade.js?v=67';
 import {
   migrateReceiveBook, ownedAddresses, deriveFreshReceiveAddress, ensureFreshReceive,
   markAddressUsed, currentReceive
-} from './receive.js?v=66';
+} from './receive.js?v=67';
+import { knsResolve, knsPrimary, knsDomainsFor, knsOwnerMatches, knsAppUrl, looksLikeKasDomain, normalizeKasDomain } from './kns.js?v=67';
 
-export const BUILD = '66';
+export const BUILD = '67';
 
 function errText(e) {
   if (e == null) return 'Unknown error';
@@ -303,7 +304,8 @@ function saveWallet() {
     pubKey: wallet.pubKey || '',
     createdAt: wallet.createdAt || Date.now(),
     pin: wallet.pin || list[i]?.pin || undefined,
-    receiveAddrs: wallet.receiveAddrs || []
+    receiveAddrs: wallet.receiveAddrs || [],
+    knsDomain: wallet.knsDomain || ''
   };
   if (i >= 0) list[i] = { ...list[i], ...row };
   else list.push(row);
@@ -963,7 +965,9 @@ function renderHome() {
   const balHtml = `${formatAmount(balanceSompi)}<small>KAS</small>`;
   if ($('card-bal') && $('card-bal').innerHTML !== balHtml) $('card-bal').innerHTML = balHtml;
   if ($('card-usd')) $('card-usd').textContent = price ? `≈ ${usd(kas())}` : 'Fetching price…';
-  if ($('card-addr')) $('card-addr').textContent = shortAddr(wallet.address, 12, 8);
+  if ($('card-addr')) $('card-addr').textContent = wallet.knsDomain
+    ? wallet.knsDomain + ' · ' + shortAddr(wallet.address, 12, 8)
+    : shortAddr(wallet.address, 12, 8);
   if ($('card-wallet')) $('card-wallet').textContent = `${wallet.name || 'Wallet'} ▾`;
   const navW = $('nav-wallet')?.querySelector('b');
   if (navW) navW.textContent = wallet.name || 'Wallet';
@@ -1507,6 +1511,10 @@ function renderProfile() {
       ? 'On for ' + (wallet.name || 'this wallet')
       : 'Required — set a PIN for ' + (wallet.name || 'this wallet');
   }
+  const knsEl = $('profile-kns-sub');
+  if (knsEl) knsEl.textContent = wallet.knsDomain || 'Link a .kas name you already own';
+  if ($('profile-kns-name')) $('profile-kns-name').textContent = wallet.knsDomain || 'Not linked';
+  refreshKnsQuiet();
   const box = $('wallet-list');
   if (box) {
     const list = loadWalletList();
@@ -1540,6 +1548,87 @@ function renderProfile() {
   if (log && !log.childElementCount) {
     log.innerHTML = `<div class="bubble ai">I am Scorpion. I translate any Kaspa tx into plain English — lock vs send vs sweep vs KRC-20. Paste a txid or ask <em>what was my last lock?</em></div>`;
   }
+}
+
+let knsBusy = false;
+async function refreshKnsQuiet() {
+  if (!wallet?.address || knsBusy) return;
+  knsBusy = true;
+  try {
+    const primary = await knsPrimary(wallet.address);
+    if (primary && !wallet.knsDomain) {
+      wallet.knsDomain = primary;
+      saveWallet();
+      if ($('profile-kns-sub')) $('profile-kns-sub').textContent = primary;
+      if ($('profile-kns-name')) $('profile-kns-name').textContent = primary;
+      if ($('card-addr')) $('card-addr').textContent = primary + ' · ' + shortAddr(wallet.address, 12, 8);
+    }
+  } catch {}
+  knsBusy = false;
+}
+
+function openKnsSheet() {
+  haptic();
+  const current = wallet?.knsDomain || '';
+  openSheet('KNS domain', `
+    <p class="muted" style="text-align:left;padding:0 0 12px;">This wallet is your KNS account. Names inscribed to this address show here. You can also type a .kas domain you already own — we check it on the KNS indexer.</p>
+    <div class="kv"><span class="k">Linked</span><span class="v" id="kns-linked">${esc(current || 'None')}</span></div>
+    <div class="field" style="margin-top:12px;"><label>Your .kas domain</label>
+      <input id="kns-input" placeholder="alice.kas" spellcheck="false" autocomplete="off" value="${esc(current)}">
+    </div>
+    <div class="glass list" id="kns-owned" style="margin:8px 0 12px;"><div class="empty">Loading names on this address…</div></div>
+    <p class="muted" style="text-align:left;padding:0;"><a href="${esc(knsAppUrl())}" target="_blank" rel="noopener" style="color:var(--gold-2)">Open KNS dashboard</a></p>
+  `, {
+    confirm: 'Use this domain',
+    gold: true,
+    cancelLabel: 'Close',
+    onConfirm: () => linkKnsDomain(($('kns-input')?.value || '').trim())
+  });
+  loadKnsOwned();
+}
+
+async function loadKnsOwned() {
+  const box = $('kns-owned');
+  if (!box || !wallet?.address) return;
+  try {
+    const rows = await knsDomainsFor(wallet.address);
+    if (!rows.length) {
+      box.innerHTML = `<div class="empty">No .kas names on this address yet. Inscribe at app.knsdomains.org with this wallet, then tap Use this domain.</div>`;
+      return;
+    }
+    box.innerHTML = rows.map(r => `
+      <button class="row" type="button" data-kns="${esc(r.domain)}">
+        <div class="glyph" style="background:rgba(212,176,122,.16);color:var(--gold-2)">.kas</div>
+        <div style="flex:1;min-width:0">
+          <div class="title">${esc(r.domain)}</div>
+          <div class="sub">${r.verified ? 'Verified on KNS' : 'On this wallet'}</div>
+        </div>
+        <span class="chev">${wallet.knsDomain === r.domain ? 'On' : 'Use'}</span>
+      </button>`).join('');
+    box.onclick = async (e) => {
+      const btn = e.target.closest('[data-kns]');
+      if (!btn?.dataset.kns) return;
+      if ($('kns-input')) $('kns-input').value = btn.dataset.kns;
+      try { await linkKnsDomain(btn.dataset.kns); } catch (err) { toast(errText(err)); }
+    };
+  } catch (e) {
+    box.innerHTML = `<div class="empty">${esc(errText(e))}</div>`;
+  }
+}
+
+async function linkKnsDomain(raw) {
+  if (!raw) throw new Error('Enter a .kas domain');
+  toast('Checking KNS…');
+  const rec = await knsResolve(raw);
+  if (!knsOwnerMatches(rec.owner, wallet)) {
+    throw new Error(rec.domain + ' is owned by a different address — connect the wallet that holds it');
+  }
+  wallet.knsDomain = rec.domain;
+  saveWallet();
+  closeSheet();
+  renderProfile();
+  if (currentTab === 'home') renderHome();
+  toast(rec.domain + ' linked');
 }
 
 function openImportAnother() {
@@ -2573,7 +2662,7 @@ function openSend(prefill) {
     </div>
     <div class="field"><label>To</label>
       <div class="dest-row">
-        <input id="send-dest" placeholder="kaspa:q… or kaspa:p…" value="${esc(dest0)}" spellcheck="false" autocomplete="off">
+        <input id="send-dest" placeholder="kaspa:q… or name.kas" value="${esc(dest0)}" spellcheck="false" autocomplete="off">
         <button class="scan-btn" id="send-scan-qr" type="button" aria-label="Scan QR">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><path d="M14 14h3v3h-3zM20 14v7h-7"/></svg>
         </button>
@@ -2586,7 +2675,7 @@ function openSend(prefill) {
     </div>
     <div class="field"><label>Amount</label>
       <div class="dest-row">
-        <input id="send-amount" type="text" inputmode="decimal" placeholder="${esc(maxFillForAsset(chosen))}" value="${esc(amt0)}">
+        <input id="send-amount" type="text" inputmode="decimal" placeholder="0" value="${esc(amt0)}">
         <button class="max-btn" id="send-max" type="button">Max</button>
       </div>
     </div>
@@ -2596,7 +2685,6 @@ function openSend(prefill) {
   bindSendAssetPicker();
   bindSendQr();
   $('send-max')?.addEventListener('click', fillSendMax);
-  $('send-avail')?.addEventListener('click', fillSendMax);
 }
 
 function readSendForm() {
@@ -2610,9 +2698,21 @@ async function prepareSend(prefill) {
   const form = prefill?.destination
     ? { dest: prefill.destination, amount: String(prefill.amountKas || prefill.amount || ''), asset: findSendAsset(prefill.assetKey || 'kas') }
     : readSendForm();
-  const dest = form.dest;
+  let dest = form.dest;
+  let destDomain = '';
   const asset = form.asset;
-  if (!isValidKaspaAddress(dest)) { toast('Invalid Kaspa address — use kaspa:q… or kaspa:p…'); return; }
+  if (looksLikeKasDomain(dest) || (dest && !dest.startsWith('kaspa:') && !dest.includes(':') && !/\s/.test(dest))) {
+    toast('Resolving ' + dest + '…');
+    try {
+      const rec = await knsResolve(dest);
+      destDomain = rec.domain;
+      dest = rec.owner;
+    } catch (e) {
+      toast(errText(e));
+      return;
+    }
+  }
+  if (!isValidKaspaAddress(dest)) { toast('Invalid Kaspa address — use kaspa:q… or a .kas domain'); return; }
   if (!form.amount) { toast('Enter an amount'); return; }
   if (asset.native || asset.protocol === 'kas') {
     const amount = Number(form.amount);
@@ -2620,11 +2720,12 @@ async function prepareSend(prefill) {
     const feeEst = 0.0045;
     openSheet('Review send', `
       <div class="kv"><span class="k">Asset</span><span class="v">KAS</span></div>
+      ${destDomain ? `<div class="kv"><span class="k">KNS</span><span class="v">${esc(destDomain)}</span></div>` : ''}
       <div class="kv"><span class="k">To</span><span class="v">${esc(shortAddr(dest, 14, 8))}</span></div>
       <div class="kv"><span class="k">Amount</span><span class="v">${esc(formatKas(amount))} KAS</span></div>
       <div class="kv"><span class="k">Network fee</span><span class="v">~${feeEst.toFixed(4)} KAS</span></div>
       <div class="kv"><span class="k">Leaves wallet</span><span class="v">~${formatKas(amount + feeEst, 4)} KAS</span></div>
-      <p class="muted" style="text-align:left;padding-top:8px;">Change stays in this wallet. Works for any kaspa:q or kaspa:p address.</p>
+      <p class="muted" style="text-align:left;padding-top:8px;">${destDomain ? '⚠️ Check the resolved address before sending. Transfers cannot be reversed. ' : ''}Change stays in this wallet.</p>
     `, { confirm: 'Send now', gold: true, onConfirm: () => broadcastSend(dest, amount) });
     return;
   }
@@ -2636,12 +2737,14 @@ async function prepareSend(prefill) {
   const extra = asset.protocol === 'krc20'
     ? 'Kasplex commit-reveal: ~0.1 KAS is parked in a P2SH then returned minus Toccata fees. Recipient can be any kaspa: wallet.'
     : 'KCC20 send (KRON / KasWare): spends as many cells as needed (up to 4) to a kaspa:q key. A small KAS UTXO from this wallet authorizes it.';
+  const knsWarn = destDomain ? '⚠️ Check the resolved address before sending. Transfers cannot be reversed. ' : '';
   openSheet('Review send', `
     <div class="kv"><span class="k">Asset</span><span class="v">${esc(asset.ticker)} · ${esc(proto)}</span></div>
+    ${destDomain ? `<div class="kv"><span class="k">KNS</span><span class="v">${esc(destDomain)}</span></div>` : ''}
     <div class="kv"><span class="k">To</span><span class="v">${esc(shortAddr(dest, 14, 8))}</span></div>
     <div class="kv"><span class="k">Amount</span><span class="v">${esc(form.amount)} ${esc(asset.ticker)}</span></div>
     <div class="kv"><span class="k">Raw units</span><span class="v">${esc(raw)}</span></div>
-    <p class="muted" style="text-align:left;padding-top:8px;">${esc(extra)}</p>
+    <p class="muted" style="text-align:left;padding-top:8px;">${esc(knsWarn + extra)}</p>
   `, { confirm: 'Send now', gold: true, onConfirm: () => broadcastTokenSend(dest, asset, form.amount, raw) });
 }
 
@@ -3521,6 +3624,7 @@ function bind() {
     }
     if (row?.dataset.tokenAct) openTokenActivity(row.dataset.tokenAct);
   });
+  click('profile-kns', openKnsSheet);
   click('profile-copy', async () => {
     if (!wallet?.address) return;
     await navigator.clipboard.writeText(wallet.address);

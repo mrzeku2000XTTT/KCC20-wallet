@@ -12,7 +12,7 @@
   <link rel="icon" href="assets/icon.png">
   <title>KCC20 Wallet</title>
   <meta http-equiv="Cache-Control" content="no-store, no-cache, must-revalidate">
-  <link rel="stylesheet" href="css/app.css?v=66">
+  <link rel="stylesheet" href="css/app.css?v=67">
 </head>
 <body>
   <img class="bg-poster" src="assets/bg.jpg" alt="">
@@ -184,6 +184,7 @@
               <button class="btn btn-gold" id="profile-copy" type="button">Copy address</button>
               <button class="btn btn-glass" id="profile-qr" type="button">QR</button>
             </div>
+            <div class="kv"><span class="k">KNS</span><span class="v" id="profile-kns-name">Not linked</span></div>
             <div class="kv"><span class="k">Balance</span><span class="v" id="profile-bal">0 KAS</span></div>
             <div class="kv"><span class="k">Script</span><span class="v" id="profile-script">P2PK</span></div>
             <div class="kv"><span class="k">UTXOs</span><span class="v" id="profile-utxos">0</span></div>
@@ -215,6 +216,11 @@
 
           <div class="section-label">Settings</div>
           <div class="glass list">
+            <button class="row" id="profile-kns" type="button">
+              <div class="glyph" style="background:rgba(73,234,203,.16);color:var(--teal)">.kas</div>
+              <div><div class="title">KNS domain</div><div class="sub" id="profile-kns-sub">Link a .kas name you already own</div></div>
+              <span class="chev">›</span>
+            </button>
             <button class="row" id="profile-pin" type="button">
               <div class="glyph" style="background:rgba(94,92,230,.16);color:var(--indigo)">●</div>
               <div><div class="title">Wallet PIN</div><div class="sub" id="profile-pin-sub">Required for this wallet</div></div>
@@ -363,7 +369,7 @@
     })();
   </script>
   <script type="module">
-    import('./js/app.js?v=66').catch(function (err) {
+    import('./js/app.js?v=67').catch(function (err) {
       console.error(err);
       var phone = document.getElementById('phone');
       var d = document.createElement('div');

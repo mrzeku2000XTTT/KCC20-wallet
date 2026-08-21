@@ -815,12 +815,127 @@ img { display: block; max-width: 100%; }
 .profile-top { display: flex; align-items: center; gap: 12px; margin-bottom: 10px; }
 .profile-id { flex: 1; min-width: 0; }
 .profile-name { font-size: 18px; font-weight: 700; letter-spacing: -0.4px; }
-.profile-avatar {
+.profile-avatar, .you-avatar {
   width: 48px; height: 48px; border-radius: 16px; margin: 0; flex-shrink: 0;
   display: grid; place-items: center;
   background: linear-gradient(180deg, #f3e2bf, #c9a36a);
   color: #1a140c; font-weight: 800; font-size: 18px;
   box-shadow: 0 8px 18px rgba(201,163,106,0.28);
+  overflow: hidden;
+}
+.you-avatar { width: 46px; height: 46px; border-radius: 14px; font-size: 16px; border: 2px solid rgba(12,12,14,0.92); }
+.you-avatar img, .you-wava img { width: 100%; height: 100%; object-fit: cover; display: block; }
+#page-you.you-fit.active {
+  display: flex; flex-direction: column; height: 100%; overflow: hidden; gap: 8px;
+}
+.you-card {
+  flex-shrink: 0; padding: 0; overflow: hidden; margin: 0; text-align: left;
+}
+.you-cover {
+  position: relative; height: 58px;
+  background:
+    linear-gradient(180deg, rgba(212,176,122,0.38), rgba(12,10,8,0.55)),
+    radial-gradient(120% 80% at 80% 0%, rgba(243,226,191,0.28), transparent 55%);
+  background-size: cover;
+  background-position: center;
+}
+.you-cover.has-img { background-color: #1a140c; }
+.you-cover-btn {
+  position: absolute; right: 8px; bottom: 6px;
+  height: 20px; padding: 0 8px; border-radius: 999px;
+  background: rgba(0,0,0,0.45); border: 0.5px solid rgba(255,255,255,0.22);
+  color: var(--gold-2); font-size: 10px; font-weight: 700; letter-spacing: 0.04em;
+}
+.you-ident {
+  display: flex; align-items: flex-end; gap: 8px;
+  padding: 0 10px 4px; margin-top: -20px; position: relative; z-index: 1;
+}
+.you-id { flex: 1; min-width: 0; padding-bottom: 2px; }
+.you-name {
+  font-size: 15px; font-weight: 750; letter-spacing: -0.3px;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.you-kns { font-size: 11px; color: var(--label-2); margin-top: 1px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.you-card .profile-addr { margin: 0 10px 6px; padding: 5px 8px; font-size: 10px; border-radius: 10px; }
+.you-stats { margin: 0 10px 6px; gap: 4px; }
+.you-stats div { padding: 5px 4px; border-radius: 10px; }
+.you-stats b { font-size: 12px; }
+.you-stats span { font-size: 9px; }
+.you-actions { display: flex; gap: 6px; padding: 0 10px 8px; }
+.you-chip {
+  flex: 1; height: 28px; border-radius: 9px;
+  display: grid; place-items: center;
+  background: var(--fill); border: 0.5px solid var(--hairline);
+  color: var(--label); font-size: 11px; font-weight: 650; text-decoration: none;
+}
+.you-chip.gold {
+  background: linear-gradient(180deg, #f3e2bf, #c9a36a); color: #1a140c; border: 0;
+}
+.you-block {
+  flex: 1; min-height: 0; display: flex; flex-direction: column; gap: 4px;
+}
+.you-head {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 0 2px;
+  font-size: 11px; font-weight: 700; letter-spacing: 0.08em;
+  text-transform: uppercase; color: var(--label-2); flex-shrink: 0;
+}
+.you-head-btns { display: flex; gap: 8px; }
+.you-head-btns button {
+  font-size: 12px; font-weight: 700; letter-spacing: 0; text-transform: none;
+  color: var(--gold-2);
+}
+.you-wallet-list {
+  flex: 1; min-height: 0; overflow-y: auto; margin: 0;
+  -webkit-overflow-scrolling: touch;
+}
+.you-wallet-list .row {
+  padding: 8px 10px; min-height: 0; gap: 8px;
+}
+.you-wallet-list .title { font-size: 13px; }
+.you-wallet-list .sub { font-size: 11px; margin-top: 0; }
+.you-wallet-list .amt b { font-size: 12px; }
+.you-wallet-list .amt em { display: none; }
+.you-wallet-list .chev { font-size: 11px; font-weight: 650; color: var(--gold-2); }
+.you-wallet-list .empty { padding: 12px 8px; font-size: 12px; }
+.you-wava {
+  width: 28px; height: 28px; border-radius: 8px; flex-shrink: 0;
+  display: grid; place-items: center; overflow: hidden;
+  background: rgba(255,255,255,0.08); color: var(--label-2); font-size: 11px; font-weight: 700;
+}
+.you-wava.on { background: rgba(48,209,88,0.16); color: var(--green); }
+.you-settings { flex-shrink: 0; display: flex; flex-direction: column; gap: 4px; }
+.you-grid {
+  display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px;
+}
+.you-tile {
+  display: flex; flex-direction: column; align-items: center; gap: 4px;
+  padding: 8px 2px 7px; border-radius: 12px;
+  background: var(--glass-2); border: 0.5px solid var(--hairline);
+  font-size: 10px; font-weight: 650; color: var(--label);
+  min-width: 0;
+}
+.you-tile .glyph {
+  width: 26px; height: 26px; border-radius: 8px;
+  display: grid; place-items: center; font-size: 12px;
+  background: rgba(255,255,255,0.08);
+}
+.you-tile .glyph.pin { background: rgba(94,92,230,.16); color: var(--indigo); }
+.you-tile .glyph.kns { background: rgba(73,234,203,.16); color: var(--teal); font-size: 9px; font-weight: 800; }
+.you-tile .glyph.gold { background: rgba(212,176,122,.16); color: var(--gold-2); }
+.you-tile .glyph.keys { background: rgba(10,132,255,.16); }
+.you-tile .glyph.look { background: rgba(243,226,191,.14); color: var(--gold-2); }
+.you-tile .glyph.sco { background: rgba(212,176,122,.16); }
+.you-tile .glyph.wipe { background: rgba(255,69,58,.16); color: var(--red); }
+.you-tile.danger { color: var(--red); }
+.you-tile:active { transform: scale(0.96); opacity: 0.88; }
+.sheet .scorpion-chat { max-height: 42vh; min-height: 140px; }
+@media (max-height: 700px) {
+  .you-cover { height: 48px; }
+  .you-ident { margin-top: -16px; }
+  .you-avatar { width: 40px; height: 40px; border-radius: 12px; font-size: 14px; }
+  .you-name { font-size: 14px; }
+  .you-stats { display: none; }
 }
 .build-fab {
   width: 44px; height: 44px; border-radius: 14px; flex-shrink: 0;

@@ -12,7 +12,7 @@
   <link rel="icon" href="assets/icon.png">
   <title>KCC20 Wallet</title>
   <meta http-equiv="Cache-Control" content="no-store, no-cache, must-revalidate">
-  <link rel="stylesheet" href="css/app.css?v=80">
+  <link rel="stylesheet" href="css/app.css?v=81">
 </head>
 <body>
   <img class="bg-poster" src="assets/bg.jpg" alt="">
@@ -179,84 +179,58 @@
         </section>
 
         <!-- PROFILE / SETTINGS -->
-        <section class="page" id="page-you">
-          <div class="glass profile-card">
-            <div class="profile-top">
-              <div class="profile-avatar" id="profile-avatar">K</div>
-              <div class="profile-id">
-                <div class="profile-name" id="profile-name">Wallet</div>
-                <div class="card-label" id="profile-kns-name">Not linked</div>
+        <section class="page you-fit" id="page-you">
+          <article class="glass you-card" id="you-card">
+            <div class="you-cover" id="you-cover">
+              <button class="you-cover-btn" id="you-cover-btn" type="button">Cover</button>
+            </div>
+            <div class="you-ident">
+              <button class="you-avatar" id="profile-avatar" type="button" aria-label="Change profile photo">K</button>
+              <div class="you-id">
+                <div class="you-name" id="profile-name">Wallet</div>
+                <div class="you-kns" id="profile-kns-name">Not linked</div>
               </div>
-              <button class="build-fab" id="profile-build" type="button" aria-label="Open Proof of Fact roadmap" title="Build">
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
-                  <path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"/>
-                </svg>
-              </button>
             </div>
             <p class="profile-addr" id="profile-addr">kaspa:…</p>
-            <div class="profile-stats">
+            <div class="profile-stats you-stats">
               <div><b id="profile-bal">0</b><span>KAS</span></div>
               <div><b id="profile-utxos">0</b><span>UTXOs</span></div>
               <div><b id="profile-script">P2PK</b><span>Script</span></div>
             </div>
-            <div class="btn-row" style="margin-top:10px;">
-              <button class="btn btn-gold" id="profile-copy" type="button">Copy</button>
-              <button class="btn btn-glass" id="profile-qr" type="button">QR</button>
+            <div class="you-actions">
+              <button class="you-chip gold" id="profile-copy" type="button">Copy</button>
+              <button class="you-chip" id="profile-qr" type="button">QR</button>
+              <a class="you-chip" id="profile-explorer" href="#" target="_blank" rel="noopener">Explorer</a>
             </div>
-            <a class="profile-link" id="profile-explorer" href="#" target="_blank" rel="noopener">Open on kaspa.stream</a>
-          </div>
+          </article>
 
-          <div class="section-label">Wallets</div>
-          <div class="glass list" id="wallet-list"></div>
-          <div class="btn-row" style="margin:0 0 16px;">
-            <button class="btn btn-gold" id="profile-new-wallet" type="button">New wallet</button>
-            <button class="btn btn-glass" id="profile-import-wallet" type="button">Import</button>
-          </div>
-
-          <div class="section-label">Scorpion AI</div>
-          <div class="glass scorpion-box">
-            <div class="scorpion-head">
-              <span class="scorp-mark">🦂</span>
-              <div>
-                <div class="title">Covenant++</div>
-                <div class="sub">Translates sends, locks, sweeps, tokens</div>
+          <div class="you-block">
+            <div class="you-head">
+              <span>Wallets</span>
+              <div class="you-head-btns">
+                <button type="button" id="profile-new-wallet">New</button>
+                <button type="button" id="profile-import-wallet">Import</button>
               </div>
             </div>
-            <div class="chat scorpion-chat" id="scorpion-log"></div>
-            <div class="chatbar">
-              <input id="scorpion-input" placeholder="Paste a txid or ask “last lock”" autocomplete="off">
-              <button class="send-orb" id="scorpion-send" type="button">↑</button>
-            </div>
+            <div class="glass list you-wallet-list" id="wallet-list"></div>
           </div>
 
-          <div class="section-label">Settings</div>
-          <div class="glass list">
-            <button class="row" id="profile-kns" type="button">
-              <div class="glyph" style="background:rgba(73,234,203,.16);color:var(--teal)">.kas</div>
-              <div><div class="title">KNS domain</div><div class="sub" id="profile-kns-sub">Link a .kas name you already own</div></div>
-              <span class="chev">›</span>
-            </button>
-            <button class="row" id="profile-pin" type="button">
-              <div class="glyph" style="background:rgba(94,92,230,.16);color:var(--indigo)">●</div>
-              <div><div class="title">Wallet PIN</div><div class="sub" id="profile-pin-sub">Required for this wallet</div></div>
-              <span class="chev">›</span>
-            </button>
-            <button class="row" id="profile-compound" type="button">
-              <div class="glyph" style="background:rgba(212,176,122,.16);color:var(--gold)">⧉</div>
-              <div><div class="title">Compound UTXOs</div><div class="sub">Merge coins into one output</div></div>
-              <span class="chev">›</span>
-            </button>
-            <button class="row" id="profile-keys" type="button">
-              <div class="glyph" style="background:rgba(10,132,255,.16);color:var(--blue)">🔑</div>
-              <div><div class="title">Private key</div><div class="sub">Reveal or copy — never share</div></div>
-              <span class="chev">›</span>
-            </button>
-            <button class="row" id="profile-wipe" type="button">
-              <div class="glyph" style="background:rgba(255,69,58,.16);color:var(--red)">✕</div>
-              <div><div class="title">Remove wallet</div><div class="sub">Keys leave this device only</div></div>
-              <span class="chev">›</span>
-            </button>
+          <div class="you-settings">
+            <div class="you-head"><span>Settings</span></div>
+            <div class="you-grid">
+              <button class="you-tile" id="profile-pin" type="button"><span class="glyph pin">●</span>PIN</button>
+              <button class="you-tile" id="profile-kns" type="button"><span class="glyph kns">.kas</span>KNS</button>
+              <button class="you-tile" id="profile-compound" type="button"><span class="glyph gold">⧉</span>Compound</button>
+              <button class="you-tile" id="profile-keys" type="button"><span class="glyph keys">🔑</span>Keys</button>
+              <button class="you-tile" id="profile-look" type="button"><span class="glyph look">◐</span>Look</button>
+              <button class="you-tile" id="profile-scorpion" type="button"><span class="glyph sco">🦂</span>Scorpion</button>
+              <button class="you-tile" id="profile-build" type="button"><span class="glyph gold">⚒</span>Build</button>
+              <button class="you-tile danger" id="profile-wipe" type="button"><span class="glyph wipe">✕</span>Remove</button>
+            </div>
           </div>
+          <input type="file" id="you-avatar-file" accept="image/*" hidden>
+          <input type="file" id="you-cover-file" accept="image/*" hidden>
+          <input type="file" id="you-wall-file" accept="image/*" hidden>
         </section>
       </div>
 
@@ -484,7 +458,7 @@
     })();
   </script>
   <script type="module">
-    import('./js/app.js?v=80').catch(function (err) {
+    import('./js/app.js?v=81').catch(function (err) {
       console.error(err);
       var phone = document.getElementById('phone');
       var d = document.createElement('div');

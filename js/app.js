@@ -3,16 +3,16 @@ import {
   isValidKaspaAddress, validateKaspaAddress, shortAddr, hexToBytes, privKeyToHex,
   derivePublicKey, kaspaAddressFromPubkey, bytesToHex, kasToSompi, sompiToKasString,
   validateAndCleanUtxo
-} from './crypto.js?v=80';
+} from './crypto.js?v=81';
 import {
   NATIVE_KAS, VAULT_PRODUCTS, loadWatchlist, addToken, removeToken,
   loadVaults, saveVault, updateVault, formatAmount, formatTokenUnits, tokenColor,
   fetchKcc20Portfolio, fetchKrc20Portfolio, fetchKcc20PortfolioMany, fetchKrc20PortfolioMany,
   krc20Logo, toTokenRaw, setVaultOwner, kcc20Identicon, VAULT_GROUPS
-} from './kcc20.js?v=80';
-import { parseIntent, describeIntent, askFor, parseDurationField, interpretVaultChat, normalizeChat } from './intent.js?v=80';
-import { payloadFromAddress } from './script.js?v=80';
-import { explainTransaction, scorpionAnswer } from './scorpion.js?v=80';
+} from './kcc20.js?v=81';
+import { parseIntent, describeIntent, askFor, parseDurationField, interpretVaultChat, normalizeChat } from './intent.js?v=81';
+import { payloadFromAddress } from './script.js?v=81';
+import { explainTransaction, scorpionAnswer } from './scorpion.js?v=81';
 import {
   sendKas, fetchAddressUtxos, fetchAddressBalance, loadKaspaSdk,
   buildTimelockCovenant, buildEscrowCovenant, buildMultisigCovenant, currentDaa,
@@ -20,16 +20,16 @@ import {
   compoundUtxos, sendKrc20, sendKcc20, loadKrc20Pending, lockKcc20Timelock, sweepKcc20Capsule,
   fetchOwnedUtxos, buildSentinelChain, buildRecurringChain, buildHashlockCovenant,
   newHashlockSecret, checkinHop, currentHop, parseXmssKit, p2shFromRedeemHex, spendXmssVault
-} from './tx.js?v=80';
-import { kronMarkets, quoteKronTrade, executeKronTrade, formatKasSompi, lookupKronTick, tradeCostLines, attachKronLogos } from './kronTrade.js?v=80';
+} from './tx.js?v=81';
+import { kronMarkets, quoteKronTrade, executeKronTrade, formatKasSompi, lookupKronTick, tradeCostLines, attachKronLogos } from './kronTrade.js?v=81';
 import {
   migrateReceiveBook, ownedAddresses, markAddressUsed, currentReceive,
   deriveReceiveBatch, unusedReceiveCount, ensurePrivacyBook
-} from './receive.js?v=80';
-import { knsResolve, knsPrimary, knsDomainsFor, knsOwnerMatches, knsAppUrl, looksLikeKasDomain, normalizeKasDomain } from './kns.js?v=80';
-import { runPhoneStudio, runServerStudio } from './studio.js?v=80';
+} from './receive.js?v=81';
+import { knsResolve, knsPrimary, knsDomainsFor, knsOwnerMatches, knsAppUrl, looksLikeKasDomain, normalizeKasDomain } from './kns.js?v=81';
+import { runPhoneStudio, runServerStudio } from './studio.js?v=81';
 
-export const BUILD = '80';
+export const BUILD = '81';
 
 function errText(e) {
   if (e == null) return 'Unknown error';
@@ -127,6 +127,7 @@ const ACTIVE_KEY = 'kcc20_active_id';
 const PIN_KEY = 'kcc20_pin_v1';
 const SNAPS_KEY = 'kcc20_snaps_v1';
 const ACT_KEY = 'kcc20_activity_v1';
+const LOOK_KEY = 'kcc20_look_v1';
 
 const $ = (id) => document.getElementById(id);
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
@@ -264,7 +265,7 @@ function tickLockLabels() {
 
 function showPage(id) {
   document.querySelectorAll('.page').forEach(p => p.classList.toggle('active', p.id === 'page-' + id));
-  $('scroll')?.classList.toggle('home-noscroll', id === 'home' || id === 'vault');
+  $('scroll')?.classList.toggle('home-noscroll', id === 'home' || id === 'vault' || id === 'you');
   currentTab = id;
   document.querySelectorAll('.tab').forEach(t => t.classList.toggle('active', t.dataset.tab === id));
   const titles = { home: 'KCC20', tokens: 'Tokens', vault: 'Vault', activity: 'Activity', you: 'Profile' };
@@ -373,7 +374,9 @@ function saveWallet() {
     createdAt: wallet.createdAt || Date.now(),
     pin: wallet.pin || list[i]?.pin || undefined,
     receiveAddrs: wallet.receiveAddrs || [],
-    knsDomain: wallet.knsDomain || ''
+    knsDomain: wallet.knsDomain || '',
+    avatar: wallet.avatar || '',
+    cover: wallet.cover || ''
   };
   if (i >= 0) list[i] = { ...list[i], ...row };
   else list.push(row);
@@ -1856,6 +1859,33 @@ async function copyTruthHash() {
   await copyText(h);
 }
 
+function youInitial(name) {
+  return String(name || 'K').replace(/^Wallet\s*/i, '').slice(0, 1).toUpperCase() || 'K';
+}
+
+function paintYouLook() {
+  const av = $('profile-avatar');
+  if (av) {
+    if (wallet?.avatar) {
+      av.innerHTML = `<img alt="" src="${wallet.avatar}">`;
+      av.classList.add('has-img');
+    } else {
+      av.textContent = youInitial(wallet?.name);
+      av.classList.remove('has-img');
+    }
+  }
+  const cover = $('you-cover');
+  if (cover) {
+    if (wallet?.cover) {
+      cover.style.backgroundImage = `linear-gradient(180deg, rgba(8,8,10,0.12), rgba(8,8,10,0.42)), url("${wallet.cover}")`;
+      cover.classList.add('has-img');
+    } else {
+      cover.style.backgroundImage = '';
+      cover.classList.remove('has-img');
+    }
+  }
+}
+
 function renderProfile() {
   if (!wallet) return;
   const addr = wallet.address || '';
@@ -1863,7 +1893,7 @@ function renderProfile() {
   if ($('profile-bal')) $('profile-bal').textContent = formatAmount(balanceSompi);
   if ($('profile-script')) $('profile-script').textContent = String(addr).startsWith('kaspa:p') ? 'P2SH' : 'P2PK';
   if ($('profile-name')) $('profile-name').textContent = wallet.name || 'Wallet';
-  if ($('profile-avatar')) $('profile-avatar').textContent = String(wallet.name || 'K').replace(/^Wallet\s*/i, '').slice(0, 1).toUpperCase() || 'K';
+  paintYouLook();
   if ($('profile-utxos')) {
     const n = Array.isArray(utxos) ? utxos.length : 0;
     $('profile-utxos').textContent = n === 1 ? '1' : String(n);
@@ -1871,15 +1901,8 @@ function renderProfile() {
   const ex = $('profile-explorer');
   if (ex && addr) {
     ex.href = explorerAddr(addr);
-    ex.textContent = 'Open on kaspa.stream';
+    ex.textContent = 'Explorer';
   }
-  if ($('profile-pin-sub')) {
-    $('profile-pin-sub').textContent = loadPin()
-      ? 'On for ' + (wallet.name || 'this wallet')
-      : 'Required — set a PIN for ' + (wallet.name || 'this wallet');
-  }
-  const knsEl = $('profile-kns-sub');
-  if (knsEl) knsEl.textContent = wallet.knsDomain || 'Link a .kas name you already own';
   if ($('profile-kns-name')) $('profile-kns-name').textContent = wallet.knsDomain || 'Not linked';
   refreshKnsQuiet();
   const box = $('wallet-list');
@@ -1889,31 +1912,21 @@ function renderProfile() {
       const active = w.id === wallet.id;
       const snap = walletSnap[w.address] || {};
       const sompi = active ? balanceSompi : snap.sompi;
-      const kcc = active ? kccHoldings : (snap.kcc || []);
-      const krc = active ? krcHoldings : (snap.krc || []);
-      const tokens = [...kcc, ...krc];
-      const bits = tokens.slice(0, 2).map(t => `${formatTokenUnits(t.balance, t.decimals)} ${t.ticker}`);
-      const more = tokens.length > 2 ? ` +${tokens.length - 2}` : '';
       const kasTxt = sompi == null ? '…' : `${formatAmount(sompi)} KAS`;
-      const tokTxt = bits.length ? bits.join(' · ') + more : 'Native KAS';
+      const face = w.avatar
+        ? `<img alt="" src="${w.avatar}">`
+        : youInitial(w.name);
       return `
       <button class="row wallet-row" type="button" data-switch-wallet="${esc(w.id)}">
-        <div class="glyph" style="background:${active ? 'rgba(48,209,88,.16)' : 'rgba(255,255,255,.08)'};color:${active ? 'var(--green)' : 'var(--label-2)'}">${active ? '●' : '○'}</div>
+        <div class="you-wava ${active ? 'on' : ''}">${face}</div>
         <div style="min-width:0;flex:1">
           <div class="title">${esc(w.name || 'Wallet')}</div>
-          <div class="sub">${esc(shortAddr(w.address, 12, 8))}</div>
+          <div class="sub">${esc(shortAddr(w.address, 10, 6))}</div>
         </div>
-        <div class="amt">
-          <b>${esc(kasTxt)}</b>
-          <em>${esc(tokTxt)}</em>
-        </div>
+        <div class="amt"><b>${esc(kasTxt)}</b></div>
         <span class="chev">${active ? 'Now' : 'Use'}</span>
       </button>`;
     }).join('') || `<div class="empty">No wallets</div>`;
-  }
-  const log = $('scorpion-log');
-  if (log && !log.childElementCount) {
-    log.innerHTML = `<div class="bubble ai">I am Scorpion. I translate any Kaspa tx into plain English — lock vs send vs sweep vs KRC-20. Paste a txid or ask <em>what was my last lock?</em></div>`;
   }
 }
 
@@ -1996,6 +2009,208 @@ async function linkKnsDomain(raw) {
   renderProfile();
   if (currentTab === 'home') renderHome();
   toast(rec.domain + ' linked');
+}
+
+function loadLook() {
+  try { return JSON.parse(localStorage.getItem(LOOK_KEY) || '{}') || {}; } catch { return {}; }
+}
+
+function saveLook(look) {
+  localStorage.setItem(LOOK_KEY, JSON.stringify(look || {}));
+}
+
+function applyWallpaper(dataUrl) {
+  const poster = document.querySelector('.bg-poster');
+  const video = $('bg-video');
+  const mobileBg = window.matchMedia('(max-width: 520px), (pointer: coarse)').matches;
+  if (dataUrl) {
+    if (poster) {
+      poster.src = dataUrl;
+      poster.classList.remove('hidden');
+    }
+    document.body.style.backgroundImage = `url("${dataUrl}")`;
+    if (video) {
+      try { video.pause(); } catch {}
+      video.classList.add('hidden');
+    }
+    return;
+  }
+  document.body.style.backgroundImage = '';
+  if (poster) poster.src = 'assets/bg.jpg';
+  if (video && !mobileBg) {
+    video.classList.remove('hidden');
+    video.play?.().catch(() => {});
+    if (poster) poster.classList.add('hidden');
+  } else if (poster) {
+    poster.classList.remove('hidden');
+  }
+}
+
+function applyLook() {
+  applyWallpaper(loadLook().wallpaper || '');
+}
+
+function readImageFile(file, { maxW = 960, maxH = 540, quality = 0.78, square = false } = {}) {
+  return new Promise((resolve, reject) => {
+    if (!file || !String(file.type || '').startsWith('image/')) {
+      reject(new Error('Choose an image'));
+      return;
+    }
+    if (file.size > 12 * 1024 * 1024) {
+      reject(new Error('Image is too large (12 MB max)'));
+      return;
+    }
+    const url = URL.createObjectURL(file);
+    const img = new Image();
+    img.onload = () => {
+      URL.revokeObjectURL(url);
+      const nw = img.naturalWidth || img.width;
+      const nh = img.naturalHeight || img.height;
+      const c = document.createElement('canvas');
+      const ctx = c.getContext('2d');
+      if (square) {
+        const s = Math.min(nw, nh);
+        const size = Math.min(maxW || 256, s);
+        c.width = size;
+        c.height = size;
+        ctx.drawImage(img, (nw - s) / 2, (nh - s) / 2, s, s, 0, 0, size, size);
+      } else {
+        const scale = Math.min(1, maxW / nw, maxH / nh);
+        c.width = Math.max(1, Math.round(nw * scale));
+        c.height = Math.max(1, Math.round(nh * scale));
+        ctx.drawImage(img, 0, 0, c.width, c.height);
+      }
+      resolve(c.toDataURL('image/jpeg', quality));
+    };
+    img.onerror = () => {
+      URL.revokeObjectURL(url);
+      reject(new Error('Could not read that image'));
+    };
+    img.src = url;
+  });
+}
+
+function recompressDataUrl(dataUrl, quality = 0.55, maxW = 720, maxH = 400) {
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    img.onload = () => {
+      const scale = Math.min(1, maxW / (img.width || 1), maxH / (img.height || 1));
+      const c = document.createElement('canvas');
+      c.width = Math.max(1, Math.round(img.width * scale));
+      c.height = Math.max(1, Math.round(img.height * scale));
+      c.getContext('2d').drawImage(img, 0, 0, c.width, c.height);
+      resolve(c.toDataURL('image/jpeg', quality));
+    };
+    img.onerror = () => reject(new Error('Could not compress image'));
+    img.src = dataUrl;
+  });
+}
+
+async function persistYouImage(kind, dataUrl) {
+  let url = dataUrl;
+  const trySave = () => {
+    if (kind === 'wallpaper') {
+      const look = loadLook();
+      look.wallpaper = url;
+      saveLook(look);
+      applyWallpaper(url);
+      return;
+    }
+    if (!wallet) throw new Error('No wallet');
+    wallet[kind] = url;
+    saveWallet();
+    paintYouLook();
+  };
+  try {
+    trySave();
+  } catch {
+    url = await recompressDataUrl(dataUrl, 0.5, kind === 'avatar' ? 160 : 640, kind === 'avatar' ? 160 : 280);
+    try {
+      trySave();
+    } catch {
+      if (kind !== 'wallpaper' && wallet) wallet[kind] = '';
+      throw new Error('Not enough space on this device for that image');
+    }
+  }
+  if (kind !== 'wallpaper') renderProfile();
+  toast(kind === 'avatar' ? 'Photo saved' : (kind === 'cover' ? 'Cover saved' : 'Wallpaper saved'));
+}
+
+async function pickYouImage(kind, file) {
+  if (!file) return;
+  const opts = kind === 'avatar'
+    ? { maxW: 256, maxH: 256, quality: 0.8, square: true }
+    : (kind === 'cover' ? { maxW: 900, maxH: 320, quality: 0.76 } : { maxW: 1280, maxH: 720, quality: 0.72 });
+  const dataUrl = await readImageFile(file, opts);
+  await persistYouImage(kind, dataUrl);
+}
+
+function openLookSheet() {
+  haptic();
+  const look = loadLook();
+  openSheet('Look', `
+    <p class="muted" style="text-align:left;padding:0 0 10px;">Photo and cover live on this wallet. Wallpaper is the app background on this device.</p>
+    <div class="kv"><span class="k">Photo</span><span class="v">${wallet?.avatar ? 'Custom' : 'Initial'}</span></div>
+    <div class="kv"><span class="k">Cover</span><span class="v">${wallet?.cover ? 'Custom' : 'Default'}</span></div>
+    <div class="kv"><span class="k">Wallpaper</span><span class="v">${look.wallpaper ? 'Custom' : 'KCC20 default'}</span></div>
+    <div class="btn-row" style="margin:12px 0 8px;">
+      <button class="btn btn-gold" id="look-photo" type="button">Photo</button>
+      <button class="btn btn-glass" id="look-cover" type="button">Cover</button>
+    </div>
+    <button class="btn btn-glass" id="look-wall" type="button" style="margin-bottom:8px;">App wallpaper</button>
+    <div class="btn-row">
+      <button class="btn btn-glass" id="look-reset-photos" type="button">Reset photos</button>
+      <button class="btn btn-glass" id="look-reset-wall" type="button">Reset wallpaper</button>
+    </div>
+  `, { confirm: 'Done', cancel: false });
+  $('look-photo').onclick = () => $('you-avatar-file')?.click();
+  $('look-cover').onclick = () => $('you-cover-file')?.click();
+  $('look-wall').onclick = () => $('you-wall-file')?.click();
+  $('look-reset-photos').onclick = () => {
+    if (!wallet) return;
+    wallet.avatar = '';
+    wallet.cover = '';
+    saveWallet();
+    paintYouLook();
+    renderProfile();
+    toast('Photos reset');
+    closeSheet();
+  };
+  $('look-reset-wall').onclick = () => {
+    const next = loadLook();
+    next.wallpaper = '';
+    saveLook(next);
+    applyWallpaper('');
+    toast('Wallpaper reset');
+    closeSheet();
+  };
+}
+
+function seedScorpionLog() {
+  const log = $('scorpion-log');
+  if (log && !log.childElementCount) {
+    log.innerHTML = `<div class="bubble ai">I am Scorpion. I translate any Kaspa tx into plain English — lock vs send vs sweep vs KRC-20. Paste a txid or ask <em>what was my last lock?</em></div>`;
+  }
+}
+
+function bindScorpionSheet() {
+  $('scorpion-send')?.addEventListener('click', () => sendScorpion().catch(err => toast(errText(err))));
+  $('scorpion-input')?.addEventListener('keydown', e => {
+    if (e.key === 'Enter') sendScorpion().catch(err => toast(errText(err)));
+  });
+  seedScorpionLog();
+}
+
+function openScorpionSheet() {
+  haptic();
+  openSheet('Scorpion', `
+    <div class="chat scorpion-chat" id="scorpion-log"></div>
+    <div class="chatbar" style="margin-top:10px;">
+      <input id="scorpion-input" placeholder="Paste a txid or ask “last lock”" autocomplete="off">
+      <button class="send-orb" id="scorpion-send" type="button">↑</button>
+    </div>
+  `, { confirm: 'Close', cancel: false });
+  bindScorpionSheet();
 }
 
 function openImportAnother() {
@@ -4529,7 +4744,23 @@ function bind() {
   click('profile-compound', openCompound);
   click('profile-pin', openPinSettings);
   click('profile-keys', openSettings);
+  click('profile-look', openLookSheet);
+  click('profile-scorpion', openScorpionSheet);
   click('profile-wipe', logout);
+  click('you-cover-btn', (e) => { e?.stopPropagation?.(); $('you-cover-file')?.click(); });
+  click('profile-avatar', () => $('you-avatar-file')?.click());
+  $('you-cover')?.addEventListener('click', (e) => {
+    if (e.target.closest('#you-cover-btn') || e.target.closest('#profile-avatar')) return;
+    $('you-cover-file')?.click();
+  });
+  const onYouFile = (kind) => (ev) => {
+    const file = ev.target.files && ev.target.files[0];
+    ev.target.value = '';
+    pickYouImage(kind, file).catch(err => toast(errText(err)));
+  };
+  $('you-avatar-file')?.addEventListener('change', onYouFile('avatar'));
+  $('you-cover-file')?.addEventListener('change', onYouFile('cover'));
+  $('you-wall-file')?.addEventListener('change', onYouFile('wallpaper'));
   $('pin-pad')?.addEventListener('click', e => {
     const b = e.target.closest('[data-pin]');
     if (b?.dataset.pin) pinPress(b.dataset.pin);
@@ -4545,7 +4776,7 @@ function bind() {
   $('scorpion-input')?.addEventListener('keydown', e => {
     if (e.key === 'Enter') sendScorpion().catch(err => toast(errText(err)));
   });
-  $('scorpion-hint')?.addEventListener('click', () => showPage('you'));
+  $('scorpion-hint')?.addEventListener('click', () => openScorpionSheet());
   $('holdings')?.addEventListener('click', e => {
     const lock = e.target.closest('[data-lock-holding]');
     if (lock?.dataset.lockHolding) {
@@ -4651,6 +4882,7 @@ async function init() {
     video?.play?.().catch(() => {});
     video?.addEventListener('playing', () => document.querySelector('.bg-poster')?.classList.add('hidden'));
   }
+  try { applyLook(); } catch {}
   const saved = loadStoredWallet();
   if (saved?.address && saved?.privKey) {
     wallet = migratePinOnto(saved);

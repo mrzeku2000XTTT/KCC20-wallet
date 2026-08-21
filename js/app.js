@@ -1,31 +1,31 @@
 import {
   loadCryptoLibs, generatePrivateKey, createKeypairFromHex,
   isValidKaspaAddress, shortAddr, hexToBytes, privKeyToHex, derivePublicKey, kaspaAddressFromPubkey, bytesToHex
-} from './crypto.js?v=67';
+} from './crypto.js?v=68';
 import {
   NATIVE_KAS, VAULT_PRODUCTS, loadWatchlist, addToken, removeToken,
   loadVaults, saveVault, updateVault, formatAmount, formatTokenUnits, tokenColor,
   fetchKcc20Portfolio, fetchKrc20Portfolio, fetchKcc20PortfolioMany, fetchKrc20PortfolioMany,
   krc20Logo, toTokenRaw, setVaultOwner, kcc20Identicon
-} from './kcc20.js?v=67';
-import { parseIntent, describeIntent, askFor, parseDurationField, interpretVaultChat, normalizeChat } from './intent.js?v=67';
-import { payloadFromAddress } from './script.js?v=67';
-import { explainTransaction, scorpionAnswer } from './scorpion.js?v=67';
+} from './kcc20.js?v=68';
+import { parseIntent, describeIntent, askFor, parseDurationField, interpretVaultChat, normalizeChat } from './intent.js?v=68';
+import { payloadFromAddress } from './script.js?v=68';
+import { explainTransaction, scorpionAnswer } from './scorpion.js?v=68';
 import {
   sendKas, fetchAddressUtxos, fetchAddressBalance, loadKaspaSdk,
   buildTimelockCovenant, buildEscrowCovenant, buildMultisigCovenant, currentDaa,
   pingPublicNode, sweepVault, toRpcTransaction, p2shSpendScript, planKasPayment, storageMassOk,
   compoundUtxos, sendKrc20, sendKcc20, loadKrc20Pending, lockKcc20Timelock, sweepKcc20Capsule,
   fetchOwnedUtxos
-} from './tx.js?v=67';
-import { kronMarkets, quoteKronTrade, executeKronTrade, formatKasSompi, lookupKronTick, tradeCostLines, attachKronLogos } from './kronTrade.js?v=67';
+} from './tx.js?v=68';
+import { kronMarkets, quoteKronTrade, executeKronTrade, formatKasSompi, lookupKronTick, tradeCostLines, attachKronLogos } from './kronTrade.js?v=68';
 import {
   migrateReceiveBook, ownedAddresses, deriveFreshReceiveAddress, ensureFreshReceive,
   markAddressUsed, currentReceive
-} from './receive.js?v=67';
-import { knsResolve, knsPrimary, knsDomainsFor, knsOwnerMatches, knsAppUrl, looksLikeKasDomain, normalizeKasDomain } from './kns.js?v=67';
+} from './receive.js?v=68';
+import { knsResolve, knsPrimary, knsDomainsFor, knsOwnerMatches, knsAppUrl, looksLikeKasDomain, normalizeKasDomain } from './kns.js?v=68';
 
-export const BUILD = '67';
+export const BUILD = '68';
 
 function errText(e) {
   if (e == null) return 'Unknown error';
@@ -1159,11 +1159,23 @@ function renderHoldings() {
   const rows = [kasRow, ...kccRows, ...krcRows, ...lockRows];
   const key = `${balanceSompi}|${kccHoldings.map(t => `${t.ticker}:${t.balance}:${t.image || ''}`).join(',')}|${krcHoldings.map(t => `${t.ticker}:${t.balance}`).join(',')}|${locked.map(v => v.address + ':' + (v.fundedSompi || 0)).join(',')}`;
   const box = $('holdings');
+  paintUtxoCount();
   if (box?.dataset.key === key) return;
   if (box) box.dataset.key = key;
   paintIfChanged(box, rows.join(''));
+}
+
+function asUtxoList(raw) {
+  if (Array.isArray(raw)) return raw;
+  if (Array.isArray(raw?.utxos)) return raw.utxos;
+  if (Array.isArray(raw?.result)) return raw.result;
+  return [];
+}
+
+function paintUtxoCount() {
   const n = Array.isArray(utxos) ? utxos.length : 0;
   if ($('utxo-count')) $('utxo-count').textContent = n === 1 ? '1 UTXO' : `${n} UTXOs`;
+  if ($('profile-utxos')) $('profile-utxos').textContent = n === 1 ? '1' : String(n);
 }
 
 function renderTokens() {
@@ -1912,7 +1924,8 @@ async function tickLive(full) {
     owned.forEach((o, i) => {
       if (o.role !== 'home' && Number(bals[i] || 0) > 0) markAddressUsed(wallet, o.address, true);
     });
-    if (uRes.ok) utxos = await uRes.json() || [];
+    if (uRes.ok) utxos = asUtxoList(await uRes.json());
+    paintUtxoCount();
     saveWallet();
     const balChanged = seenBalance != null && nextBal !== seenBalance;
     if (seenBalance != null && nextBal > seenBalance) {

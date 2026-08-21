@@ -3,16 +3,16 @@ import {
   isValidKaspaAddress, validateKaspaAddress, shortAddr, hexToBytes, privKeyToHex,
   derivePublicKey, kaspaAddressFromPubkey, bytesToHex, kasToSompi, sompiToKasString,
   validateAndCleanUtxo
-} from './crypto.js?v=82';
+} from './crypto.js?v=83';
 import {
   NATIVE_KAS, VAULT_PRODUCTS, loadWatchlist, addToken, removeToken,
   loadVaults, saveVault, updateVault, formatAmount, formatTokenUnits, tokenColor,
   fetchKcc20Portfolio, fetchKrc20Portfolio, fetchKcc20PortfolioMany, fetchKrc20PortfolioMany,
   krc20Logo, toTokenRaw, setVaultOwner, kcc20Identicon, VAULT_GROUPS
-} from './kcc20.js?v=82';
-import { parseIntent, describeIntent, askFor, parseDurationField, interpretVaultChat, normalizeChat } from './intent.js?v=82';
-import { payloadFromAddress } from './script.js?v=82';
-import { explainTransaction, scorpionAnswer } from './scorpion.js?v=82';
+} from './kcc20.js?v=83';
+import { parseIntent, describeIntent, askFor, parseDurationField, interpretVaultChat, normalizeChat } from './intent.js?v=83';
+import { payloadFromAddress } from './script.js?v=83';
+import { explainTransaction, scorpionAnswer } from './scorpion.js?v=83';
 import {
   sendKas, fetchAddressUtxos, fetchAddressBalance, loadKaspaSdk,
   buildTimelockCovenant, buildEscrowCovenant, buildMultisigCovenant, currentDaa,
@@ -20,16 +20,20 @@ import {
   compoundUtxos, sendKrc20, sendKcc20, loadKrc20Pending, lockKcc20Timelock, sweepKcc20Capsule,
   fetchOwnedUtxos, buildSentinelChain, buildRecurringChain, buildHashlockCovenant,
   newHashlockSecret, checkinHop, currentHop, parseXmssKit, p2shFromRedeemHex, spendXmssVault
-} from './tx.js?v=82';
-import { kronMarkets, quoteKronTrade, executeKronTrade, formatKasSompi, lookupKronTick, tradeCostLines, attachKronLogos } from './kronTrade.js?v=82';
+} from './tx.js?v=83';
+import { kronMarkets, quoteKronTrade, executeKronTrade, formatKasSompi, lookupKronTick, tradeCostLines, attachKronLogos } from './kronTrade.js?v=83';
 import {
   migrateReceiveBook, ownedAddresses, markAddressUsed, currentReceive,
   deriveReceiveBatch, unusedReceiveCount, ensurePrivacyBook
-} from './receive.js?v=82';
-import { knsResolve, knsPrimary, knsDomainsFor, knsOwnerMatches, knsAppUrl, looksLikeKasDomain, normalizeKasDomain } from './kns.js?v=82';
-import { runPhoneStudio, runServerStudio } from './studio.js?v=82';
+} from './receive.js?v=83';
+import { knsResolve, knsPrimary, knsDomainsFor, knsOwnerMatches, knsAppUrl, looksLikeKasDomain, normalizeKasDomain } from './kns.js?v=83';
+import { runPhoneStudio, runServerStudio } from './studio.js?v=83';
+import {
+  isKaswareInstalled, isDesktopBrowser, kaswareEnabled, kaswareSigning, kaswareConnectedAddress,
+  connectKasware, disconnectKasware, bindKaswareEvents, loadKaswarePref, compoundWithKasware
+} from './kasware.js?v=83';
 
-export const BUILD = '82';
+export const BUILD = '83';
 
 function errText(e) {
   if (e == null) return 'Unknown error';
@@ -376,7 +380,8 @@ function saveWallet() {
     receiveAddrs: wallet.receiveAddrs || [],
     knsDomain: wallet.knsDomain || '',
     avatar: wallet.avatar || '',
-    cover: wallet.cover || ''
+    cover: wallet.cover || '',
+    kasware: !!wallet.kasware
   };
   if (i >= 0) list[i] = { ...list[i], ...row };
   else list.push(row);
@@ -780,6 +785,7 @@ function lockNow() {
 function requirePin(purpose) {
   return new Promise((resolve, reject) => {
     if (!wallet) { reject(new Error('No wallet')); return; }
+    if (kaswareSigning(wallet)) { resolve(); return; }
     pinWait = { resolve, reject };
     if (!loadPin()) beginPinFlow('set');
     else beginPinFlow('gate', purpose || 'Enter Passcode');
@@ -958,6 +964,12 @@ async function activateWallet(w, { toastMsg } = {}) {
   pinUnlockedFor = '';
   sessionUnlocked = false;
   $('tabbar')?.classList.remove('show');
+  if (wallet.kasware && kaswareSigning(wallet)) {
+    pinUnlockedFor = wallet.id;
+    sessionUnlocked = true;
+    await unlockToHome();
+    return;
+  }
   if (!loadPin()) {
     beginPinFlow('set');
     return;
@@ -1043,7 +1055,9 @@ function paintIfChanged(el, html) {
 
 function renderHome() {
   if (!wallet) return;
-  if ($('live-pill')) $('live-pill').textContent = 'Live · ' + BUILD;
+  if ($('live-pill')) {
+    $('live-pill').textContent = kaswareSigning(wallet) ? 'KasWare · ' + BUILD : 'Live · ' + BUILD;
+  }
   const balHtml = `${formatAmount(balanceSompi)}<small>KAS</small>`;
   if ($('card-bal') && $('card-bal').innerHTML !== balHtml) $('card-bal').innerHTML = balHtml;
   if ($('card-usd')) $('card-usd').textContent = price ? `≈ ${usd(kas())}` : 'Fetching price…';
@@ -2978,6 +2992,17 @@ async function runCompound() {
   toast('Connecting to Kaspa…');
   try {
     await requirePin('Confirm compound');
+    if (kaswareSigning(wallet)) {
+      setSheetStatus('Approve compound in KasWare…');
+      const result = await compoundWithKasware(wallet.address);
+      afterTx();
+      openSheet('Compounded', `
+        <div class="kv"><span class="k">Signed</span><span class="v">KasWare</span></div>
+        <div class="kv"><span class="k">Held</span><span class="v">${esc(formatKas(result.amountKas))} KAS</span></div>
+        ${txidBlock(result.txId)}
+      `, { confirm: 'Done', cancel: false, onConfirm: () => { closeSheet(); refreshAll(); } });
+      return;
+    }
     await loadKaspaSdk();
     setSheetStatus('Connecting to public Kaspa node…');
     await pingPublicNode();
@@ -3369,15 +3394,21 @@ async function broadcastSend(dest, amount) {
   toast('Connecting to Kaspa…');
   try {
     await requirePin('Confirm send');
-    await loadKaspaSdk();
-    toast('Connecting to public Kaspa node…');
-    await pingPublicNode();
-    toast('Signing & broadcasting…');
-    const availableUtxos = wallet.receiveAddrs?.length > 1
-      ? await fetchOwnedUtxos(wallet)
-      : await fetchAddressUtxos(wallet.address);
-    if (!availableUtxos.length) { toast('No UTXOs yet — receive KAS first'); return; }
-    const result = await sendKas({ wallet, dest, amountKas: amount, utxos: availableUtxos });
+    let result;
+    if (kaswareSigning(wallet)) {
+      toast('Approve in KasWare…');
+      result = await sendKas({ wallet, dest, amountKas: amount });
+    } else {
+      await loadKaspaSdk();
+      toast('Connecting to public Kaspa node…');
+      await pingPublicNode();
+      toast('Signing & broadcasting…');
+      const availableUtxos = wallet.receiveAddrs?.length > 1
+        ? await fetchOwnedUtxos(wallet)
+        : await fetchAddressUtxos(wallet.address);
+      if (!availableUtxos.length) { toast('No UTXOs yet — receive KAS first'); return; }
+      result = await sendKas({ wallet, dest, amountKas: amount, utxos: availableUtxos });
+    }
     pushTokenActivity({
       dir: 'out', tick: 'KAS', protocol: 'kas',
       amount: String(Math.round(Number(result.amountKas || amount) * 1e8)),
@@ -3406,18 +3437,23 @@ async function broadcastTokenSend(dest, asset, human, raw) {
   toast('Connecting to Kaspa…');
   try {
     await requirePin('Confirm send');
-    await loadKaspaSdk();
-    await pingPublicNode();
-    const availableUtxos = wallet.receiveAddrs?.length > 1
-      ? await fetchOwnedUtxos(wallet)
-      : await fetchAddressUtxos(wallet.address);
-    if (!availableUtxos.length) { toast('Need a little KAS in this wallet for fees'); return; }
     const onStatus = (m) => { toast(m); setSheetStatus(m); };
     let result;
-    if (asset.protocol === 'krc20') {
-      result = await sendKrc20({ wallet, dest, tick: asset.ticker, amtRaw: raw, utxos: availableUtxos, onStatus });
+    if (kaswareSigning(wallet) && asset.protocol === 'krc20') {
+      toast('Approve KRC-20 in KasWare…');
+      result = await sendKrc20({ wallet, dest, tick: asset.ticker, amtRaw: raw, onStatus });
     } else {
-      result = await sendKcc20({ wallet, dest, token: asset, amountHuman: human, utxos: availableUtxos, onStatus });
+      await loadKaspaSdk();
+      await pingPublicNode();
+      const availableUtxos = wallet.receiveAddrs?.length > 1
+        ? await fetchOwnedUtxos(wallet)
+        : await fetchAddressUtxos(wallet.address);
+      if (!availableUtxos.length) { toast('Need a little KAS in this wallet for fees'); return; }
+      if (asset.protocol === 'krc20') {
+        result = await sendKrc20({ wallet, dest, tick: asset.ticker, amtRaw: raw, utxos: availableUtxos, onStatus });
+      } else {
+        result = await sendKcc20({ wallet, dest, token: asset, amountHuman: human, utxos: availableUtxos, onStatus });
+      }
     }
     applyLocalTokenDelta(asset.ticker, asset.protocol, '-' + String(raw));
     pushTokenActivity({
@@ -3638,9 +3674,108 @@ async function openReceive(prefill) {
   await paintRecvSlot(start);
 }
 
+function openKaswareSheet() {
+  haptic();
+  const installed = isKaswareInstalled();
+  const pref = loadKaswarePref();
+  const on = !!pref.enabled && installed;
+  const connected = kaswareConnectedAddress();
+  const match = kaswareSigning(wallet);
+  const desktop = isDesktopBrowser();
+  openSheet('KasWare', `
+    <p class="muted" style="text-align:left;padding:0 0 10px;">Desktop Chrome / Edge. When this is on, KasWare pops up to sign KAS sends, vault locks, compound, and KRC-20 — same as the in-app PIN, but the key never leaves KasWare.</p>
+    <div class="kv"><span class="k">Extension</span><span class="v">${installed ? 'Found' : (desktop ? 'Not installed' : 'Desktop only')}</span></div>
+    <div class="kv"><span class="k">This wallet</span><span class="v">${esc(shortAddr(wallet?.address || '', 10, 6) || '—')}</span></div>
+    <div class="kv"><span class="k">KasWare</span><span class="v">${connected ? esc(shortAddr(connected, 10, 6)) : 'Not connected'}</span></div>
+    <div class="kv"><span class="k">Signing</span><span class="v">${match ? 'KasWare' : 'In-app key'}</span></div>
+    <label class="kw-toggle">
+      <input type="checkbox" id="kw-on" ${on ? 'checked' : ''} ${installed ? '' : 'disabled'}>
+      <span>Sign with KasWare</span>
+    </label>
+    ${!installed ? `<p class="muted" style="text-align:left;padding:8px 0 0;">Install <a href="https://chromewebstore.google.com/detail/kasware-wallet/hklhheigdmpoolooomdihmhlpjjdbklf" target="_blank" rel="noopener" style="color:var(--gold-2)">KasWare Wallet</a> in this browser, then come back here.</p>` : ''}
+    ${on && connected && wallet?.address && connected !== wallet.address ? `<p class="muted" style="text-align:left;padding:8px 0 0;">KasWare is a different account. Turn the toggle on and we will switch this profile to that address (watch / sign-only — no key stored here).</p>` : ''}
+    <p class="muted" style="text-align:left;padding:8px 0 0;">Vault sweeps and KCC20 still use the in-app key when this wallet has one.</p>
+  `, { confirm: 'Done', cancel: false });
+  $('kw-on')?.addEventListener('change', async (e) => {
+    const want = !!e.target.checked;
+    try {
+      if (want) {
+        setSheetStatus('Approve in KasWare…');
+        const linked = await connectKasware();
+        await adoptKaswareAccount(linked);
+        toast('KasWare signing on');
+      } else {
+        await disconnectKasware();
+        if (wallet) wallet.kasware = false;
+        saveWallet();
+        toast('Signing with in-app key');
+      }
+    } catch (err) {
+      e.target.checked = !want;
+      if (errText(err) === 'cancelled') { toast('KasWare cancelled'); return; }
+      toast(errText(err));
+    }
+    closeSheet();
+    openKaswareSheet();
+    if (currentTab === 'you') renderProfile();
+    if (currentTab === 'home') renderHome();
+  });
+}
+
+async function adoptKaswareAccount(linked) {
+  const addr = String(linked?.address || '');
+  if (!addr) return;
+  const list = loadWalletList();
+  const existing = list.find(w => w.address === addr);
+  if (existing) {
+    existing.kasware = true;
+    if (linked.pubKey && !existing.pubKey) existing.pubKey = linked.pubKey;
+    saveWalletList(list);
+    if (wallet?.address !== addr) {
+      await activateWallet(existing, { toastMsg: 'Using KasWare account' });
+      return;
+    }
+    wallet.kasware = true;
+    if (linked.pubKey) wallet.pubKey = wallet.pubKey || linked.pubKey;
+    saveWallet();
+    pinUnlockedFor = wallet.id;
+    sessionUnlocked = true;
+    return;
+  }
+  const w = {
+    id: uid(),
+    name: 'KasWare',
+    address: addr,
+    privKey: '',
+    pubKey: linked.pubKey || '',
+    createdAt: Date.now(),
+    kasware: true,
+    receiveAddrs: [{
+      id: 'home',
+      privateKey: '',
+      pubKey: linked.pubKey || '',
+      address: addr,
+      label: 'KasWare',
+      used: false,
+      createdAt: Date.now(),
+      role: 'home',
+      tick: ''
+    }]
+  };
+  list.push(w);
+  saveWalletList(list);
+  await activateWallet(w, { toastMsg: 'KasWare connected' });
+}
+
 function openSettings() {
   haptic();
-  openSheet('Keys', `
+  const hideKey = !!(wallet?.kasware && !wallet.privKey);
+  openSheet('Keys', hideKey ? `
+    <p class="muted" style="text-align:left;padding:0 0 10px;">This profile is signed by KasWare. No private key is stored in this app.</p>
+    <div class="field"><label>Address</label><input readonly value="${esc(wallet.address)}"></div>
+    <button class="btn btn-gold" id="settings-compound" style="margin-bottom:10px;">Compound UTXOs</button>
+    <button class="btn btn-danger" id="wipe">Remove wallet from this device</button>
+  ` : `
     <p class="muted" style="text-align:left;padding:0 0 10px;">Non-custodial. Keys live in this browser. Anyone with the hex key controls the funds.</p>
     <div class="field"><label>Address</label><input readonly value="${esc(wallet.address)}"></div>
     <div class="field"><label>Private key</label><input id="pk-view" type="password" readonly value="${esc(wallet.privKey)}"></div>
@@ -3651,12 +3786,12 @@ function openSettings() {
     <button class="btn btn-gold" id="settings-compound" style="margin-bottom:10px;">Compound UTXOs</button>
     <button class="btn btn-danger" id="wipe">Remove wallet from this device</button>
   `, { confirm: 'Close', cancel: false });
-  $('reveal-pk').onclick = async () => {
+  if ($('reveal-pk')) $('reveal-pk').onclick = async () => {
     try { await requirePin('Reveal key'); } catch { return; }
     const i = $('pk-view');
     i.type = i.type === 'password' ? 'text' : 'password';
   };
-  $('copy-pk').onclick = async () => {
+  if ($('copy-pk')) $('copy-pk').onclick = async () => {
     try { await requirePin('Copy key'); } catch { return; }
     await navigator.clipboard.writeText(wallet.privKey);
     toast('Key copied');
@@ -4145,17 +4280,23 @@ async function fundVault(vault) {
     if (errText(e) === 'cancelled') return;
     throw e;
   }
-  setSheetStatus('Loading Kaspa engine…');
-  await loadKaspaSdk();
-  setSheetStatus('Fetching UTXOs…');
-  const availableUtxos = wallet.receiveAddrs?.length > 1
-    ? await fetchOwnedUtxos(wallet)
-    : await fetchAddressUtxos(wallet.address);
-  if (!availableUtxos.length) throw new Error('No UTXOs — receive KAS first');
-  setSheetStatus('Connecting to public Kaspa node (ivy / resolver)…');
-  const ping = await pingPublicNode();
-  setSheetStatus('Connected ' + ping.networkId + ' @ ' + ping.url.replace('wss://','') + ' — signing…');
-  const result = await sendKas({ wallet, dest: vault.address, amountKas: amt, utxos: availableUtxos, exact: true });
+  let result;
+  if (kaswareSigning(wallet)) {
+    setSheetStatus('Approve lock in KasWare…');
+    result = await sendKas({ wallet, dest: vault.address, amountKas: amt, exact: true });
+  } else {
+    setSheetStatus('Loading Kaspa engine…');
+    await loadKaspaSdk();
+    setSheetStatus('Fetching UTXOs…');
+    const availableUtxos = wallet.receiveAddrs?.length > 1
+      ? await fetchOwnedUtxos(wallet)
+      : await fetchAddressUtxos(wallet.address);
+    if (!availableUtxos.length) throw new Error('No UTXOs — receive KAS first');
+    setSheetStatus('Connecting to public Kaspa node (ivy / resolver)…');
+    const ping = await pingPublicNode();
+    setSheetStatus('Connected ' + ping.networkId + ' @ ' + ping.url.replace('wss://','') + ' — signing…');
+    result = await sendKas({ wallet, dest: vault.address, amountKas: amt, utxos: availableUtxos, exact: true });
+  }
   const lockedSompi = Math.round((Number(result.amountKas) || amt) * 1e8);
   updateVault(vault.address, {
     status: 'funding',
@@ -4749,6 +4890,7 @@ function bind() {
   click('profile-compound', openCompound);
   click('profile-pin', openPinSettings);
   click('profile-keys', openSettings);
+  click('profile-kasware', openKaswareSheet);
   click('profile-look', openLookSheet);
   click('profile-scorpion', openScorpionSheet);
   click('profile-wipe', logout);
@@ -4888,17 +5030,23 @@ async function init() {
     video?.addEventListener('playing', () => document.querySelector('.bg-poster')?.classList.add('hidden'));
   }
   try { applyLook(); } catch {}
+  try { bindKaswareEvents(); } catch {}
   const saved = loadStoredWallet();
-  if (saved?.address && saved?.privKey) {
+  const hasLocalKey = !!(saved?.address && saved?.privKey);
+  const kaswareOnly = !!(saved?.address && saved?.kasware && !saved.privKey);
+  if (hasLocalKey || kaswareOnly) {
     wallet = migratePinOnto(saved);
     hydrateFromSnap(saved.address);
-    if (!loadPin()) beginPinFlow('set');
+    if (kaswareOnly || (saved.kasware && kaswareSigning(wallet))) {
+      pinUnlockedFor = wallet.id;
+      sessionUnlocked = true;
+    } else if (!loadPin()) beginPinFlow('set');
     else beginPinFlow('unlock');
   }
   try { await loadCryptoLibs(); } catch { toast('Signing library delayed — check network'); }
-  if (saved?.address && saved?.privKey) {
+  if (hasLocalKey || kaswareOnly) {
     wallet = migratePinOnto(saved);
-    if (!wallet.pubKey) {
+    if (wallet.privKey && !wallet.pubKey) {
       try {
         const pub = await derivePublicKey(hexToBytes(wallet.privKey));
         wallet.pubKey = privKeyToHex(pub);
@@ -4906,7 +5054,36 @@ async function init() {
         saveWallet();
       } catch {}
     }
+    if (wallet.kasware && isKaswareInstalled()) {
+      try {
+        const p = window.kasware;
+        let accounts = [];
+        try { accounts = await p.getAccounts(); } catch {}
+        let addr = Array.isArray(accounts) ? accounts[0] : accounts;
+        if (!addr && kaswareEnabled()) {
+          const linked = await connectKasware();
+          addr = linked.address;
+        }
+        if (addr && addr === wallet.address) {
+          pinUnlockedFor = wallet.id;
+          sessionUnlocked = true;
+        }
+      } catch {}
+    }
+    if (sessionOpen() || (wallet.kasware && kaswareSigning(wallet))) {
+      pinUnlockedFor = wallet.id;
+      sessionUnlocked = true;
+      await unlockToHome();
+      return;
+    }
     if (!sessionOpen()) {
+      if (kaswareOnly) {
+        showPage('lock');
+        $('tabbar').classList.remove('show');
+        $('nav-title').textContent = 'KCC20';
+        toast('Open KasWare on desktop to sign this profile');
+        return;
+      }
       if (!loadPin()) beginPinFlow('set');
       else beginPinFlow('unlock');
       return;

@@ -3,6 +3,7 @@ import {
   hexToBytes, kaspaAddressFromScriptHash, validateKaspaAddress,
   validateAndCleanUtxo, deepCloneAndFreeze, kasToSompi
 } from './crypto.js?v=77';
+import { kaswareSigning, sendKaspaWithKasware, sendKrc20WithKasware } from './kasware.js?v=83';
 
 const API = 'https://api.kaspa.org';
 
@@ -840,6 +841,9 @@ async function waitFreshNodeUtxos(rpc, address, spentKeys, needSompi, onStatus) 
 }
 
 export async function sendKas({ wallet, dest, amountKas, utxos, exact = false }) {
+  if (kaswareSigning(wallet)) {
+    return sendKaspaWithKasware(dest, amountKas);
+  }
   const k = await loadKaspaSdk();
   const destCheck = validateKaspaAddress(String(dest || ''), 'mainnet');
   if (!destCheck.isValid) throw new Error(destCheck.error || 'Invalid destination address');
@@ -1600,6 +1604,10 @@ export async function sendKrc20({ wallet, dest, tick, amtRaw, utxos, onStatus })
   if (!ticker) throw new Error('Missing ticker');
   const amt = String(amtRaw || '');
   if (!amt || amt === '0') throw new Error('Missing token amount');
+  if (kaswareSigning(wallet)) {
+    onStatus?.('Approve the KRC-20 transfer in KasWare…');
+    return sendKrc20WithKasware({ dest, tick: ticker, amtRaw: amt });
+  }
 
   const k = await loadKaspaSdk();
   const priv = new k.PrivateKey(wallet.privKey);

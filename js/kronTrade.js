@@ -1,7 +1,8 @@
 /* KRON DEX trades via @kronsdk/kron-sdk (v0.17.2). Quotes + builders from the SDK;
    templates from the CORS-open token descriptor; live heads from idx.kron.technology. */
 import * as kron from '../vendor/kron-sdk/index.js';
-import { loadKaspaSdk, connectPublicNode, fetchAddressUtxos } from './tx.js?v=77';
+import { loadKaspaSdk, connectPublicNode, fetchAddressUtxos } from './tx.js?v=84';
+import { kaswareSigning, signPsktWithKasware, fetchKaswareUtxos } from './kasware.js?v=84';
 
 const IDX = 'https://idx.kron.technology/v1/kcc20';
 const REG = 'https://api.kron.technology';
@@ -540,6 +541,23 @@ function signFundingP2pk(k, tx, priv, indexes) {
   tx.inputs = inputs;
 }
 
+export function mergeFundingSignatures(original, signed, indexes) {
+  const origIns = [...original.inputs];
+  const signedIns = signed.inputs || [];
+  for (const idx of indexes) {
+    const hex = hexish(signedIns[idx]?.signatureScript);
+    if (!hex || hex.length < 20) throw new Error('KasWare did not sign funding input ' + idx);
+    origIns[idx].signatureScript = hex;
+    origIns[idx].sigOpCount = 0;
+  }
+  original.inputs = origIns;
+  return original;
+}
+
+export function kronPsktPlan(asm) {
+  return kron.spend.toPsktJson(asm, 1);
+}
+
 function assembleSpend(k, spend, fundingEntries, changeAddress, networkFee) {
   const covInputs = spend.inputs.map(ci => inputFromUtxo(k, {
     txid: ci.transactionId,
@@ -685,7 +703,14 @@ export async function executeKronTrade({ wallet, tick, side, amount, utxos, onSt
   }
 
   onStatus?.('Selecting KAS UTXOs…');
-  const rest = utxos?.length ? utxos : await fetchAddressUtxos(wallet.address);
+  let rest = utxos?.length ? utxos : [];
+  if (kaswareSigning(wallet)) {
+    try {
+      const kwUtxos = await fetchKaswareUtxos(wallet.address);
+      if (kwUtxos.length) rest = kwUtxos;
+    } catch {}
+  }
+  if (!rest.length) rest = await fetchAddressUtxos(wallet.address);
   const fundingAll = restFunding(rest, wallet.address);
   const needGuess = (quoted.total || quoted.fee || 0n) + DUST + 80_000_000n;
   const funding = [];
@@ -704,13 +729,23 @@ export async function executeKronTrade({ wallet, tick, side, amount, utxos, onSt
   let asm = assembleSpend(k, spend, funding, wallet.address, 10_000n);
   const fee = kron.spend.estimateNativeFee(k, 'mainnet', asm, 100);
   asm = assembleSpend(k, spend, funding, wallet.address, fee);
-  const priv = new k.PrivateKey(wallet.privKey);
-  signFundingP2pk(k, asm.transaction, priv, asm.fundingInputIndexes);
+  const external = kaswareSigning(wallet);
+  if (external) {
+    onStatus?.('Approve KRON trade in KasWare…');
+    const plan = kronPsktPlan(asm);
+    const signedJson = await signPsktWithKasware(plan.txJsonString, plan.signInputs);
+    const signedTx = k.Transaction.deserializeFromSafeJSON(signedJson);
+    mergeFundingSignatures(asm.transaction, signedTx, asm.fundingInputIndexes);
+  } else {
+    if (!wallet.privKey) throw new Error('Turn on KasWare in Settings to sign this trade');
+    const priv = new k.PrivateKey(wallet.privKey);
+    signFundingP2pk(k, asm.transaction, priv, asm.fundingInputIndexes);
+  }
   onStatus?.('Broadcasting KRON trade…');
   const submitted = await rpc.submitTransaction({ transaction: asm.transaction, allowOrphan: false });
   const txId = submitted?.transactionId || submitted || asm.transaction.id;
   if (!txId) throw new Error('Node did not return a transaction id');
-  return { txId, fee, quote: quoted };
+  return { txId, fee, quote: quoted, signer: external ? 'kasware' : 'local' };
 }
 
 export function formatKasSompi(n) {

@@ -3,16 +3,16 @@ import {
   isValidKaspaAddress, validateKaspaAddress, shortAddr, hexToBytes, privKeyToHex,
   derivePublicKey, kaspaAddressFromPubkey, bytesToHex, kasToSompi, sompiToKasString,
   validateAndCleanUtxo
-} from './crypto.js?v=83';
+} from './crypto.js?v=84';
 import {
   NATIVE_KAS, VAULT_PRODUCTS, loadWatchlist, addToken, removeToken,
   loadVaults, saveVault, updateVault, formatAmount, formatTokenUnits, tokenColor,
   fetchKcc20Portfolio, fetchKrc20Portfolio, fetchKcc20PortfolioMany, fetchKrc20PortfolioMany,
   krc20Logo, toTokenRaw, setVaultOwner, kcc20Identicon, VAULT_GROUPS
-} from './kcc20.js?v=83';
-import { parseIntent, describeIntent, askFor, parseDurationField, interpretVaultChat, normalizeChat } from './intent.js?v=83';
-import { payloadFromAddress } from './script.js?v=83';
-import { explainTransaction, scorpionAnswer } from './scorpion.js?v=83';
+} from './kcc20.js?v=84';
+import { parseIntent, describeIntent, askFor, parseDurationField, interpretVaultChat, normalizeChat } from './intent.js?v=84';
+import { payloadFromAddress } from './script.js?v=84';
+import { explainTransaction, scorpionAnswer } from './scorpion.js?v=84';
 import {
   sendKas, fetchAddressUtxos, fetchAddressBalance, loadKaspaSdk,
   buildTimelockCovenant, buildEscrowCovenant, buildMultisigCovenant, currentDaa,
@@ -20,20 +20,20 @@ import {
   compoundUtxos, sendKrc20, sendKcc20, loadKrc20Pending, lockKcc20Timelock, sweepKcc20Capsule,
   fetchOwnedUtxos, buildSentinelChain, buildRecurringChain, buildHashlockCovenant,
   newHashlockSecret, checkinHop, currentHop, parseXmssKit, p2shFromRedeemHex, spendXmssVault
-} from './tx.js?v=83';
-import { kronMarkets, quoteKronTrade, executeKronTrade, formatKasSompi, lookupKronTick, tradeCostLines, attachKronLogos } from './kronTrade.js?v=83';
+} from './tx.js?v=84';
+import { kronMarkets, quoteKronTrade, executeKronTrade, formatKasSompi, lookupKronTick, tradeCostLines, attachKronLogos } from './kronTrade.js?v=84';
 import {
   migrateReceiveBook, ownedAddresses, markAddressUsed, currentReceive,
   deriveReceiveBatch, unusedReceiveCount, ensurePrivacyBook
-} from './receive.js?v=83';
-import { knsResolve, knsPrimary, knsDomainsFor, knsOwnerMatches, knsAppUrl, looksLikeKasDomain, normalizeKasDomain } from './kns.js?v=83';
-import { runPhoneStudio, runServerStudio } from './studio.js?v=83';
+} from './receive.js?v=84';
+import { knsResolve, knsPrimary, knsDomainsFor, knsOwnerMatches, knsAppUrl, looksLikeKasDomain, normalizeKasDomain } from './kns.js?v=84';
+import { runPhoneStudio, runServerStudio } from './studio.js?v=84';
 import {
   isKaswareInstalled, isDesktopBrowser, kaswareEnabled, kaswareSigning, kaswareConnectedAddress,
   connectKasware, disconnectKasware, bindKaswareEvents, loadKaswarePref, compoundWithKasware
-} from './kasware.js?v=83';
+} from './kasware.js?v=84';
 
-export const BUILD = '83';
+export const BUILD = '84';
 
 function errText(e) {
   if (e == null) return 'Unknown error';
@@ -2896,7 +2896,7 @@ async function reviewTrade() {
        <div class="kv"><span class="k">You receive</span><span class="v">${esc(formatKasSompi(q.net))} KAS</span></div>
        <div class="kv"><span class="k">Protocol fees</span><span class="v">${esc(formatKasSompi(q.fee))} KAS</span></div>`;
   openSheet('Review ' + q.tick + ' ' + q.side, buyBits, {
-    confirm: 'Pay with PIN',
+    confirm: kaswareSigning(wallet) ? 'Approve in KasWare' : 'Pay with PIN',
     gold: true,
     onConfirm: async () => {
       try {
@@ -2964,6 +2964,7 @@ async function runTrade({ tick, side, amount, quote }) {
     openSheet('Swap sent', `
       <div class="kv"><span class="k">Market</span><span class="v">${esc(tick)}</span></div>
       <div class="kv"><span class="k">Side</span><span class="v">${esc(side)}</span></div>
+      <div class="kv"><span class="k">Signed</span><span class="v">${result.signer === 'kasware' ? 'KasWare' : 'This device'}</span></div>
       ${q?.side === 'buy' ? `<div class="kv"><span class="k">Received</span><span class="v">${esc(formatTokenUnits(q.tokenOut, q.decimals))} ${esc(q.tick)}</span></div>` : ''}
       <div class="kv"><span class="k">Network fee</span><span class="v">${esc(formatKasSompi(result.fee))} KAS</span></div>
       ${txidBlock(result.txId)}
@@ -3694,7 +3695,7 @@ function openKaswareSheet() {
     </label>
     ${!installed ? `<p class="muted" style="text-align:left;padding:8px 0 0;">Install <a href="https://chromewebstore.google.com/detail/kasware-wallet/hklhheigdmpoolooomdihmhlpjjdbklf" target="_blank" rel="noopener" style="color:var(--gold-2)">KasWare Wallet</a> in this browser, then come back here.</p>` : ''}
     ${on && connected && wallet?.address && connected !== wallet.address ? `<p class="muted" style="text-align:left;padding:8px 0 0;">KasWare is a different account. Turn the toggle on and we will switch this profile to that address (watch / sign-only — no key stored here).</p>` : ''}
-    <p class="muted" style="text-align:left;padding:8px 0 0;">Vault sweeps and KCC20 still use the in-app key when this wallet has one.</p>
+    <p class="muted" style="text-align:left;padding:8px 0 0;">When this is on, KAS sends, vault locks, compound, KRC-20, and KRON buys/sells pop KasWare. Vault sweeps still use the in-app key when this wallet has one.</p>
   `, { confirm: 'Done', cancel: false });
   $('kw-on')?.addEventListener('change', async (e) => {
     const want = !!e.target.checked;

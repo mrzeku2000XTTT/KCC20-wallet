@@ -177,6 +177,58 @@ export async function sendKrc20WithKasware({ dest, tick, amtRaw }) {
   return { txId: revealId, revealId, commitTxId: commitId };
 }
 
+export async function signPsktWithKasware(txJsonString, signInputs) {
+  const p = kaswareProvider();
+  if (!p) throw new Error('KasWare is not installed');
+  if (typeof p.signPskt !== 'function') {
+    throw new Error('This KasWare version cannot sign PSKT. Update KasWare to sign KRON trades.');
+  }
+  const inputs = (signInputs || []).map(s => ({
+    index: Number(s.index),
+    sighashType: Number(s.sighashType ?? 1)
+  }));
+  let res;
+  try {
+    res = await p.signPskt({
+      txJsonString: String(txJsonString || ''),
+      options: { signInputs: inputs }
+    });
+  } catch (e) { rejectUser(e); }
+  if (typeof res === 'string' && res) return res;
+  if (res && typeof res === 'object') {
+    return res.txJsonString || res.signedTx || res.tx || JSON.stringify(res);
+  }
+  throw new Error('KasWare did not return a signed transaction');
+}
+
+export async function fetchKaswareUtxos(address) {
+  const p = kaswareProvider();
+  if (!p?.getUtxoEntries) return [];
+  let rows = [];
+  try {
+    rows = address ? await p.getUtxoEntries(address) : await p.getUtxoEntries();
+  } catch {
+    try { rows = await p.getUtxoEntries(); } catch { return []; }
+  }
+  return (Array.isArray(rows) ? rows : []).map(u => {
+    const e = u.entry || u;
+    const out = u.outpoint || e.outpoint || {};
+    const spk = u.scriptPublicKey || e.scriptPublicKey || {};
+    const script = typeof spk === 'string' ? spk : (spk.script || spk.scriptPublicKey || '');
+    const txid = out.transactionId || out.transaction_id;
+    if (!txid || !script) return null;
+    return {
+      outpoint: { transactionId: String(txid), index: Number(out.index || 0) },
+      utxoEntry: {
+        amount: e.amount ?? u.amount,
+        scriptPublicKey: { version: Number(spk.version || 0), script },
+        blockDaaScore: e.blockDaaScore ?? u.blockDaaScore ?? 0,
+        isCoinbase: !!(e.isCoinbase ?? u.isCoinbase)
+      }
+    };
+  }).filter(Boolean);
+}
+
 export async function compoundWithKasware(address) {
   const p = kaswareProvider();
   if (!p) throw new Error('KasWare is not installed');

@@ -21,8 +21,8 @@ import {
   compoundUtxos, sendKrc20, sendKcc20, loadKrc20Pending, lockKcc20Timelock, sweepKcc20Capsule,
   fetchOwnedUtxos, buildSentinelChain, buildRecurringChain, buildHashlockCovenant,
   newHashlockSecret, checkinHop, currentHop, parseXmssKit, p2shFromRedeemHex, spendXmssVault,
-  disconnectRpc
-} from './tx.js?v=100';
+  disconnectRpc, buildDcaDrips, sendKasMany, releaseDcaDrip
+} from './tx.js?v=104';
 import { kronMarkets, quoteKronTrade, executeKronTrade, formatKasSompi, lookupKronTick, tradeCostLines, attachKronLogos, kronCandles } from './kronTrade.js?v=101';
 import {
   migrateReceiveBook, ownedAddresses, markAddressUsed, currentReceive,
@@ -45,7 +45,7 @@ import {
 } from './atrade.js?v=100';
 import { SCORPION_MEMORY } from './scorpionMemory.js?v=100';
 
-export const BUILD = '103';
+export const BUILD = '104';
 
 const TOKEN_FALLBACK_LOGO = 'assets/ttt.png';
 
@@ -4460,10 +4460,11 @@ function paintDcaPlan() {
   if (!(slice >= 0.5)) { box.textContent = 'Each buy must be at least 0.5 KAS into the market.'; return; }
   if (!(budget >= slice)) { box.textContent = 'Budget must cover at least one buy.'; return; }
   if (buys < 1) { box.textContent = 'Budget ÷ each buy must be at least 1 buy.'; return; }
-  const extra = (slice + 1.5) * buys;
-  box.innerHTML = `<b>${esc(tick)}</b> · ${buys} buys of ${slice} KAS ${esc(dcaEveryLabel(every))}.
-    Market total ${budget.toFixed(2)} KAS. Keep about ${extra.toFixed(1)} KAS in this wallet (cell + network on each slice).
-    This tab stays unlocked. We never custody the coins.`;
+  const n = Math.min(8, buys);
+  const lockKas = n * (slice + 0.01);
+  box.innerHTML = `<b>${esc(tick)}</b> · ${n} time capsule${n === 1 ? '' : 's'} of ${slice} KAS ${esc(dcaEveryLabel(every))}.
+    You lock ~${lockKas.toFixed(2)} KAS on-chain now (one signature). Each capsule drips that slice into this wallet, then we buy ${esc(tick)}.
+    Max 8 capsules. We never custody the coins.`;
   paintDcaLive();
 }
 
@@ -4477,8 +4478,8 @@ function paintDcaLive() {
   const left = Math.max(0, Number(job.nextAt || 0) - Date.now());
   const wait = left > 60000 ? Math.ceil(left / 60000) + 'm' : Math.ceil(left / 1000) + 's';
   el.innerHTML = `
-    <b>${running ? 'DCA on' : 'DCA paused'} · ${esc(job.tick)}</b>
-    <p>${job.buys || 0} / ${job.maxBuys} buys · spent ${(job.spentKas || 0).toFixed(2)} / ${Number(job.budgetKas || 0)} KAS
+    <b>${running ? 'DCA locked' : 'DCA paused'} · ${esc(job.tick)}</b>
+    <p>${job.buys || 0} / ${job.maxBuys} buys · ${(job.vaults || []).filter(v => v.swept).length} capsules opened
       · ${running ? ('next in ' + wait) : (job.last || 'stopped')}</p>
     <button class="btn btn-glass" id="dca-stop" type="button" style="margin-top:8px;height:40px;">Stop DCA</button>`;
   $('dca-stop')?.addEventListener('click', stopDca);
@@ -4496,7 +4497,7 @@ function stopDca() {
 
 function resumeDcaIfAny() {
   const job = loadDcaJob();
-  if (job?.on && sessionOpen()) startDcaLoop();
+  if (job?.on) startDcaLoop();
   paintDcaHome();
 }
 
@@ -4511,40 +4512,107 @@ function startDcaLoop() {
 async function startDcaFromForm() {
   if (isTestnet()) { toast('Home DCA is mainnet KCC20. Use COOK Agent on TN10.'); return; }
   if (!wallet) { toast('Unlock a wallet'); return; }
-  const { tick, budget, slice, every, buys } = dcaPlanBits();
+  const { tick, slice, every, buys } = dcaPlanBits();
+  const n = Math.min(8, buys);
   if (!validTick(tick)) { toast('Look up a ticker first'); return; }
   if (!(slice >= 0.5)) { toast('Each buy at least 0.5 KAS'); return; }
-  if (buys < 1) { toast('Budget must cover at least one buy'); return; }
+  if (n < 1) { toast('Budget must cover at least one buy'); return; }
   try { await lookupKronTick(tick); }
   catch (e) { toast(errText(e)); return; }
+  hydrateNativeKey(wallet);
+  if (!wallet.pubKey && hexKey(wallet.privKey)) {
+    try {
+      const pub = await derivePublicKey(hexToBytes(wallet.privKey));
+      wallet.pubKey = privKeyToHex(pub);
+    } catch {}
+  }
+  if (!wallet.pubKey) { toast('Need a public key on this wallet to lock capsules'); return; }
   if (kaswareEnabled()) {
-    toast('KasWare will pop for each DCA buy');
+    try { await ensureKaswareSigner(wallet); }
+    catch (e) { toast(errText(e)); return; }
+    toast('Approve the lock in KasWare — one signature for every capsule');
   } else {
-    hydrateNativeKey(wallet);
-    if (!hexKey(wallet?.privKey)) {
+    if (!hexKey(wallet.privKey)) {
       toast('Import the 64-hex key to sign natively, or turn KasWare on');
       return;
     }
-    try { await requirePin('Start DCA on ' + tick); }
+    try { await requirePin('Lock DCA capsules for ' + tick); }
     catch (e) { if (errText(e) === 'cancelled') return; toast(errText(e)); return; }
+  }
+  toast('Building ' + n + ' time capsules…');
+  const sliceSompi = kasToSompi(slice);
+  const built = await buildDcaDrips({
+    ownerPubHex: wallet.pubKey,
+    destAddr: wallet.address,
+    sliceSompi,
+    periods: n,
+    intervalMs: every
+  });
+  const outputs = built.drips.map(d => ({ address: d.address, amount: BigInt(d.value) }));
+  toast('Locking ' + n + ' capsules on Kaspa…');
+  const utxosNow = await fetchAddressUtxos(wallet.address).catch(() => []);
+  const fund = await sendKasMany({
+    wallet,
+    outputs,
+    utxos: utxosNow,
+    signWithKasware: kaswareEnabled()
+  });
+  for (const d of built.drips) {
+    saveVault({
+      type: 'dca',
+      name: 'DCA ' + tick,
+      address: d.address,
+      scriptHex: d.redeemHex,
+      redeemHex: d.redeemHex,
+      spkHex: d.spkHex,
+      unlockDaa: d.unlockDaa,
+      unlockAt: d.unlockAt,
+      destAmt: d.destAmt,
+      nextAmt: d.nextAmt,
+      hops: [d],
+      hopIndex: 0,
+      params: {
+        beneficiary: wallet.address,
+        dcaTick: tick,
+        sliceKas: slice,
+        amountKas: Number(d.value) / 1e8
+      },
+      status: 'locked',
+      fundedSompi: Number(d.value),
+      fundTxId: fund.txId
+    });
   }
   saveDcaJob({
     on: true,
+    mode: 'covenant',
     tick,
     sliceKas: slice,
-    budgetKas: budget,
-    maxBuys: buys,
+    budgetKas: n * slice,
+    maxBuys: n,
     buys: 0,
     spentKas: 0,
     intervalMs: every,
-    nextAt: Date.now() + 4000,
-    last: 'armed — first buy in a few seconds',
+    fundTxId: fund.txId,
+    vaults: built.drips.map(d => ({
+      address: d.address,
+      redeemHex: d.redeemHex,
+      scriptHex: d.redeemHex,
+      unlockDaa: d.unlockDaa,
+      unlockAt: d.unlockAt,
+      destAmt: d.destAmt,
+      value: d.value,
+      swept: false,
+      bought: false
+    })),
+    nextAt: built.drips[0]?.unlockAt || (Date.now() + every),
+    last: 'locked on-chain · first capsule ' + dcaEveryLabel(every),
     startedAt: Date.now(),
     walletId: wallet.id,
     address: wallet.address
   });
+  afterTx();
   startDcaLoop();
-  toast('DCA armed on ' + tick);
+  toast('DCA locked on-chain for ' + tick);
   paintDcaPlan();
 }
 
@@ -4552,65 +4620,89 @@ async function tickDca() {
   if (dcaBusy) return;
   const job = loadDcaJob();
   if (!job?.on) { if (dcaTimer) { clearInterval(dcaTimer); dcaTimer = null; } paintDcaLive(); paintDcaHome(); return; }
-  if (!sessionOpen() || document.visibilityState !== 'visible') {
-    job.last = 'waiting — keep this tab unlocked';
+  if (document.visibilityState !== 'visible') {
+    job.last = 'tab in background — capsules wait on-chain';
     saveDcaJob(job);
     paintDcaLive();
     paintDcaHome();
     return;
   }
   if (job.walletId && wallet?.id && job.walletId !== wallet.id) {
-    job.last = 'paused — switch back to the wallet that armed DCA';
+    job.last = 'paused — switch back to the wallet that locked DCA';
     saveDcaJob(job);
-    paintDcaLive();
-    paintDcaHome();
-    return;
-  }
-  if (Date.now() < Number(job.nextAt || 0)) {
-    paintDcaLive();
-    paintDcaHome();
-    return;
-  }
-  if ((job.buys || 0) >= Number(job.maxBuys || 0) || (job.spentKas || 0) + job.sliceKas > Number(job.budgetKas || 0) + 1e-9) {
-    saveDcaJob({ ...job, on: false, last: 'budget complete' });
-    if (dcaTimer) { clearInterval(dcaTimer); dcaTimer = null; }
-    toast(job.tick + ' DCA finished');
     paintDcaLive();
     paintDcaHome();
     return;
   }
   dcaBusy = true;
   try {
-    hydrateNativeKey(wallet);
-    job.last = 'buying ' + job.sliceKas + ' KAS of ' + job.tick;
-    saveDcaJob(job);
-    paintDcaLive();
-    await executeKronTrade({
-      wallet,
-      tick: job.tick,
-      side: 'buy',
-      amount: String(job.sliceKas),
-      utxos: await fetchAddressUtxos(wallet.address).catch(() => []),
-      forceKasware: kaswareEnabled(),
-      onStatus: (m) => toast(m)
-    });
-    const next = loadDcaJob() || job;
-    next.buys = (next.buys || 0) + 1;
-    next.spentKas = (next.spentKas || 0) + next.sliceKas;
-    next.nextAt = Date.now() + Number(next.intervalMs || 3600000);
-    next.last = 'bought slice ' + next.buys + '/' + next.maxBuys;
-    if (next.buys >= next.maxBuys || next.spentKas + next.sliceKas > next.budgetKas + 1e-9) {
-      next.on = false;
-      next.last = 'budget complete';
+    let daa = 0;
+    try { daa = await currentDaa(); } catch {}
+    const vaults = job.vaults || [];
+    for (const drip of vaults) {
+      if (drip.swept) continue;
+      const due = (daa && drip.unlockDaa && daa >= Number(drip.unlockDaa))
+        || (drip.unlockAt && Date.now() >= Number(drip.unlockAt));
+      if (!due) continue;
+      let utxosV = [];
+      try { utxosV = await fetchAddressUtxos(drip.address); } catch {}
+      if (!utxosV.length) continue;
+      const vault = {
+        type: 'dca',
+        address: drip.address,
+        scriptHex: drip.scriptHex || drip.redeemHex,
+        hops: [{ ...drip, redeemHex: drip.redeemHex, address: drip.address, destAmt: drip.destAmt, nextAmt: drip.destAmt, unlockDaa: drip.unlockDaa }],
+        hopIndex: 0,
+        unlockDaa: drip.unlockDaa,
+        destAmt: drip.destAmt,
+        params: { beneficiary: job.address || wallet.address }
+      };
+      const rel = await releaseDcaDrip({ wallet, vault, utxos: utxosV });
+      drip.swept = true;
+      drip.buyDue = true;
+      drip.sweepTx = rel.txId || '';
+      job.last = 'capsule dripped · ' + (rel.txId || '').slice(0, 10);
+      saveDcaJob(job);
+      toast(job.tick + ' capsule opened');
+      afterTx();
+      break;
+    }
+    const dueBuy = (job.vaults || []).find(d => d.swept && d.buyDue && !d.bought);
+    if (dueBuy && sessionOpen()) {
+      hydrateNativeKey(wallet);
+      job.last = 'buying ' + job.sliceKas + ' KAS of ' + job.tick;
+      saveDcaJob(job);
+      await executeKronTrade({
+        wallet,
+        tick: job.tick,
+        side: 'buy',
+        amount: String(job.sliceKas),
+        utxos: await fetchAddressUtxos(wallet.address).catch(() => []),
+        forceKasware: kaswareEnabled(),
+        onStatus: (m) => toast(m)
+      });
+      dueBuy.bought = true;
+      dueBuy.buyDue = false;
+      job.buys = (job.buys || 0) + 1;
+      job.spentKas = (job.spentKas || 0) + Number(job.sliceKas || 0);
+      job.last = 'bought slice ' + job.buys + '/' + job.maxBuys;
+      afterTx();
+      toast(job.tick + ' DCA ' + job.buys + '/' + job.maxBuys);
+    } else if (dueBuy && !sessionOpen()) {
+      job.last = 'KAS dripped — unlock to buy ' + job.tick;
+    }
+    const nextClosed = (job.vaults || []).filter(d => !d.swept).sort((a, b) => Number(a.unlockAt || 0) - Number(b.unlockAt || 0))[0];
+    job.nextAt = nextClosed?.unlockAt || job.nextAt;
+    const allDone = (job.vaults || []).length && (job.vaults || []).every(d => d.swept && d.bought);
+    if (allDone) {
+      job.on = false;
+      job.last = 'budget complete';
       if (dcaTimer) { clearInterval(dcaTimer); dcaTimer = null; }
     }
-    saveDcaJob(next);
-    afterTx();
-    toast(next.tick + ' DCA ' + next.buys + '/' + next.maxBuys);
+    saveDcaJob(job);
   } catch (e) {
     const j = loadDcaJob() || job;
     j.last = errText(e);
-    j.nextAt = Date.now() + Math.max(60000, Number(j.intervalMs || 0) / 2);
     saveDcaJob(j);
     toast('DCA: ' + errText(e));
   } finally {
@@ -4639,7 +4731,7 @@ function paintDcaHome() {
   if (!bar) return;
   const left = Math.max(0, Number(job.nextAt || 0) - Date.now());
   const wait = left > 60000 ? Math.ceil(left / 60000) + 'm' : Math.ceil(left / 1000) + 's';
-  bar.innerHTML = `<span class="w-kas" aria-hidden="true"></span><span><b>DCA ${esc(job.tick)}</b><span>${job.buys || 0}/${job.maxBuys} buys · next ${wait} · tap to open</span></span>`;
+  bar.innerHTML = `<span class="w-kas" aria-hidden="true"></span><span><b>DCA ${esc(job.tick)}</b><span>${job.buys || 0}/${job.maxBuys} on-chain · next ${wait} · tap</span></span>`;
 }
 
 function hideTradeScreen() {
@@ -4775,17 +4867,17 @@ async function reviewTrade() {
     const plan = dcaPlanBits();
     if (!validTick(plan.tick)) { toast('Look up a ticker first'); return; }
     if (!(plan.slice >= 0.5) || plan.buys < 1) { toast('Set budget and each buy'); return; }
-    const extra = (plan.slice + 1.5) * plan.buys;
+    const n = Math.min(8, plan.buys);
+    const lockKas = n * (plan.slice + 0.01);
     openSheet('Review DCA ' + plan.tick, `
       <div class="kv"><span class="k">Token</span><span class="v">${esc(plan.tick)}</span></div>
-      <div class="kv"><span class="k">Each buy</span><span class="v">${plan.slice} KAS into market</span></div>
-      <div class="kv"><span class="k">How often</span><span class="v">${esc(dcaEveryLabel(plan.every))}</span></div>
-      <div class="kv"><span class="k">Buys</span><span class="v">${plan.buys}</span></div>
-      <div class="kv"><span class="k">Market budget</span><span class="v">${plan.budget.toFixed(2)} KAS</span></div>
-      <div class="kv"><span class="k">Wallet should hold</span><span class="v">~${extra.toFixed(1)} KAS</span></div>
-      <p class="muted" style="text-align:left;padding-top:8px;">DCA splits your budget into equal buys over time. This app never holds the funds. Native PIN signs each slice (one PIN to start). KasWare pops each slice if that toggle is on. Keep this tab unlocked — if you lock or close it, the next buy waits; missed buys do not pile up.</p>
+      <div class="kv"><span class="k">Capsules</span><span class="v">${n} × ${plan.slice} KAS</span></div>
+      <div class="kv"><span class="k">Opens</span><span class="v">${esc(dcaEveryLabel(plan.every))}</span></div>
+      <div class="kv"><span class="k">Lock now</span><span class="v">~${lockKas.toFixed(2)} KAS on-chain</span></div>
+      <div class="kv"><span class="k">Sign</span><span class="v">${kaswareEnabled() ? 'KasWare once' : 'Native PIN once'}</span></div>
+      <p class="muted" style="text-align:left;padding-top:8px;">Your budget is locked in Kaspa time capsules (CLTV). This app never holds it. Each capsule opens on schedule and can drip to this wallet without another PIN. Then we buy ${esc(plan.tick)} (Native key stays in this session, or KasWare pops that swap if toggled on). Max 8 capsules.</p>
     `, {
-      confirm: kaswareEnabled() ? 'Start DCA (KasWare)' : 'Start DCA with PIN',
+      confirm: kaswareEnabled() ? 'Lock capsules (KasWare)' : 'Lock capsules with PIN',
       gold: true,
       onConfirm: async () => { closeSheet(); await startDcaFromForm(); }
     });
@@ -5029,7 +5121,7 @@ async function maybeAutoUnlock() {
     const daa = await currentDaa().catch(() => lastDaa || 0);
     lastDaa = daa || lastDaa;
     lastDaaAt = Date.now();
-    const mine = loadVaults().filter(v => v.address && (Number(v.unlockDaa) > 0 || Number(v.unlockAt) > 0 || isHopVault(v)));
+    const mine = loadVaults().filter(v => v.address && v.type !== 'dca' && (Number(v.unlockDaa) > 0 || Number(v.unlockAt) > 0 || isHopVault(v)));
     for (const v of mine) {
       if (!vaultDue(v, daa)) continue;
       const lastTry = autoSweepTriedAt.get(v.address) || 0;

@@ -223,7 +223,7 @@ function versionedSpk(scriptHex) {
 function finishP2sh(k, sb, extra = {}) {
   const redeemHex = sb.toString();
   const p2sh = sb.createPayToScriptHashScript();
-  const addr = k.addressFromScriptPublicKey(p2sh, 'mainnet');
+  const addr = k.addressFromScriptPublicKey(p2sh, networkId());
   if (!addr) throw new Error('SDK did not produce a P2SH address');
   return { address: String(addr), redeemHex, spkHex: hexish(p2sh.script), ...extra };
 }
@@ -332,6 +332,116 @@ export async function buildRecurringChain({
     extraStep: pay
   });
   return { ...chain, type: 'recurring', paySompi: String(pay), payeeAddr };
+}
+
+export async function buildDcaDrips({ ownerPubHex, destAddr, sliceSompi, periods, intervalMs }) {
+  const k = await loadKaspaSdk();
+  const n = Math.max(1, Math.min(8, Number(periods) || 1));
+  const daaNow = await currentDaa();
+  const window = Math.max(10, Math.round(Number(intervalMs || 3600000) / 1000 * 10));
+  const destSpk = spkHexFromAddr(k, destAddr);
+  const destAmt = BigInt(sliceSompi);
+  const fund = destAmt + HOP_FEE;
+  const drips = [];
+  for (let i = 0; i < n; i++) {
+    const unlockDaa = daaNow + (i + 1) * window;
+    const hop = buildEpochRedeem(k, {
+      ownerPubHex,
+      unlockDaa,
+      nextSpkHex: destSpk,
+      nextAmt: destAmt,
+      destSpkHex: destSpk,
+      destAmt
+    });
+    drips.push({
+      ...hop,
+      type: 'dca',
+      hopIndex: i,
+      value: String(fund),
+      destAmt: String(destAmt),
+      nextAmt: String(destAmt),
+      unlockAt: Date.now() + (i + 1) * Number(intervalMs || 3600000)
+    });
+  }
+  return { drips, daaNow, windowDaa: window, fundSompi: fund };
+}
+
+export async function releaseDcaDrip({ wallet, vault, utxos }) {
+  return timeoutHop({ wallet, vault, utxos });
+}
+
+export async function sendKasMany({ wallet, outputs, utxos, signWithKasware = false }) {
+  const k = await loadKaspaSdk();
+  const external = !!(signWithKasware || (kaswareSigning(wallet) && !wallet.privKey));
+  const dests = (outputs || []).map(o => ({
+    address: String(o.address),
+    amount: typeof o.amount === 'bigint' ? o.amount : BigInt(o.amount)
+  })).filter(o => o.address && o.amount > 0n);
+  if (!dests.length) throw new Error('No outputs to send');
+  let entries = restUtxosToEntries(utxos || [], wallet.address)
+    .map(e => ({ ...e, privKey: e.privKey || wallet.privKey || '', redeemHex: e.redeemHex || '' }));
+  if (!entries.length) throw new Error('No UTXOs yet — receive KAS first');
+  entries = [...entries].sort((a, b) => (a.amount < b.amount ? 1 : -1));
+  const totalOut = dests.reduce((a, o) => a + o.amount, 0n);
+  const { rpc, url } = await connectPublicNode();
+  const net = networkId();
+  const feeRate = await nodeFeeRate(rpc);
+  let pendingList = [];
+  let lastErr = '';
+  try {
+    const built = await k.createTransactions({
+      entries,
+      outputs: dests,
+      changeAddress: wallet.address,
+      priorityFee: 0n,
+      feeRate,
+      sigOpCount: 1,
+      networkId: net
+    });
+    pendingList = built.transactions || [];
+  } catch (e) {
+    lastErr = errText(e);
+  }
+  if (!pendingList.length) {
+    const fee = 800_000n + BigInt(dests.length) * 50_000n;
+    const ins = [];
+    let sum = 0n;
+    for (const e of entries) {
+      ins.push(e);
+      sum += e.amount;
+      if (sum >= totalOut + fee) break;
+    }
+    if (sum < totalOut + fee) throw new Error(lastErr || 'Not enough KAS to lock the DCA capsules');
+    const change = sum - totalOut - fee;
+    const outs = dests.map(o => ({ address: o.address, amount: o.amount }));
+    if (change > 200_000n) outs.push({ address: wallet.address, amount: change });
+    const tx = k.createTransaction(ins, outs, 0n, undefined, 1);
+    pendingList = [{ transaction: tx }];
+    entries = ins;
+  }
+  const priv = wallet.privKey && !external ? new k.PrivateKey(wallet.privKey) : null;
+  let txId = null;
+  let paidFee = 0n;
+  for (let p = 0; p < pendingList.length; p++) {
+    const tx = pendingList[p].transaction;
+    tx.version = 1;
+    prepInputs(tx, { sigOpCount: 0, computeBudget: 10 });
+    try { k.updateTransactionMass(net, tx); } catch {}
+    if (external) {
+      const json = tx.serializeToSafeJSON();
+      const signInputs = [...tx.inputs].map((_, i) => ({ index: i, sighashType: 1 }));
+      const signedJson = await signPsktWithKasware(json, signInputs);
+      const signed = k.Transaction.deserializeFromSafeJSON(signedJson);
+      txId = await submitSignedRpc(k, rpc, url, signed, { sigOpCount: 0, computeBudget: 10, lockTime: 0 });
+    } else {
+      if (!priv) throw new Error('Need Native key or KasWare to fund DCA capsules');
+      const scripts = meetToccataFee(k, tx, priv, entries, 0n, -1);
+      txId = await submitSignedRpc(k, rpc, url, tx, { sigOpCount: 0, computeBudget: 10, lockTime: 0, scripts });
+    }
+    paidFee = txInputSum(tx, entries) - txOutputSum(tx);
+  }
+  if (!txId) throw new Error(lastErr || 'DCA fund broadcast failed');
+  return { txId, feeKas: Number(paidFee) / 1e8, outputs: dests.length, node: url };
 }
 
 export async function buildHashlockCovenant({
@@ -1344,7 +1454,7 @@ export async function timeoutHop({ wallet, vault, utxos }) {
 
 export async function sweepVault({ wallet, vault, utxos, extraPrivKey, escrowRelease = false, secretHex = '' }) {
   const type = vault?.type || '';
-  if (type === 'sentinel' || type === 'recurring') {
+  if (type === 'sentinel' || type === 'recurring' || type === 'dca') {
     return timeoutHop({ wallet, vault, utxos });
   }
   const k = await loadKaspaSdk();

@@ -12,7 +12,7 @@
   <link rel="icon" href="assets/icon.png">
   <title>KCC20 Wallet</title>
   <meta http-equiv="Cache-Control" content="no-store, no-cache, must-revalidate">
-  <link rel="stylesheet" href="css/app.css?v=103">
+  <link rel="stylesheet" href="css/app.css?v=104">
 </head>
 <body>
   <img class="bg-poster" src="assets/bg.jpg" alt="">
@@ -569,12 +569,12 @@
             <summary>How DCA works (read this)</summary>
             <ol class="dca-steps">
               <li><b>Pick any KCC20</b> — KRON, KROSHI, KKDAG, or another ticker on KRON.</li>
-              <li><b>Set a budget</b> — total KAS you are willing to put into the token over time.</li>
-              <li><b>Set each buy</b> — how much KAS goes into the market every time (1 KAS is typical).</li>
-              <li><b>Set how often</b> — every 15 minutes, hour, 4 hours, or day.</li>
-              <li><b>Keep this wallet unlocked</b> — DCA runs on this device. We never hold your funds. Native PIN signs each slice; KasWare pops each slice if that toggle is on.</li>
+              <li><b>Lock the budget on-chain</b> — you PIN or KasWare-sign <em>once</em>. That KAS goes into time capsules (Kaspa CLTV covenants). This app never holds it.</li>
+              <li><b>Capsules open on your schedule</b> — each slice unlocks after 15m / 1h / 4h / 1 day. The script can pay you after time with no extra signature.</li>
+              <li><b>Each open slice buys the token</b> — when a capsule drips into this wallet, we buy that slice. Max 8 capsules per plan (covenant mass).</li>
+              <li><b>Unlock only for the AMM buy</b> — drip-out does not need PIN. The KRON swap still needs Native PIN once at start (key stays in this session) or KasWare if that toggle is on.</li>
             </ol>
-            <p class="muted" style="text-align:left;padding-top:6px;">Each buy also needs ~1.5 KAS extra in the wallet for the token cell and network fee. If this tab is locked or closed, DCA waits — it will not catch up a pile of missed buys.</p>
+            <p class="muted" style="text-align:left;padding-top:6px;">If you close the tab, capsules wait on-chain until you open the app again (even locked we can broadcast the drip). Token buys run when this wallet is unlocked. You can stop and reclaim unopened capsules.</p>
           </details>
           <div class="at-row">
             <label class="field grow"><span>Budget (KAS total)</span>
@@ -660,7 +660,7 @@
     })();
   </script>
   <script type="module">
-    import('./js/app.js?v=103').catch(function (err) {
+    import('./js/app.js?v=104').catch(function (err) {
       console.error(err);
       var phone = document.getElementById('phone');
       var d = document.createElement('div');

@@ -319,6 +319,11 @@ img { display: block; max-width: 100%; }
   color: var(--gold-2); font-size: 11px; font-weight: 750;
 }
 .at-tokens-btn.on { background: rgba(212,176,122,0.2); }
+#tok-seg { margin: 0 0 8px; flex-shrink: 0; }
+#tok-kron, #tok-kcom, #tok-scorpion {
+  flex: 1; min-height: 0; overflow-y: auto; display: flex; flex-direction: column;
+}
+#tok-kron.hidden, #tok-kcom.hidden, #tok-scorpion.hidden { display: none !important; }
 .at-src { margin: 2px 0 6px; flex-shrink: 0; }
 .at-note, .at-tiny { font-size: 10px; color: var(--label-2); line-height: 1.3; margin: 0; flex-shrink: 0; }
 .at-help {

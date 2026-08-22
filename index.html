@@ -12,7 +12,7 @@
   <link rel="icon" href="assets/icon.png">
   <title>KCC20 Wallet</title>
   <meta http-equiv="Cache-Control" content="no-store, no-cache, must-revalidate">
-  <link rel="stylesheet" href="css/app.css?v=91">
+  <link rel="stylesheet" href="css/app.css?v=92">
 </head>
 <body>
   <img class="bg-poster" src="assets/bg.jpg" alt="">
@@ -107,7 +107,7 @@
               <button data-at="agent" type="button">Agent</button>
             </div>
             <button class="at-tokens-btn" id="at-kw-btn" type="button">Native</button>
-            <button class="at-tokens-btn" id="at-tokens-btn" type="button">Tokens</button>
+            <button class="at-tokens-btn" id="at-tokens-btn" type="button">TOKENS</button>
           </div>
           <p class="at-note" id="at-note">Covenants hold the funds. This app never custodied them. Sign with this wallet or KasWare.</p>
 
@@ -201,25 +201,40 @@
           </div>
 
           <div id="at-holdings" class="hidden">
-            <div class="boost-card glass" id="boost-card">
-              <div class="boost-top">
-                <div>
-                  <b>Boost a token</b>
-                  <p>Send 0.15 KAS to yourself to feature it here for 24h. Points stack.</p>
-                </div>
-                <button class="boost-go" id="boost-open" type="button">Boost</button>
-              </div>
-              <div class="boost-rail" id="boost-rail"></div>
+            <div class="seg" id="tok-seg">
+              <button class="on" data-tok="kron" type="button">KRON</button>
+              <button data-tok="kcom" type="button">K.COM</button>
+              <button data-tok="scorpion" type="button">Scorpion</button>
             </div>
-            <div class="section-label">Native</div>
-            <div class="glass list" id="token-native"></div>
-            <div class="section-label">KCC20 · KRON</div>
-            <div class="glass list" id="token-list"></div>
-            <div class="section-label">KRC-20 · KasWare / Kasplex</div>
-            <div class="glass list" id="token-krc20"></div>
-            <div class="section-label">Watchlist</div>
-            <div class="glass list" id="token-watch"></div>
-            <button class="btn btn-gold" id="btn-add-token" style="margin-top:8px;">Watch a token</button>
+            <div id="tok-kron">
+              <div class="section-label">KCC20 · KRON</div>
+              <div class="glass list" id="token-list"></div>
+            </div>
+            <div id="tok-kcom" class="hidden">
+              <div class="section-label">KaspaCom · Cook</div>
+              <div class="glass list" id="token-kcom"></div>
+            </div>
+            <div id="tok-scorpion" class="hidden">
+              <div class="boost-card glass" id="boost-card">
+                <div class="boost-top">
+                  <div>
+                    <b>Boost a token</b>
+                    <p>Send 0.15 KAS to yourself to feature it here for 24h. Points stack.</p>
+                  </div>
+                  <button class="boost-go" id="boost-open" type="button">Boost</button>
+                </div>
+                <div class="boost-rail" id="boost-rail"></div>
+              </div>
+              <div class="section-label">Launched here</div>
+              <div class="glass list" id="token-launched"></div>
+              <div class="section-label">Native</div>
+              <div class="glass list" id="token-native"></div>
+              <div class="section-label">KRC-20 · KasWare / Kasplex</div>
+              <div class="glass list" id="token-krc20"></div>
+              <div class="section-label">Watchlist</div>
+              <div class="glass list" id="token-watch"></div>
+              <button class="btn btn-gold" id="btn-add-token" style="margin-top:8px;">Watch a token</button>
+            </div>
           </div>
         </section>
 
@@ -577,7 +592,7 @@
     })();
   </script>
   <script type="module">
-    import('./js/app.js?v=91').catch(function (err) {
+    import('./js/app.js?v=92').catch(function (err) {
       console.error(err);
       var phone = document.getElementById('phone');
       var d = document.createElement('div');

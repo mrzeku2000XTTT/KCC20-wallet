@@ -38,10 +38,11 @@ import {
   cookMarkets, cookQuote, cookWrappers, pickWrappedMarketId,
   cookDeploy, cookBuildOrder, cookFillOrder, cookSweep, cookWrap, cookMint,
   extractSigning, signAndBroadcastPskt, cookTokenId, isTestnetAddr,
-  loadAgentJob, saveAgentJob, sompiToKas, kasToSompiNum
-} from './atrade.js?v=91';
+  loadAgentJob, saveAgentJob, sompiToKas, kasToSompiNum,
+  rememberLaunch, loadLaunched, cookOwnerBalances
+} from './atrade.js?v=92';
 
-export const BUILD = '91';
+export const BUILD = '92';
 
 function errText(e) {
   if (e == null) return 'Unknown error';
@@ -225,6 +226,7 @@ let atPane = 'book';
 let atSrc = 'kron';
 let atCook = null;
 let lastCookToken = null;
+let tokPane = 'kron';
 let agentTimer = null;
 let agentBusy = false;
 let qrRaf = 0;
@@ -1401,7 +1403,47 @@ function renderTokens() {
       </div>`).join('')
       : `<div class="empty">Optional: watch a ticker that the indexer has not listed yet.</div>`;
   }
+  const launched = $('token-launched');
+  if (launched) {
+    const mine = loadLaunched().filter(t => !t.network || t.network === networkId());
+    launched.innerHTML = mine.length
+      ? mine.map(t => `
+        <button class="row token-row" type="button" data-launched="${esc(t.tokenId || t.tick)}">
+          <div class="dot" style="background:rgba(212,176,122,.16);color:var(--gold-2)">${esc((t.tick || '?').slice(0, 3))}</div>
+          <div>
+            <div class="title">${esc(t.tick || 'TOKEN')}</div>
+            <div class="sub">${esc(t.name || 'Launched here')} · ${esc(t.network === 'testnet-10' ? 'TN10' : 'mainnet')}</div>
+          </div>
+          <div class="amt"><b>${t.txId ? esc(String(t.txId).slice(0, 8)) : 'on-chain'}</b></div>
+        </button>`).join('')
+      : `<div class="empty">Tokens you launch from this app land here. TN10 Cook launches show after you sign.</div>`;
+  }
   renderBoosts();
+}
+
+async function renderTokKcom() {
+  const box = $('token-kcom');
+  if (!box || !wallet?.address) return;
+  box.innerHTML = `<div class="empty">Loading KaspaCom balances…</div>`;
+  try {
+    const rows = await cookOwnerBalances(wallet.address);
+    box.innerHTML = rows.length
+      ? rows.map(r => {
+          const tick = r.ticker || r.metadata?.ticker || r.tick || '?';
+          const amt = r.totalAmount || r.nativeAmount || r.amount || r.balance || '0';
+          return `<div class="row token-row">
+            <div class="dot" style="background:rgba(212,176,122,.16);color:var(--gold-2)">${esc(String(tick).slice(0, 3))}</div>
+            <div>
+              <div class="title">${esc(String(tick).toUpperCase())}</div>
+              <div class="sub">${esc(r.name || r.metadata?.name || 'Cook')}</div>
+            </div>
+            <div class="amt"><b>${esc(String(amt))}</b></div>
+          </div>`;
+        }).join('')
+      : `<div class="empty">No Cook / KaspaCom balances on ${esc(shortAddr(wallet.address, 8, 6))}.</div>`;
+  } catch (e) {
+    box.innerHTML = `<div class="empty">${esc(errText(e))}</div>`;
+  }
 }
 
 function vaultStatusLine(v) {
@@ -2915,6 +2957,11 @@ function jumpToAtTrade(tick, side) {
 function syncAtKwBtn() {
   const btn = $('at-kw-btn');
   if (!btn) return;
+  if (isTestnet()) {
+    btn.textContent = 'Native';
+    btn.classList.remove('on');
+    return;
+  }
   const on = kaswareEnabled();
   btn.textContent = on ? 'KasWare' : 'Native';
   btn.classList.toggle('on', on);
@@ -2931,7 +2978,7 @@ function syncAtNote() {
   } else if (atPane === 'agent') {
     el.textContent = 'Scorpion: buy below / sell above on KRON while this tab stays unlocked. We never hold keys, so it stops if you lock or kill the app. ' + kw;
   } else if (atPane === 'tokens') {
-    el.textContent = 'Holdings on this address. Boost sends 0.15 KAS to yourself. ' + kw;
+    el.textContent = 'KRON = mainnet DEX tokens. K.COM = Cook / KaspaCom. Scorpion = tokens launched in this app + native. ' + (isTestnet() ? 'TN10 uses Native sign.' : kw);
   } else {
     el.textContent = isTestnet()
       ? 'Cook TN10 order book. Amount is tokens. Limit rests an order; empty limit takes the book. Slippage is checked on review. ' + kw
@@ -2979,8 +3026,21 @@ function setAtPane(pane) {
     else renderKronMarkets();
     atQuotePreview();
   }
-  if (hold) renderTokens();
+  if (hold) {
+    if (isTestnet() && tokPane === 'kron') tokPane = 'scorpion';
+    setTokPane(tokPane);
+  }
   if (agent) paintAgentStatus();
+}
+
+function setTokPane(pane) {
+  tokPane = pane === 'kcom' ? 'kcom' : (pane === 'scorpion' ? 'scorpion' : 'kron');
+  document.querySelectorAll('#tok-seg button').forEach(b => b.classList.toggle('on', b.dataset.tok === tokPane));
+  $('tok-kron')?.classList.toggle('hidden', tokPane !== 'kron');
+  $('tok-kcom')?.classList.toggle('hidden', tokPane !== 'kcom');
+  $('tok-scorpion')?.classList.toggle('hidden', tokPane !== 'scorpion');
+  renderTokens();
+  if (tokPane === 'kcom') renderTokKcom();
 }
 
 function atSlipPct() {
@@ -3108,7 +3168,7 @@ async function atQuotePreview() {
 }
 
 async function confirmAtSign(title, body, run) {
-  const kw = kaswareEnabled();
+  const kw = kaswareEnabled() && !isTestnet();
   openSheet(title, body, {
     confirm: kw ? 'Pay with KasWare' : 'Pay with PIN',
     gold: true,
@@ -3275,13 +3335,23 @@ async function signCookBuild(build, label) {
     onStatus: (m) => { toast(m); setSheetStatus(m); }
   });
   const cid = cookTokenId(build);
-  if (cid) lastCookToken = { tokenId: cid, tick: ($('at-ltick')?.value || $('at-tick')?.value || '').toUpperCase() };
+  const tick = ($('at-ltick')?.value || lastCookToken?.tick || $('at-tick')?.value || '').toUpperCase();
+  if (cid) lastCookToken = { tokenId: cid, tick };
+  rememberLaunch({
+    tick,
+    name: ($('at-lname')?.value || tick),
+    tokenId: cid,
+    network: networkId(),
+    txId,
+    address: wallet.address
+  });
   afterTx();
   openSheet(label + ' sent', `
     <div class="kv"><span class="k">Network</span><span class="v">${isTestnetAddr(wallet.address) ? 'TN10' : 'mainnet'}</span></div>
-    <div class="kv"><span class="k">Signed</span><span class="v">${kaswareEnabled() ? 'KasWare' : 'This device'}</span></div>
+    <div class="kv"><span class="k">Signed</span><span class="v">This device</span></div>
+    <div class="kv"><span class="k">Ticker</span><span class="v">${esc(tick || '—')}</span></div>
     ${txidBlock(txId)}
-  `, { confirm: 'Done', cancel: false, onConfirm: () => { closeSheet(); refreshAll(); } });
+  `, { confirm: 'View in TOKENS', cancel: false, onConfirm: () => { closeSheet(); setAtPane('tokens'); setTokPane('scorpion'); refreshAll(); } });
 }
 
 async function applyAppNetwork(id) {
@@ -3354,6 +3424,16 @@ async function runCookLaunch() {
     }, { once: true });
     return;
   }
+  applyWalletNetwork(wallet);
+  if (!isTestnetAddr(wallet.address)) {
+    toast('This address is not kaspatest. Toggle Network off and on Testnet-10.');
+    return;
+  }
+  if (!wallet.privKey) {
+    toast('TN10 signs with this wallet’s key. KasWare is mainnet — turn it off and use Native, or import the seed.');
+    return;
+  }
+  try { utxos = await fetchAddressUtxos(wallet.address); } catch {}
   const ticker = ($('at-ltick')?.value || '').trim().toUpperCase();
   const tokenName = ($('at-lname')?.value || ticker).trim();
   const maxSupply = ($('at-lmax')?.value || '1000000').trim();
@@ -3380,7 +3460,9 @@ async function runCookLaunch() {
     <div class="kv"><span class="k">Max</span><span class="v">${esc(maxSupply)}</span></div>
     <div class="kv"><span class="k">Premint</span><span class="v">${esc(premintSupply)}</span></div>
     <div class="kv"><span class="k">Mint price</span><span class="v">${mintKas || 0} KAS / token</span></div>
-    <p class="muted" style="text-align:left;padding-top:8px;">Cook builds an unsigned KCC20 Token V1 deploy. You sign. This app never holds keys. Needs ~1.2 TKAS for the covenant cell + fee.</p>`;
+    <div class="kv"><span class="k">Pay from</span><span class="v">${esc(shortAddr(wallet.address, 10, 6))}</span></div>
+    <div class="kv"><span class="k">UTXOs</span><span class="v">${Array.isArray(utxos) ? utxos.length : 0}</span></div>
+    <p class="muted" style="text-align:left;padding-top:8px;">Cook builds an unsigned KCC20 Token V1 deploy. This device signs (KasWare cannot sign TN10). Needs ~1.2 TKAS for the covenant cell + fee.</p>`;
   await confirmAtSign('Launch ' + ticker, bits, async () => {
     setSheetStatus('Building deploy…');
     const build = await cookDeploy({
@@ -5700,6 +5782,10 @@ function bind() {
     setAtPane(b.dataset.at);
   });
   click('at-tokens-btn', () => { haptic(); setAtPane(atPane === 'tokens' ? 'book' : 'tokens'); });
+  $('tok-seg')?.addEventListener('click', e => {
+    const b = e.target.closest('[data-tok]');
+    if (b?.dataset.tok) { haptic(); setTokPane(b.dataset.tok); }
+  });
   click('at-kw-btn', () => openKaswareSheet());
   $('at-src')?.addEventListener('click', e => {
     const b = e.target.closest('[data-src]');

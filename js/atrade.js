@@ -5,15 +5,22 @@ import { kaswareEnabled, kaswareSigning, ensureKaswareSigner, signPsktWithKaswar
 
 const COOK_DIRECT = 'https://dev-api-kcc20.kaspa.com';
 const AGENT_KEY = 'kcc20_agent_v1';
+const LAUNCH_KEY = 'kcc20_launched_v1';
 
-export function cookApiBase() {
+export function cookBases() {
+  const list = [];
   try {
-    const host = String(location.hostname || '');
-    if (host && host !== 'localhost' && host !== '127.0.0.1') {
-      return location.origin + '/cook-api';
+    if (typeof location !== 'undefined' && location.protocol !== 'file:' && location.origin) {
+      list.push(location.origin + '/api/cook');
+      list.push(location.origin + '/cook-api');
     }
   } catch {}
-  return COOK_DIRECT;
+  list.push(COOK_DIRECT);
+  return [...new Set(list)];
+}
+
+export function cookApiBase() {
+  return cookBases()[0] || COOK_DIRECT;
 }
 
 export const COOK_API = COOK_DIRECT;
@@ -42,6 +49,33 @@ export function isTestnetAddr(addr) {
   return String(addr || '').toLowerCase().startsWith('kaspatest:');
 }
 
+export function loadLaunched() {
+  try {
+    const list = JSON.parse(localStorage.getItem(LAUNCH_KEY) || '[]');
+    return Array.isArray(list) ? list : [];
+  } catch { return []; }
+}
+export function saveLaunched(list) {
+  localStorage.setItem(LAUNCH_KEY, JSON.stringify(list || []));
+}
+export function rememberLaunch(row) {
+  if (!row) return;
+  const list = loadLaunched().filter(x => x.tokenId !== row.tokenId && !(x.tick === row.tick && x.network === row.network));
+  list.unshift({ ...row, at: Date.now() });
+  saveLaunched(list.slice(0, 40));
+}
+
+export async function cookOwnerBalances(addr) {
+  const a = encodeURIComponent(addr);
+  try {
+    const data = await cookGet('/trading/addresses/' + a + '/balances');
+    return Array.isArray(data) ? data : (data?.items || data?.balances || []);
+  } catch {
+    const data = await cookGet('/trading/owners/' + a + '/balances');
+    return Array.isArray(data) ? data : (data?.items || data?.balances || []);
+  }
+}
+
 export function loadAgentJob() {
   try { return JSON.parse(localStorage.getItem(AGENT_KEY) || 'null') || null; } catch { return null; }
 }
@@ -54,43 +88,48 @@ function cookFail(e, data, status) {
   if (data?.error || data?.message || data?.reason) return new Error(data.error || data.message || data.reason);
   const m = errText(e);
   if (/failed to fetch|networkerror|load failed|network request/i.test(m)) {
-    return new Error('Could not reach Cook from this page. Use the hosted app (it proxies Cook). Also need ~1.2 TKAS on this TN10 address — faucet-tn10.kaspanet.io');
+    return new Error('Could not reach Cook. Hard-refresh the hosted app. TN10 signs Native (KasWare is mainnet).');
   }
   if (status) return new Error('Cook HTTP ' + status + (data?.raw ? ': ' + String(data.raw).slice(0, 140) : ''));
   return new Error(m);
 }
 
-export async function cookGet(path) {
-  let res;
-  try {
-    res = await fetch(cookApiBase() + path, { cache: 'no-store' });
-  } catch (e) {
-    throw cookFail(e);
+async function cookRequest(path, init) {
+  let last = new Error('Could not reach Cook');
+  for (const base of cookBases()) {
+    try {
+      const res = await fetch(base + path, { ...(init || {}), cache: 'no-store' });
+      const text = await res.text();
+      if (/^\s*</.test(text || '')) {
+        last = new Error('Cook proxy missed');
+        continue;
+      }
+      let data = null;
+      try { data = text ? JSON.parse(text) : null; } catch { data = { raw: text }; }
+      if (!res.ok) throw cookFail(null, data, res.status);
+      return data;
+    } catch (e) {
+      const m = errText(e);
+      if (/failed to fetch|networkerror|load failed|network request|proxy missed/i.test(m)) {
+        last = e;
+        continue;
+      }
+      throw e;
+    }
   }
-  const text = await res.text();
-  let data = null;
-  try { data = text ? JSON.parse(text) : null; } catch { data = { raw: text }; }
-  if (!res.ok) throw cookFail(null, data, res.status);
-  return data;
+  throw cookFail(last);
+}
+
+export async function cookGet(path) {
+  return cookRequest(path, { method: 'GET' });
 }
 
 export async function cookPost(path, body) {
-  let res;
-  try {
-    res = await fetch(cookApiBase() + path, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      cache: 'no-store',
-      body: JSON.stringify(body || {})
-    });
-  } catch (e) {
-    throw cookFail(e);
-  }
-  const text = await res.text();
-  let data = null;
-  try { data = text ? JSON.parse(text) : null; } catch { data = { raw: text }; }
-  if (!res.ok) throw cookFail(null, data, res.status);
-  return data;
+  return cookRequest(path, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body || {})
+  });
 }
 
 export async function cookMarkets(limit = 20) {
@@ -121,6 +160,7 @@ export function pickWrappedMarketId(wrappers) {
 export async function cookDeploy({ walletAddress, ticker, tokenName, maxSupply, premintSupply, mintPricePerTokenSompi }) {
   return cookPost('/kcc20/build/deploy', {
     walletAddress,
+    ownerIdentifier: walletAddress,
     ticker,
     tokenName,
     maxSupply: String(maxSupply || '1000000'),
@@ -250,12 +290,18 @@ export async function signAndBroadcastPskt({ wallet, txJson, signInputs, onStatu
   }));
   const k = await loadKaspaSdk();
   let signedJson = txJson;
-  if (kaswareEnabled()) {
+  const tn = isTestnetAddr(wallet?.address);
+  const useKw = kaswareEnabled() && !tn;
+  if (useKw) {
     onStatus?.('Approve in KasWare…');
     await ensureKaswareSigner(wallet);
     signedJson = await signPsktWithKasware(txJson, inputs);
   } else {
-    if (!wallet?.privKey) throw new Error('No in-app key — turn on KasWare or import a wallet');
+    if (!wallet?.privKey) {
+      throw new Error(tn
+        ? 'TN10 signs with this wallet’s key. KasWare is mainnet — turn it off in Settings, or import the seed into this app.'
+        : 'No in-app key — turn on KasWare or import a wallet');
+    }
     onStatus?.('Signing locally…');
     const tx = k.Transaction.deserializeFromSafeJSON(txJson);
     const priv = new k.PrivateKey(wallet.privKey);

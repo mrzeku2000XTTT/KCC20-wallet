@@ -14,7 +14,7 @@ import {
 } from './kcc20.js?v=109';
 import { parseIntent, describeIntent, askFor, parseDurationField, interpretVaultChat, normalizeChat } from './intent.js?v=89';
 import { payloadFromAddress } from './script.js?v=90';
-import { explainTransaction, scorpionAnswer } from './scorpion.js?v=89';
+import { explainTransaction, scorpionAnswer } from './scorpion.js?v=110';
 import {
   sendKas, fetchAddressUtxos, fetchAddressBalance, loadKaspaSdk,
   buildTimelockCovenant, buildEscrowCovenant, buildMultisigCovenant, currentDaa,
@@ -46,7 +46,7 @@ import {
 } from './atrade.js?v=100';
 import { SCORPION_MEMORY } from './scorpionMemory.js?v=100';
 
-export const BUILD = '109';
+export const BUILD = '110';
 
 const TOKEN_FALLBACK_LOGO = 'assets/ttt.png';
 
@@ -2768,6 +2768,28 @@ function explHtml(expl) {
   `;
 }
 
+function tokenCtxForTx(id) {
+  if (!id) return null;
+  const want = String(id);
+  const wallets = loadWalletList();
+  const addrs = [...new Set([wallet?.address, ...wallets.map(w => w.address)].filter(Boolean))];
+  for (const addr of addrs) {
+    const ev = loadTokenActivity(addr).find(x => x.txId && x.txId === want);
+    if (!ev || ev.protocol === 'kas' || ev.tick === 'KAS') continue;
+    const w = wallets.find(x => x.address === addr);
+    return {
+      tick: ev.tick,
+      amount: ev.amount,
+      decimals: ev.decimals,
+      dir: ev.dir,
+      label: ev.label,
+      display: formatTokenUnits(ev.amount, ev.decimals) + ' ' + ev.tick,
+      walletName: w?.name || wallet?.name || 'this wallet'
+    };
+  }
+  return null;
+}
+
 async function openScorpionTx(id) {
   haptic();
   if (!id) return;
@@ -2779,7 +2801,13 @@ async function openScorpionTx(id) {
       return;
     }
   }
-  const expl = explainTransaction(tx, { address: wallet.address, vaults: loadVaults() });
+  const tok = tokenCtxForTx(id);
+  const expl = explainTransaction(tx, {
+    address: wallet?.address || '',
+    vaults: loadVaults(),
+    walletName: tok?.walletName || wallet?.name || 'this wallet',
+    token: tok
+  });
   openSheet('Scorpion', explHtml(expl), { confirm: 'Done', cancel: false });
 }
 

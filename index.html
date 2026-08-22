@@ -12,7 +12,7 @@
   <link rel="icon" href="assets/icon.png">
   <title>KCC20 Wallet</title>
   <meta http-equiv="Cache-Control" content="no-store, no-cache, must-revalidate">
-  <link rel="stylesheet" href="css/app.css?v=90">
+  <link rel="stylesheet" href="css/app.css?v=91">
 </head>
 <body>
   <img class="bg-poster" src="assets/bg.jpg" alt="">
@@ -142,28 +142,38 @@
           </div>
 
           <div id="at-launch" class="hidden">
+            <details class="at-help" open>
+              <summary>How launch works</summary>
+              <ul>
+                <li><b>Ticker</b> — 2–8 letters/numbers. The symbol on the book. Example: TEST, KAHA.</li>
+                <li><b>Name</b> — Display name. Example: Test Coin. 2–24 characters.</li>
+                <li><b>Max supply</b> — Total tokens that can ever exist. Typical 1,000,000–1,000,000,000. Cook uses 8 decimals internally.</li>
+                <li><b>Premint</b> — Tokens you receive at deploy. 0 is fair launch. Typical 0–10% of max. Rest is minted by anyone at the mint price.</li>
+                <li><b>Mint price</b> — KAS someone pays per token after launch. 0 = free mint. Typical 0.01–1 KAS. Need ~1.2 TKAS on this address to deploy.</li>
+              </ul>
+            </details>
             <div class="at-row">
-              <label class="field grow"><span>Ticker</span>
-                <input id="at-ltick" maxlength="8" placeholder="KAHA" spellcheck="false">
+              <label class="field grow"><span>Ticker <em>2–8 letters</em></span>
+                <input id="at-ltick" maxlength="8" placeholder="TEST" spellcheck="false">
               </label>
-              <label class="field grow"><span>Name</span>
-                <input id="at-lname" maxlength="24" placeholder="Kaha Coin">
+              <label class="field grow"><span>Name <em>shown on the book</em></span>
+                <input id="at-lname" maxlength="24" placeholder="Test Coin">
               </label>
             </div>
             <div class="at-row">
-              <label class="field grow"><span>Max supply</span>
+              <label class="field grow"><span>Max supply <em>1M–1B typical</em></span>
                 <input id="at-lmax" inputmode="numeric" value="1000000">
               </label>
-              <label class="field grow"><span>Premint</span>
+              <label class="field grow"><span>Premint <em>0 = fair launch</em></span>
                 <input id="at-lpre" inputmode="numeric" value="0">
               </label>
             </div>
-            <label class="field"><span>Mint price (sompi / token)</span>
-              <input id="at-lprice" inputmode="numeric" value="0">
+            <label class="field"><span>Mint price (KAS / token) <em>0 = free · typical 0.01–1</em></span>
+              <input id="at-lprice" inputmode="decimal" value="0" placeholder="0">
             </label>
             <button class="btn btn-gold" id="at-launch-go" type="button">Launch KCC20</button>
             <button class="btn btn-glass" id="at-grad-go" type="button" style="margin-top:8px;">Graduate / wrap to book</button>
-            <p class="muted at-tiny" id="at-lnote">Mainnet: open KRON Launch or switch Network to Testnet-10. TN10: Cook deploys a real KCC20 V1 — you sign, we never hold keys. Faucet: faucet-tn10.kaspanet.io</p>
+            <p class="muted at-tiny" id="at-lnote">TN10: Cook deploys a real KCC20 V1. You sign. Need ~1.2 TKAS here. Faucet: faucet-tn10.kaspanet.io</p>
           </div>
 
           <div id="at-agent" class="hidden">
@@ -567,7 +577,7 @@
     })();
   </script>
   <script type="module">
-    import('./js/app.js?v=90').catch(function (err) {
+    import('./js/app.js?v=91').catch(function (err) {
       console.error(err);
       var phone = document.getElementById('phone');
       var d = document.createElement('div');

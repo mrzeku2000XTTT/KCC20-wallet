@@ -3,8 +3,20 @@
 import { loadKaspaSdk, connectPublicNode } from './tx.js?v=90';
 import { kaswareEnabled, kaswareSigning, ensureKaswareSigner, signPsktWithKasware } from './kasware.js?v=89';
 
-export const COOK_API = 'https://dev-api-kcc20.kaspa.com';
+const COOK_DIRECT = 'https://dev-api-kcc20.kaspa.com';
 const AGENT_KEY = 'kcc20_agent_v1';
+
+export function cookApiBase() {
+  try {
+    const host = String(location.hostname || '');
+    if (host && host !== 'localhost' && host !== '127.0.0.1') {
+      return location.origin + '/cook-api';
+    }
+  } catch {}
+  return COOK_DIRECT;
+}
+
+export const COOK_API = COOK_DIRECT;
 
 function errText(e) {
   if (e == null) return 'Unknown error';
@@ -38,26 +50,46 @@ export function saveAgentJob(job) {
   else localStorage.setItem(AGENT_KEY, JSON.stringify(job));
 }
 
+function cookFail(e, data, status) {
+  if (data?.error || data?.message || data?.reason) return new Error(data.error || data.message || data.reason);
+  const m = errText(e);
+  if (/failed to fetch|networkerror|load failed|network request/i.test(m)) {
+    return new Error('Could not reach Cook from this page. Use the hosted app (it proxies Cook). Also need ~1.2 TKAS on this TN10 address — faucet-tn10.kaspanet.io');
+  }
+  if (status) return new Error('Cook HTTP ' + status + (data?.raw ? ': ' + String(data.raw).slice(0, 140) : ''));
+  return new Error(m);
+}
+
 export async function cookGet(path) {
-  const res = await fetch(COOK_API + path, { cache: 'no-store' });
+  let res;
+  try {
+    res = await fetch(cookApiBase() + path, { cache: 'no-store' });
+  } catch (e) {
+    throw cookFail(e);
+  }
   const text = await res.text();
   let data = null;
   try { data = text ? JSON.parse(text) : null; } catch { data = { raw: text }; }
-  if (!res.ok) throw new Error(data?.error || data?.message || data?.reason || ('Cook HTTP ' + res.status));
+  if (!res.ok) throw cookFail(null, data, res.status);
   return data;
 }
 
 export async function cookPost(path, body) {
-  const res = await fetch(COOK_API + path, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    cache: 'no-store',
-    body: JSON.stringify(body || {})
-  });
+  let res;
+  try {
+    res = await fetch(cookApiBase() + path, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      cache: 'no-store',
+      body: JSON.stringify(body || {})
+    });
+  } catch (e) {
+    throw cookFail(e);
+  }
   const text = await res.text();
   let data = null;
   try { data = text ? JSON.parse(text) : null; } catch { data = { raw: text }; }
-  if (!res.ok) throw new Error(data?.error || data?.message || data?.reason || ('Cook HTTP ' + res.status));
+  if (!res.ok) throw cookFail(null, data, res.status);
   return data;
 }
 
@@ -157,7 +189,13 @@ export function extractSigning(build) {
   const json = signing?.psktTransactionJson || signing?.txJsonString || signing?.pskt;
   const inputs = signing?.signInputs || [];
   const status = signing?.status || '';
-  return { signing, json, inputs, status, ready: status === 'ready-to-sign' || !!json };
+  return {
+    signing,
+    json,
+    inputs,
+    status,
+    ready: status === 'ready-to-sign' || status === 'wallet-operation-ready' || !!json
+  };
 }
 
 export function cookTokenId(build) {

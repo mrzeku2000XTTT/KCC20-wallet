@@ -1,4 +1,10 @@
 {
+  "rewrites": [
+    {
+      "source": "/cook-api/:path*",
+      "destination": "https://dev-api-kcc20.kaspa.com/:path*"
+    }
+  ],
   "headers": [
     {
       "source": "/vendor/kaspa/(.*).wasm",

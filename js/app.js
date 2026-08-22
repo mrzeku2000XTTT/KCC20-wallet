@@ -39,9 +39,9 @@ import {
   cookDeploy, cookBuildOrder, cookFillOrder, cookSweep, cookWrap, cookMint,
   extractSigning, signAndBroadcastPskt, cookTokenId, isTestnetAddr,
   loadAgentJob, saveAgentJob, sompiToKas, kasToSompiNum
-} from './atrade.js?v=90';
+} from './atrade.js?v=91';
 
-export const BUILD = '90';
+export const BUILD = '91';
 
 function errText(e) {
   if (e == null) return 'Unknown error';
@@ -3358,14 +3358,29 @@ async function runCookLaunch() {
   const tokenName = ($('at-lname')?.value || ticker).trim();
   const maxSupply = ($('at-lmax')?.value || '1000000').trim();
   const premintSupply = ($('at-lpre')?.value || '0').trim();
-  const mintPricePerTokenSompi = ($('at-lprice')?.value || '0').trim();
+  const mintKas = Number($('at-lprice')?.value || 0);
   if (!/^[A-Z0-9]{2,8}$/.test(ticker)) { toast('Ticker 2–8 letters'); return; }
+  if (!tokenName || tokenName.length < 2) { toast('Name at least 2 characters'); return; }
+  const maxN = Number(maxSupply);
+  const preN = Number(premintSupply);
+  if (!(maxN >= 1 && maxN <= 1e12)) { toast('Max supply between 1 and 1,000,000,000,000'); return; }
+  if (!(preN >= 0 && preN <= maxN)) { toast('Premint must be 0 up to max supply'); return; }
+  if (!(mintKas >= 0) || mintKas > 1000) { toast('Mint price 0–1000 KAS per token. Typical 0.01–1.'); return; }
+  const mintPricePerTokenSompi = String(kasToSompiNum(mintKas));
+  try {
+    const tnBal = Number(await fetchAddressBalance(wallet.address) || 0);
+    if (tnBal < 120000000) {
+      toast('Need ~1.2 TKAS on this TN10 address to deploy. Faucet: faucet-tn10.kaspanet.io');
+      return;
+    }
+  } catch {}
   const bits = `
     <div class="kv"><span class="k">Ticker</span><span class="v">${esc(ticker)}</span></div>
     <div class="kv"><span class="k">Name</span><span class="v">${esc(tokenName)}</span></div>
     <div class="kv"><span class="k">Max</span><span class="v">${esc(maxSupply)}</span></div>
     <div class="kv"><span class="k">Premint</span><span class="v">${esc(premintSupply)}</span></div>
-    <p class="muted" style="text-align:left;padding-top:8px;">Cook builds an unsigned KCC20 Token V1 deploy. You sign. Relay never holds keys. Testnet until the standard is on mainnet.</p>`;
+    <div class="kv"><span class="k">Mint price</span><span class="v">${mintKas || 0} KAS / token</span></div>
+    <p class="muted" style="text-align:left;padding-top:8px;">Cook builds an unsigned KCC20 Token V1 deploy. You sign. This app never holds keys. Needs ~1.2 TKAS for the covenant cell + fee.</p>`;
   await confirmAtSign('Launch ' + ticker, bits, async () => {
     setSheetStatus('Building deploy…');
     const build = await cookDeploy({

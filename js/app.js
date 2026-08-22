@@ -7,11 +7,11 @@ import {
 } from './crypto.js?v=100';
 import {
   NATIVE_KAS, VAULT_PRODUCTS, loadWatchlist, addToken, removeToken,
-  loadVaults, saveVault, updateVault, formatAmount, formatTokenUnits, tokenColor,
+  loadVaults, saveVault, updateVault, deleteVault, purgeVaultsWhere, formatAmount, formatTokenUnits, tokenColor,
   fetchKcc20Portfolio, fetchKrc20Portfolio, fetchKcc20PortfolioMany, fetchKrc20PortfolioMany,
   fetchKronAddrTrades, fetchKronTokenUtxos, KRON_IDX,
   krc20Logo, toTokenRaw, setVaultOwner, kcc20Identicon, VAULT_GROUPS
-} from './kcc20.js?v=109';
+} from './kcc20.js?v=115';
 import { parseIntent, describeIntent, askFor, parseDurationField, interpretVaultChat, normalizeChat } from './intent.js?v=89';
 import { payloadFromAddress } from './script.js?v=90';
 import { explainTransaction, scorpionAnswer } from './scorpion.js?v=114';
@@ -46,7 +46,7 @@ import {
 } from './atrade.js?v=100';
 import { SCORPION_MEMORY } from './scorpionMemory.js?v=100';
 
-export const BUILD = '114';
+export const BUILD = '115';
 
 const TOKEN_FALLBACK_LOGO = 'assets/ttt.png';
 
@@ -105,6 +105,10 @@ function walletByAddress(addr) {
 function vaultCounterpartyKey(vault) {
   const addr = vault?.params?.counterparty || vault?.params?.buyerAddress || '';
   return walletByAddress(addr)?.privKey || '';
+}
+
+function isDcaVault(v) {
+  return v?.type === 'dca' || /^DCA\s/i.test(String(v?.name || ''));
 }
 
 function isHopVault(v) {
@@ -1523,7 +1527,7 @@ function renderHoldings() {
   const kasRow = tokenRow({ ...NATIVE_KAS, sompi: balanceSompi, usd: usd(kas()), protocol: 'native' }, 'data-ticker="KAS"');
   const kccRows = kccHoldings.map(t => tokenRow(t));
   const krcRows = krcHoldings.map(t => tokenRow(t));
-  const locked = loadVaults().filter(v => v.address && vaultLockedSompi(v) > 0 && !isVaultHistory(v) && v.status !== 'cancelled');
+  const locked = loadVaults().filter(v => v.address && vaultLockedSompi(v) > 0 && !isVaultHistory(v) && v.status !== 'cancelled' && !isDcaVault(v));
   const lockRows = locked.map(v => {
     const sec = remainingLockSec(v.unlockDaa, v.unlockAt);
     const lockedNow = sec == null || sec > 0;
@@ -1746,7 +1750,9 @@ function renderVault() {
         </div>
         <div class="vault-card-actions">
           <button class="nav-btn ghost" data-vault="${esc(v.address || '')}">Info</button>
-          ${showVaultHistory ? '' : `<button class="nav-btn" data-sweep="${esc(v.address || '')}">Sweep</button>`}
+          ${showVaultHistory ? '' : (isDcaVault(v)
+            ? `<button class="nav-btn" data-deldca="${esc(v.address || '')}">Delete</button>`
+            : `<button class="nav-btn" data-sweep="${esc(v.address || '')}">Sweep</button>`)}
         </div>
       </div>`).join('')
     : `<div class="empty vault-empty">${empty}</div>`;
@@ -4698,8 +4704,8 @@ function paintDcaLive() {
     <b>${running ? 'DCA locked' : 'DCA paused'} · ${esc(job.tick)}</b>
     <p>${job.buys || 0} / ${job.maxBuys} buys · ${(job.vaults || []).filter(v => v.swept).length} capsules opened
       · ${running ? ('next in ' + wait) : (job.last || 'stopped')}</p>
-    <button class="btn btn-glass" id="dca-stop" type="button" style="margin-top:8px;height:40px;">Stop & return KAS</button>`;
-  $('dca-stop')?.addEventListener('click', () => stopDca().catch(e => toast(errText(e))));
+    <button class="btn btn-glass" id="dca-stop" type="button" style="margin-top:8px;height:40px;">Delete DCA</button>`;
+  $('dca-stop')?.addEventListener('click', () => stopDca());
 }
 
 function dcaVaultRecord(row, job) {
@@ -4766,24 +4772,70 @@ async function reclaimDcaCapsules() {
   return { ok, miss };
 }
 
-async function stopDca() {
-  const job = loadDcaJob();
-  if (job) saveDcaJob({ ...job, on: false, last: 'stopped' });
-  if (dcaTimer) { clearInterval(dcaTimer); dcaTimer = null; }
-  paintDcaLive();
-  paintDcaHome();
-  syncTradeLabel();
-  toast('Returning DCA capsule KAS to this wallet…');
-  try {
-    const { ok, miss } = await reclaimDcaCapsules();
-    if (ok) toast(ok + ' capsule' + (ok === 1 ? '' : 's') + ' returned to this wallet');
-    else if (miss) toast('Capsules not indexed yet — tap Stop again in a few seconds');
-    else toast('DCA stopped');
-  } catch (e) {
-    toast(errText(e));
+function purgeDcaActivity(removed) {
+  const txids = new Set();
+  for (const v of removed || []) {
+    for (const id of String(v.fundTxId || '').split(',')) if (id) txids.add(id);
+    if (v.unlockTxId) txids.add(v.unlockTxId);
   }
-  paintDcaLive();
+  try {
+    for (let i = 0; i < localStorage.length; i++) {
+      const k = localStorage.key(i);
+      if (!k || !k.startsWith(ACT_KEY)) continue;
+      const list = JSON.parse(localStorage.getItem(k) || '[]');
+      if (!Array.isArray(list)) continue;
+      const next = list.filter(a => {
+        if (a.txId && txids.has(a.txId)) return false;
+        if (/DCA/i.test(String(a.label || '')) || /DCA/i.test(String(a.note || ''))) return false;
+        return true;
+      });
+      localStorage.setItem(k, JSON.stringify(next));
+    }
+  } catch {}
+}
+
+function purgeAllDcaUi() {
+  if (dcaTimer) { clearInterval(dcaTimer); dcaTimer = null; }
+  const removed = purgeVaultsWhere(isDcaVault);
+  purgeDcaActivity(removed);
+  saveDcaJob(null);
+  try { $('dca-home')?.remove(); } catch {}
+  return removed.length;
+}
+
+function deleteDcaVault(address) {
+  if (!address) return;
+  const v = loadVaults().find(x => x.address === address);
+  if (v) purgeDcaActivity([v]);
+  deleteVault(address);
+  const job = loadDcaJob();
+  if (job?.vaults) {
+    job.vaults = job.vaults.filter(d => d.address !== address);
+    saveDcaJob(job.vaults.length ? { ...job, on: false } : null);
+  }
+  if (!loadVaults().some(isDcaVault)) saveDcaJob(null);
+  renderHome();
+  renderVault();
   paintDcaHome();
+  paintDcaLive();
+  if (currentTab === 'activity') renderActivity(window.__txs || []);
+  toast('Deleted from this device');
+}
+
+function wipeTestDcaNow() {
+  const n = purgeAllDcaUi();
+  renderHome();
+  renderVault();
+  paintDcaHome();
+  paintDcaLive();
+  if (currentTab === 'activity') renderActivity(window.__txs || []);
+  return n;
+}
+
+function stopDca() {
+  wipeTestDcaNow();
+  syncTradeLabel();
+  toast('DCA removed from Home, Vaults, and Activity');
 }
 
 function resumeDcaIfAny() {
@@ -5053,7 +5105,7 @@ function paintDcaHome() {
   }
   if (!bar) return;
   bar.onclick = () => {
-    if (job?.on || leftover.length) stopDca().catch(e => toast(errText(e)));
+    if (job?.on || leftover.length) stopDca();
     else openTrade({ tick: job?.tick, side: 'dca' });
   };
   if (!job?.on && leftover.length) {
@@ -5195,7 +5247,7 @@ async function reviewTrade() {
   if (side === 'dca') {
     const job = loadDcaJob();
     if (job?.on || (job?.vaults || []).some(d => !d.swept)) {
-      stopDca().catch(e => toast(errText(e)));
+      stopDca();
       return;
     }
     const plan = dcaPlanBits();
@@ -6780,8 +6832,7 @@ function openLockTimer(vault) {
   let help = 'Sweep returns KAS to this wallet.';
   if (kcc && locked) help = 'Still frozen. When the timer hits zero, Sweep returns the tokens plus leftover witness KAS.';
   else if (kcc) help = 'Lock has expired. Sweep now, or wait — auto-return is on.';
-  else if (vault.type === 'dca' && locked) help = 'This is a DCA test capsule. Return KAS now — you do not wait for the timer. Stop DCA also returns every leftover capsule.';
-  else if (vault.type === 'dca') help = 'Lock expired. Sweep returns the KAS here (it will not buy the token).';
+  else if (vault.type === 'dca') help = 'Test DCA. Delete removes it from this device instantly. On-chain sweep is skipped.';
   else if (hop && locked) help = 'Check-in now to move the coins to the next hop. If this window ends, the beneficiary can claim.';
   else if (hop) help = 'Check-in window ended. Sweep / timeout releases to the beneficiary.';
   else if (isXmss) help = 'Paste the witness JSON from xmss_sign.py (offline). Spend uses ~0.32 KAS from this wallet as the fee input.';
@@ -6812,15 +6863,19 @@ function openLockTimer(vault) {
     <div class="kv"><span class="k">Address</span><span class="v">${esc(vault.address)}</span></div>
     <p class="muted" style="text-align:left;">${esc(help)}</p>
     ${canCheckinVault(vault) ? `<button class="btn btn-gold" id="v-checkin" style="margin-top:14px;">Check in</button>` : ''}
-    <button class="btn ${canCheckinVault(vault) ? 'btn-glass' : 'btn-gold'}" id="v-unlock" style="margin-top:10px;" ${isMsig && !msigReady ? 'disabled' : ''}>${esc(sweepLabel)}</button>
+    ${vault.type === 'dca'
+      ? `<button class="btn btn-gold" id="v-deldca" style="margin-top:10px;">Delete from this device</button>`
+      : `<button class="btn ${canCheckinVault(vault) ? 'btn-glass' : 'btn-gold'}" id="v-unlock" style="margin-top:10px;" ${isMsig && !msigReady ? 'disabled' : ''}>${esc(sweepLabel)}</button>`}
     ${kcc ? `<div class="btn-row" style="margin-top:10px;"><button class="btn btn-glass" id="v-copy">Copy capsule</button></div>` : `<div class="btn-row" style="margin-top:10px;">
       <button class="btn btn-glass" id="v-copy">Copy</button>
-      <button class="btn btn-glass" id="v-fund">Fund more</button>
+      ${vault.type === 'dca' ? `<button class="btn btn-glass" id="v-delalldca">Delete all DCA</button>` : `<button class="btn btn-glass" id="v-fund">Fund more</button>`}
     </div>`}
   `, { confirm: 'Close', cancel: false });
   $('v-copy').onclick = async () => { await navigator.clipboard.writeText(vault.address); toast('Copied'); };
   $('v-fund')?.addEventListener('click', () => fundVault(vault).catch(e => toast(errText(e))));
-  $('v-unlock').onclick = () => unlockVault(vault, {
+  $('v-deldca')?.addEventListener('click', () => { closeSheet(); deleteDcaVault(vault.address); });
+  $('v-delalldca')?.addEventListener('click', () => { closeSheet(); stopDca(); });
+  $('v-unlock')?.addEventListener('click', () => unlockVault(vault, {
     escrowRelease: isEscrow && iAmBuyer,
     secretHex: $('v-secret')?.value.trim() || vault.params?.secretHex || '',
     witness: $('v-witness')?.value || ''
@@ -7496,6 +7551,13 @@ function bind() {
     if (btn) openProduct(btn.dataset.product);
   });
   $('vault-mine')?.addEventListener('click', e => {
+    const delDca = e.target.closest('[data-deldca]');
+    if (delDca?.dataset.deldca) {
+      e.preventDefault();
+      e.stopPropagation();
+      deleteDcaVault(delDca.dataset.deldca);
+      return;
+    }
     const sweepBtn = e.target.closest('[data-sweep]');
     if (sweepBtn?.dataset.sweep) {
       e.preventDefault();
@@ -7548,6 +7610,7 @@ async function init() {
   setClock();
   setInterval(setClock, 1000);
   loadSnaps();
+  try { wipeTestDcaNow(); } catch {}
   try { bind(); } catch (e) {
     console.error(e);
     window.__kccBound = false;

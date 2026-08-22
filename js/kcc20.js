@@ -228,6 +228,29 @@ export function updateVault(address, patch) {
   localStorage.setItem(vaultStoreKey(), JSON.stringify(list.slice(0, 80)));
 }
 
+export function purgeVaultsWhere(pred) {
+  const removed = [];
+  const keys = vaultStoreKeys();
+  for (const key of keys) {
+    try {
+      const raw = JSON.parse(localStorage.getItem(key) || '[]');
+      if (!Array.isArray(raw) || !raw.length) continue;
+      const next = [];
+      for (const v of raw) {
+        if (pred(v)) removed.push(v);
+        else next.push(v);
+      }
+      localStorage.setItem(key, JSON.stringify(next));
+    } catch {}
+  }
+  return removed;
+}
+
+export function deleteVault(address) {
+  if (!address) return;
+  purgeVaultsWhere(v => v && v.address === address);
+}
+
 export function formatAmount(sompi, decimals = 8) {
   const n = Number(sompi || 0) / (10 ** decimals);
   if (!Number.isFinite(n)) return '0';

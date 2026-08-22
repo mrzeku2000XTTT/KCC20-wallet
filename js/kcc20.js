@@ -377,6 +377,18 @@ export async function fetchKronAddrTrades(address, limit = 24) {
   }
 }
 
+export async function fetchKronTokenUtxos(tick, address) {
+  if (!tick || !address) return [];
+  try {
+    const body = await fetchJson(
+      KRON_IDX + '/token/' + encodeURIComponent(tick) + '/address/' + encodeURIComponent(address) + '/utxos'
+    );
+    return Array.isArray(body?.result) ? body.result : [];
+  } catch {
+    return [];
+  }
+}
+
 async function fetchKascovHoldings(address, pubKey) {
   const keys = [];
   if (address) keys.push(address);

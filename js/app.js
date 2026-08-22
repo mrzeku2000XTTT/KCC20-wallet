@@ -9,9 +9,9 @@ import {
   NATIVE_KAS, VAULT_PRODUCTS, loadWatchlist, addToken, removeToken,
   loadVaults, saveVault, updateVault, formatAmount, formatTokenUnits, tokenColor,
   fetchKcc20Portfolio, fetchKrc20Portfolio, fetchKcc20PortfolioMany, fetchKrc20PortfolioMany,
-  fetchKronAddrTrades, KRON_IDX,
+  fetchKronAddrTrades, fetchKronTokenUtxos, KRON_IDX,
   krc20Logo, toTokenRaw, setVaultOwner, kcc20Identicon, VAULT_GROUPS
-} from './kcc20.js?v=108';
+} from './kcc20.js?v=109';
 import { parseIntent, describeIntent, askFor, parseDurationField, interpretVaultChat, normalizeChat } from './intent.js?v=89';
 import { payloadFromAddress } from './script.js?v=90';
 import { explainTransaction, scorpionAnswer } from './scorpion.js?v=89';
@@ -46,7 +46,7 @@ import {
 } from './atrade.js?v=100';
 import { SCORPION_MEMORY } from './scorpionMemory.js?v=100';
 
-export const BUILD = '108';
+export const BUILD = '109';
 
 const TOKEN_FALLBACK_LOGO = 'assets/ttt.png';
 
@@ -146,6 +146,7 @@ const ACTIVE_KEY = 'kcc20_active_id';
 const PIN_KEY = 'kcc20_pin_v1';
 const SNAPS_KEY = 'kcc20_snaps_v1';
 const ACT_KEY = 'kcc20_activity_v1';
+const CELL_KEY = 'kcc20_cells_v1';
 const LOOK_KEY = 'kcc20_look_v1';
 const BOOST_KEY = 'kcc20_boosts_v1';
 const BOOST_KAS = 0.15;
@@ -1807,15 +1808,16 @@ function pushTokenActivity(ev, addr) {
   const dup = list.find(x => {
     if (x.tick !== row.tick || x.dir !== row.dir) return false;
     if (row.txId && x.txId && x.txId === row.txId) return true;
+    if ((x.label || '') !== (row.label || '')) return false;
     if (x.amount !== row.amount) return false;
     return Math.abs((x.time || 0) - row.time) < 180000;
   });
   if (dup) {
-    if (row.txId && !dup.txId) {
-      dup.txId = row.txId;
-      if (ev.time) dup.time = Number(ev.time);
-      saveTokenActivity(list, use);
-    }
+    let dirty = false;
+    if (row.txId && !dup.txId) { dup.txId = row.txId; dirty = true; }
+    if (row.note && !dup.note) { dup.note = row.note; dirty = true; }
+    if (ev.time && Number(ev.time) > Number(dup.time || 0)) { dup.time = Number(ev.time); dirty = true; }
+    if (dirty) saveTokenActivity(list, use);
     scheduleActivityPaint();
     return dup;
   }
@@ -1883,35 +1885,79 @@ function refreshActivityNow() {
   });
 }
 
-async function attachKcc20ReceiveTxid(ev) {
-  if (!ev || ev.txId || ev.protocol === 'krc20' || !wallet?.address) return;
+function loadKnownCells(addr) {
   try {
-    const res = await fetch(
-      KRON_IDX + '/token/' +
-      encodeURIComponent(ev.tick) + '/address/' +
-      encodeURIComponent(wallet.address) + '/utxos',
-      { cache: 'no-store' }
-    );
-    if (!res.ok) return;
-    const data = await res.json();
-    const cells = Array.isArray(data?.result) ? data.result : [];
-    const ids = [...new Set(cells.map(c => c.outpoint?.transactionId).filter(Boolean))].slice(0, 5);
-    let best = null;
-    for (const id of ids) {
-      const tx = await fetchKaspaTx(id).catch(() => null);
-      if (!tx) continue;
-      const t = Number(tx.block_time || tx.blockTime || 0);
-      if (!best || t > best.t) best = { id, t };
+    const raw = JSON.parse(localStorage.getItem(CELL_KEY + ':' + (addr || wallet?.address || '')) || '{}');
+    return raw && typeof raw === 'object' ? raw : {};
+  } catch {
+    return {};
+  }
+}
+
+function saveKnownCells(map, addr) {
+  const use = addr || wallet?.address;
+  if (!use) return;
+  localStorage.setItem(CELL_KEY + ':' + use, JSON.stringify(map || {}));
+}
+
+function cellOutId(c) {
+  const id = c?.outpoint?.transactionId || c?.transactionId || '';
+  if (!id) return '';
+  const idx = c?.outpoint?.index ?? c?.index ?? 0;
+  return id + ':' + idx;
+}
+
+async function ingestNewKcc20Cells({ ticks } = {}) {
+  if (!wallet?.address) return;
+  const addrs = [...new Set(
+    (ownedAddresses(wallet) || []).map(o => o.address).filter(Boolean)
+  )].slice(0, 4);
+  if (!addrs.includes(wallet.address)) addrs.unshift(wallet.address);
+  const fromHold = (kccHoldings || []).map(t => t.ticker).filter(Boolean);
+  const tickList = [...new Set((ticks && ticks.length ? ticks : fromHold).map(t => String(t).toUpperCase()).filter(Boolean))].slice(0, 8);
+  if (!tickList.length) return;
+  const hush = Date.now() < hushTokenToastsUntil;
+
+  await Promise.all(addrs.map(async addr => {
+    const known = loadKnownCells(addr);
+    let dirty = false;
+    for (const T of tickList) {
+      const cells = await fetchKronTokenUtxos(T, addr).catch(() => []);
+      const ids = cells.map(cellOutId).filter(Boolean);
+      const prev = Array.isArray(known[T]) ? known[T] : null;
+      const prevSet = new Set(prev || []);
+      const first = !prev;
+      known[T] = ids;
+      dirty = true;
+      if (first || hush) continue;
+      const fresh = cells.filter(c => {
+        const id = cellOutId(c);
+        return id && !prevSet.has(id);
+      });
+      if (!fresh.length) continue;
+      const held = (kccHoldings || []).find(x => String(x.ticker || '').toUpperCase() === T);
+      const dec = Number(held?.decimals || 0);
+      for (const c of fresh) {
+        const amt = String(c.amount ?? c.tokenAmount ?? '');
+        if (!amt || amt === '0') continue;
+        const txId = c.outpoint?.transactionId || c.transactionId || '';
+        const ev = {
+          dir: 'in',
+          tick: T,
+          protocol: 'kcc20',
+          amount: amt,
+          decimals: dec,
+          txId,
+          time: Date.now(),
+          label: 'Received',
+          note: 'Incoming transfer'
+        };
+        pushTokenActivity(ev, addr);
+        if (addr !== wallet.address) pushTokenActivity(ev, wallet.address);
+      }
     }
-    if (!best) return;
-    const list = loadTokenActivity();
-    const row = list.find(x => x.id === ev.id);
-    if (!row) return;
-    row.txId = best.id;
-    if (best.t) row.time = best.t;
-    saveTokenActivity(list);
-    if (currentTab === 'activity') renderActivity(window.__txs || []);
-  } catch {}
+    if (dirty) saveKnownCells(known, addr);
+  }));
 }
 
 async function ingestKronActivity(addr) {
@@ -3085,39 +3131,44 @@ async function refreshTokenHoldings() {
   } catch (e) {
     tokenLoadErr = errText(e);
   }
-  if (seenTokens) {
+  const credits = [];
+  if (seenTokens || before.length > 0) {
     const hushToast = Date.now() < hushTokenToastsUntil;
     const after = [...kccHoldings, ...krcHoldings];
     for (const t of after) {
       const prev = before.find(x => (t.tokenId && x.tokenId === t.tokenId) || (x.protocol === t.protocol && x.ticker === t.ticker));
-      const nextAmt = Number(t.balance || 0);
-      const prevAmt = prev ? Number(prev.balance || 0) : 0;
-      if (nextAmt > prevAmt) {
-        const d = nextAmt - prevAmt;
-        if (!hushToast) {
-          toast(`Received ${formatTokenUnits(d, t.decimals)} ${t.ticker}`);
-          haptic();
-        }
-        const ev = pushTokenActivity({
-          dir: 'in',
-          tick: t.ticker,
-          protocol: t.protocol || 'kcc20',
-          amount: String(d),
-          decimals: t.decimals,
-          label: 'Received'
-        });
-        attachKcc20ReceiveTxid(ev);
-        const recv = currentReceive(wallet, { tick: t.ticker });
-        if (recv) markAddressUsed(wallet, recv.address, true);
-        saveWallet();
-        setLiveFast(true);
-        clearTimeout(tokenFastOff);
-        tokenFastOff = setTimeout(() => setLiveFast(false), 25000);
+      let d = 0n;
+      try {
+        const nextAmt = BigInt(t.balance || '0');
+        const prevAmt = BigInt(prev?.balance || '0');
+        if (nextAmt > prevAmt) d = nextAmt - prevAmt;
+      } catch { continue; }
+      if (d <= 0n) continue;
+      if (!hushToast) {
+        toast(`Received ${formatTokenUnits(d, t.decimals)} ${t.ticker}`);
+        haptic();
       }
+      pushTokenActivity({
+        dir: 'in',
+        tick: t.ticker,
+        protocol: t.protocol || 'kcc20',
+        amount: d.toString(),
+        decimals: t.decimals,
+        label: 'Received',
+        note: hushToast ? '' : 'Incoming transfer'
+      });
+      credits.push({ tick: t.ticker, amount: d.toString(), protocol: t.protocol });
+      const recv = currentReceive(wallet, { tick: t.ticker });
+      if (recv) markAddressUsed(wallet, recv.address, true);
+      saveWallet();
+      setLiveFast(true);
+      clearTimeout(tokenFastOff);
+      tokenFastOff = setTimeout(() => setLiveFast(false), 25000);
     }
   }
   seenTokens = true;
   rememberActiveSnap();
+  ingestNewKcc20Cells().catch(() => {});
   ingestKronActivity(addr).catch(() => {});
   if (currentTab === 'home') renderHome();
   if (currentTab === 'tokens') renderTokens();
@@ -7166,6 +7217,7 @@ function bind() {
     if (tab === 'activity') {
       setLiveFast(true);
       kickTokenRefresh();
+      ingestNewKcc20Cells().catch(() => {});
       ingestKronActivity().catch(() => {});
       refreshActivityNow();
     } else if (liveFast && Date.now() > hushTokenToastsUntil) {

@@ -46,7 +46,7 @@ import {
 } from './atrade.js?v=100';
 import { SCORPION_MEMORY } from './scorpionMemory.js?v=100';
 
-export const BUILD = '110';
+export const BUILD = '111';
 
 const TOKEN_FALLBACK_LOGO = 'assets/ttt.png';
 
@@ -81,6 +81,20 @@ function isVaultHistory(v) {
 function vaultTokenLabel(v) {
   if (!isKcc20Vault(v) || !v.tick) return '';
   return formatTokenUnits(v.tokenAmount || 0, v.decimals) + ' ' + v.tick;
+}
+
+function vaultLockedSompi(v) {
+  if (!v || v.status === 'swept') return 0;
+  const have = Number(v.fundedSompi || 0);
+  if (have > 0) return have;
+  const committed = Number(v.lockedSompi || 0);
+  if (committed > 0) return committed;
+  const kas = Number(v.params?.amountKas);
+  if ((v.status === 'funding' || v.status === 'locked' || v.status === 'funded' || v.fundTxId)
+    && Number.isFinite(kas) && kas > 0) {
+    return Math.round(kas * 1e8);
+  }
+  return 0;
 }
 
 function walletByAddress(addr) {
@@ -1507,7 +1521,7 @@ function renderHoldings() {
   const kasRow = tokenRow({ ...NATIVE_KAS, sompi: balanceSompi, usd: usd(kas()), protocol: 'native' }, 'data-ticker="KAS"');
   const kccRows = kccHoldings.map(t => tokenRow(t));
   const krcRows = krcHoldings.map(t => tokenRow(t));
-  const locked = loadVaults().filter(v => v.address && Number(v.fundedSompi) > 0 && !isVaultHistory(v));
+  const locked = loadVaults().filter(v => v.address && vaultLockedSompi(v) > 0 && !isVaultHistory(v));
   const lockRows = locked.map(v => {
     const sec = remainingLockSec(v.unlockDaa, v.unlockAt);
     const lockedNow = sec == null || sec > 0;
@@ -1521,7 +1535,7 @@ function renderHoldings() {
         <div class="sub">${lockedNow ? 'Unlocks <span data-unlock-daa="' + esc(v.unlockDaa || '') + '" data-unlock-at="' + esc(v.unlockAt || '') + '">' + esc(formatLockClock(sec)) + '</span>' + (when ? ' · ' + esc(when) : '') : 'Unlocked — returning to wallet'}</div>
       </div>
       <div class="amt">
-        <b>${tok ? esc(tok) : formatAmount(v.fundedSompi || 0)}</b>
+        <b>${tok ? esc(tok) : formatAmount(vaultLockedSompi(v))}</b>
         <em>${lockedNow ? 'Locked' : 'Unlocking'}</em>
       </div>
     </button>`;
@@ -1670,7 +1684,8 @@ async function renderTokKcom() {
 
 function vaultStatusLine(v) {
   const tok = vaultTokenLabel(v);
-  const amt = tok || (v.fundedSompi ? formatAmount(v.fundedSompi) + ' KAS' : '0 KAS');
+  const locked = vaultLockedSompi(v);
+  const amt = tok || (locked ? formatAmount(locked) + ' KAS' : '0 KAS');
   if (isHopVault(v) && v.hops) {
     const i = Number(v.hopIndex || 0);
     const sec = remainingLockSec(v.unlockDaa, v.unlockAt);
@@ -1679,7 +1694,7 @@ function vaultStatusLine(v) {
       : (v.unlockDaa ? ' · timeout' : '');
     return `Hop ${i + 1}/${v.hops.length}${clock} · ${amt}`;
   }
-  if (!v.fundedSompi && !tok) return `${v.status || 'unfunded'} · ${amt}`;
+  if (!locked && !tok) return `${v.status || 'unfunded'} · ${amt}`;
   if (v.unlockDaa || v.unlockAt) {
     const sec = remainingLockSec(v.unlockDaa, v.unlockAt);
     const when = v.unlockAt ? ' · ' + formatUtc(v.unlockAt) : '';
@@ -5309,14 +5324,18 @@ async function refreshVaultBalances() {
   for (const v of mine) {
     if (!v.address || !v.address.startsWith('kaspa:')) continue;
     try {
-      const bal = await fetchAddressBalance(v.address);
+      const bal = Number(await fetchAddressBalance(v.address)) || 0;
+      const optimistic = vaultLockedSompi(v);
+      const fundedSompi = bal > 0 ? bal : (v.status === 'swept' ? 0 : optimistic);
       const locked = v.unlockDaa && lastDaa && lastDaa < Number(v.unlockDaa);
       let status = v.status;
       if (v.status === 'swept') status = 'swept';
       else if (isKcc20Vault(v) && Number(v.tokenAmount || 0) > 0) status = locked ? 'locked' : 'funded';
-      else if (bal > 0) status = locked ? 'locked' : (v.status === 'funding' ? 'funding' : 'funded');
-      else if (v.status !== 'unfunded' && v.status !== 'funding') status = 'unfunded';
-      updateVault(v.address, { fundedSompi: bal, status });
+      else if (fundedSompi > 0) status = locked ? 'locked' : (v.status === 'funding' ? 'locked' : 'funded');
+      else if (!v.fundTxId && v.status !== 'funding' && v.status !== 'locked') status = 'unfunded';
+      const patch = { fundedSompi, status };
+      if (bal > 0 && !v.lockedSompi) patch.lockedSompi = bal;
+      updateVault(v.address, patch);
     } catch {}
   }
   if (currentTab === 'vault') renderVault();
@@ -6618,11 +6637,14 @@ async function fundVault(vault) {
   const lockedSompi = Math.round((Number(result.amountKas) || amt) * 1e8);
   const mins = Number(vault.params?.lockMinutes || vault.params?.minutes || 0);
   const unlockAt = vault.unlockAt || (mins ? Date.now() + mins * 60 * 1000 : 0);
+  const stillLocked = (unlockAt && unlockAt > Date.now())
+    || (vault.unlockDaa && lastDaa && lastDaa < Number(vault.unlockDaa));
   updateVault(vault.address, {
-    status: 'funding',
+    status: stillLocked ? 'locked' : 'funded',
     fundTxId: result.txId,
     covenantId: result.covenantId || null,
     fundedSompi: lockedSompi,
+    lockedSompi: lockedSompi,
     fundFeeKas: result.feeKas || 0,
     unlockAt: unlockAt || vault.unlockAt,
     params: { ...(vault.params || {}), amountKas: result.amountKas || amt }
@@ -6684,7 +6706,7 @@ function openLockTimer(vault) {
   const sweepLabel = isEscrow ? (iAmBuyer ? 'Release to me' : 'Refund to me')
     : (isXmss ? 'Spend with witness' : (hop ? 'Timeout release' : (isHash && locked ? 'Claim with secret' : 'Sweep to wallet')));
   openSheet(vault.name || 'Time Capsule', `
-    <div class="kv"><span class="k">Locked</span><span class="v">${tok ? esc(tok) : formatAmount(vault.fundedSompi || 0) + ' KAS'}</span></div>
+    <div class="kv"><span class="k">Locked</span><span class="v">${tok ? esc(tok) : formatAmount(vaultLockedSompi(vault)) + ' KAS'}</span></div>
     ${kcc ? `<div class="kv"><span class="k">Witness dust</span><span class="v">${formatAmount(vault.fundedSompi || 0)} KAS</span></div>` : ''}
     ${vault.fundFeeKas ? `<div class="kv"><span class="k">Lock fee paid</span><span class="v">${Number(vault.fundFeeKas).toFixed(6)} KAS</span></div>` : ''}
     ${vault.unlockDaa || vault.unlockAt ? `<div class="kv"><span class="k">Time left</span><span class="v" id="lock-timer-live" data-unlock-daa="${esc(vault.unlockDaa || '')}" data-unlock-at="${esc(vault.unlockAt || '')}" data-addr="${esc(vault.address || '')}">${esc(formatLockClock(sec))}</span></div>

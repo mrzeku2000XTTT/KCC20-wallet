@@ -3,16 +3,16 @@ import {
   isValidKaspaAddress, validateKaspaAddress, shortAddr, hexToBytes, privKeyToHex,
   derivePublicKey, kaspaAddressFromPubkey, bytesToHex, kasToSompi, sompiToKasString,
   validateAndCleanUtxo
-} from './crypto.js?v=87';
+} from './crypto.js?v=88';
 import {
   NATIVE_KAS, VAULT_PRODUCTS, loadWatchlist, addToken, removeToken,
   loadVaults, saveVault, updateVault, formatAmount, formatTokenUnits, tokenColor,
   fetchKcc20Portfolio, fetchKrc20Portfolio, fetchKcc20PortfolioMany, fetchKrc20PortfolioMany,
   krc20Logo, toTokenRaw, setVaultOwner, kcc20Identicon, VAULT_GROUPS
-} from './kcc20.js?v=87';
-import { parseIntent, describeIntent, askFor, parseDurationField, interpretVaultChat, normalizeChat } from './intent.js?v=87';
-import { payloadFromAddress } from './script.js?v=87';
-import { explainTransaction, scorpionAnswer } from './scorpion.js?v=87';
+} from './kcc20.js?v=88';
+import { parseIntent, describeIntent, askFor, parseDurationField, interpretVaultChat, normalizeChat } from './intent.js?v=88';
+import { payloadFromAddress } from './script.js?v=88';
+import { explainTransaction, scorpionAnswer } from './scorpion.js?v=88';
 import {
   sendKas, fetchAddressUtxos, fetchAddressBalance, loadKaspaSdk,
   buildTimelockCovenant, buildEscrowCovenant, buildMultisigCovenant, currentDaa,
@@ -20,21 +20,21 @@ import {
   compoundUtxos, sendKrc20, sendKcc20, loadKrc20Pending, lockKcc20Timelock, sweepKcc20Capsule,
   fetchOwnedUtxos, buildSentinelChain, buildRecurringChain, buildHashlockCovenant,
   newHashlockSecret, checkinHop, currentHop, parseXmssKit, p2shFromRedeemHex, spendXmssVault
-} from './tx.js?v=87';
-import { kronMarkets, quoteKronTrade, executeKronTrade, formatKasSompi, lookupKronTick, tradeCostLines, attachKronLogos } from './kronTrade.js?v=87';
+} from './tx.js?v=88';
+import { kronMarkets, quoteKronTrade, executeKronTrade, formatKasSompi, lookupKronTick, tradeCostLines, attachKronLogos } from './kronTrade.js?v=88';
 import {
   migrateReceiveBook, ownedAddresses, markAddressUsed, currentReceive,
   deriveReceiveBatch, unusedReceiveCount, ensurePrivacyBook
-} from './receive.js?v=87';
-import { knsResolve, knsPrimary, knsDomainsFor, knsOwnerMatches, knsAppUrl, looksLikeKasDomain, normalizeKasDomain } from './kns.js?v=87';
-import { runPhoneStudio, runServerStudio } from './studio.js?v=87';
+} from './receive.js?v=88';
+import { knsResolve, knsPrimary, knsDomainsFor, knsOwnerMatches, knsAppUrl, looksLikeKasDomain, normalizeKasDomain } from './kns.js?v=88';
+import { runPhoneStudio, runServerStudio } from './studio.js?v=88';
 import {
   isKaswareInstalled, isDesktopBrowser, kaswareEnabled, kaswareSigning, kaswareConnectedAddress,
   connectKasware, disconnectKasware, bindKaswareEvents, loadKaswarePref, compoundWithKasware,
   ensureKaswareSigner
-} from './kasware.js?v=87';
+} from './kasware.js?v=88';
 
-export const BUILD = '87';
+export const BUILD = '88';
 
 function errText(e) {
   if (e == null) return 'Unknown error';
@@ -1088,9 +1088,9 @@ function renderHome() {
   const balHtml = `${formatAmount(balanceSompi)}<small>KAS</small>`;
   if ($('card-bal') && $('card-bal').innerHTML !== balHtml) $('card-bal').innerHTML = balHtml;
   if ($('card-usd')) $('card-usd').textContent = price ? `≈ ${usd(kas())}` : 'Fetching price…';
-  if ($('card-addr')) $('card-addr').textContent = wallet.knsDomain
-    ? wallet.knsDomain + ' · ' + shortAddr(wallet.address, 12, 8)
-    : shortAddr(wallet.address, 12, 8);
+  if ($('card-addr')) {
+    $('card-addr').textContent = wallet.knsDomain || walletPublicName(wallet);
+  }
   if ($('card-wallet')) {
     $('card-wallet').innerHTML = `${walletTitleHtml(wallet)} ▾`;
   }
@@ -1118,9 +1118,19 @@ function walletPublicName(w) {
   const kns = walletKns(w);
   if (kns) return kns;
   const name = String(w?.name || '').trim();
-  if (name && !isGenericWalletName(name)) return name;
-  if (w?.address) return shortAddr(w.address, 8, 4);
-  return name || 'Wallet';
+  if (name) return name;
+  return 'Wallet';
+}
+
+function applyWalletName(raw) {
+  if (!wallet) return;
+  const name = String(raw || '').trim().replace(/\s+/g, ' ').slice(0, 32);
+  if (!name) throw new Error('Enter a wallet name');
+  wallet.name = name;
+  saveWallet();
+  renderHome();
+  if (currentTab === 'you') renderProfile();
+  toast('Named ' + name);
 }
 
 function walletTitleHtml(w) {
@@ -1137,7 +1147,11 @@ function walletKasLabel(w, active) {
 function renderHomeWallets() {
   const box = $('home-wallets');
   if (!box || !wallet) return;
-  const list = loadWalletList();
+  const list = [...loadWalletList()].sort((a, b) => {
+    const aa = (a.id === wallet.id || a.address === wallet.address) ? 0 : 1;
+    const bb = (b.id === wallet.id || b.address === wallet.address) ? 0 : 1;
+    return aa - bb;
+  });
   paintIfChanged(box, list.map(w => {
     const active = w.id === wallet.id;
     const kasTxt = walletKasLabel(w, active);
@@ -1156,6 +1170,7 @@ function renderHomeWallets() {
         ${sendBtn}
       </div>`;
   }).join('') + `<button class="w-chip add" type="button" data-add-wallet="1" aria-label="Add wallet">＋</button>`);
+  box.scrollLeft = 0;
 }
 
 function otherWallets() {
@@ -2248,7 +2263,10 @@ function openLookSheet() {
   haptic();
   const look = loadLook();
   openSheet('Look', `
-    <p class="muted" style="text-align:left;padding:0 0 10px;">Photo and cover live on this wallet. Wallpaper is the app background on this device.</p>
+    <p class="muted" style="text-align:left;padding:0 0 10px;">Name this wallet, then set photo, cover, and wallpaper. The name shows on Home instead of a long address.</p>
+    <div class="field"><label>Wallet name</label>
+      <input id="look-name" maxlength="32" placeholder="e.g. Treasury" value="${esc(wallet?.name || '')}" autocomplete="off">
+    </div>
     <div class="kv"><span class="k">Photo</span><span class="v">${wallet?.avatar ? 'Custom' : 'Initial'}</span></div>
     <div class="kv"><span class="k">Cover</span><span class="v">${wallet?.cover ? 'Custom' : 'Default'}</span></div>
     <div class="kv"><span class="k">Wallpaper</span><span class="v">${look.wallpaper ? 'Custom' : 'KCC20 default'}</span></div>
@@ -2261,7 +2279,21 @@ function openLookSheet() {
       <button class="btn btn-glass" id="look-reset-photos" type="button">Reset photos</button>
       <button class="btn btn-glass" id="look-reset-wall" type="button">Reset wallpaper</button>
     </div>
-  `, { confirm: 'Done', cancel: false });
+  `, {
+    confirm: 'Save name',
+    gold: true,
+    cancelLabel: 'Close',
+    onConfirm: () => {
+      applyWalletName($('look-name')?.value);
+      closeSheet();
+    }
+  });
+  $('look-name')?.addEventListener('keydown', e => {
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      try { applyWalletName($('look-name')?.value); closeSheet(); } catch (err) { toast(errText(err)); }
+    }
+  });
   $('look-photo').onclick = () => $('you-avatar-file')?.click();
   $('look-cover').onclick = () => $('you-cover-file')?.click();
   $('look-wall').onclick = () => $('you-wall-file')?.click();
@@ -5028,6 +5060,7 @@ function bind() {
   click('profile-keys', openSettings);
   click('profile-kasware', openKaswareSheet);
   click('profile-look', openLookSheet);
+  click('profile-name', openLookSheet);
   click('profile-scorpion', openScorpionSheet);
   click('profile-wipe', logout);
   click('you-cover-btn', (e) => { e?.stopPropagation?.(); $('you-cover-file')?.click(); });

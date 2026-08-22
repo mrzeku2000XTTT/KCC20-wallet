@@ -291,7 +291,7 @@ img { display: block; max-width: 100%; }
   width: 18px; height: 18px; border-radius: 50%; flex-shrink: 0;
   background: #0b2a26 url("../assets/kas.svg") center / 78% no-repeat;
 }
-.w-chip b { display: flex; align-items: center; gap: 4px; font-size: 13px; font-weight: 650; max-width: 128px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.w-chip b { display: flex; align-items: center; gap: 4px; font-size: 13px; font-weight: 650; max-width: 108px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .kns-check {
   display: inline-flex; align-items: center; justify-content: center;
   width: 14px; height: 14px; border-radius: 50%; flex-shrink: 0;
@@ -382,9 +382,13 @@ img { display: block; max-width: 100%; }
 .card-bal small { font-size: 18px; font-weight: 600; opacity: 0.55; margin-left: 6px; }
 .card-usd { font-size: 14px; color: rgba(255,255,255,0.5); margin-top: 2px; position: relative; z-index: 1; }
 .card-foot {
-  margin-top: 16px; display: flex; justify-content: space-between; align-items: center;
+  margin-top: 16px; display: flex; justify-content: space-between; align-items: center; gap: 8px;
   position: relative; z-index: 1; font-size: 12px; color: rgba(255,255,255,0.55);
-  font-family: ui-monospace, "SF Mono", Menlo, monospace;
+}
+#card-addr {
+  min-width: 0; flex: 1;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  font-family: inherit; font-weight: 650;
 }
 
 .actions { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; margin-bottom: 22px; }

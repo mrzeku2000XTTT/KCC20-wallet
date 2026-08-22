@@ -7,20 +7,16 @@ const COOK_DIRECT = 'https://dev-api-kcc20.kaspa.com';
 const AGENT_KEY = 'kcc20_agent_v1';
 const LAUNCH_KEY = 'kcc20_launched_v1';
 
-export function cookBases() {
-  const list = [];
+export function cookUrls(path) {
+  const p = path.startsWith('/') ? path : '/' + path;
+  const urls = [];
   try {
     if (typeof location !== 'undefined' && location.protocol !== 'file:' && location.origin) {
-      list.push(location.origin + '/api/cook');
-      list.push(location.origin + '/cook-api');
+      urls.push(location.origin + '/cook-api' + p);
+      urls.push(location.origin + '/api/relay?path=' + encodeURIComponent(p));
     }
   } catch {}
-  list.push(COOK_DIRECT);
-  return [...new Set(list)];
-}
-
-export function cookApiBase() {
-  return cookBases()[0] || COOK_DIRECT;
+  return urls;
 }
 
 export const COOK_API = COOK_DIRECT;
@@ -93,7 +89,7 @@ function cookFail(e, data, status) {
   if (data?.error || data?.message || data?.reason) return new Error(data.error || data.message || data.reason);
   const m = errText(e);
   if (/failed to fetch|networkerror|load failed|network request/i.test(m)) {
-    return new Error('Could not reach Cook. Hard-refresh the hosted app. TN10 signs Native (KasWare is mainnet).');
+    return new Error('Could not reach Cook. Hard-refresh, then Launch again. KasWare on TN10 can sign once Cook answers.');
   }
   if (status) return new Error('Cook HTTP ' + status + (data?.raw ? ': ' + String(data.raw).slice(0, 140) : ''));
   return new Error(m);
@@ -101,11 +97,12 @@ function cookFail(e, data, status) {
 
 async function cookRequest(path, init) {
   let last = new Error('Could not reach Cook');
-  for (const base of cookBases()) {
+  const urls = cookUrls(path);
+  for (const url of urls) {
     try {
-      const res = await fetch(base + path, { ...(init || {}), cache: 'no-store' });
+      const res = await fetch(url, { ...(init || {}), cache: 'no-store', credentials: 'omit', mode: 'cors' });
       const text = await res.text();
-      if (/^\s*</.test(text || '')) {
+      if (/^\s*</.test(text || '') || /NOT_FOUND/i.test(text || '')) {
         last = new Error('Cook proxy missed');
         continue;
       }

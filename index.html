@@ -12,7 +12,7 @@
   <link rel="icon" href="assets/icon.png">
   <title>KCC20 Wallet</title>
   <meta http-equiv="Cache-Control" content="no-store, no-cache, must-revalidate">
-  <link rel="stylesheet" href="css/app.css?v=106">
+  <link rel="stylesheet" href="css/app.css?v=107">
 </head>
 <body>
   <img class="bg-poster" src="assets/bg.jpg" alt="">
@@ -571,7 +571,7 @@
               <li><b>Pick any KCC20</b> — KRON, KROSHI, KKDAG, or another ticker on KRON.</li>
               <li><b>First buy happens when you sign</b> — that slice goes into the KRON market immediately.</li>
               <li><b>The rest is locked on-chain</b> — remaining slices sit in time capsules. KRON protocol fees are per buy (the covenant requires them — they cannot be prepaid once). The 0.50 KAS token cell is paid on the first buy only; later slices merge into that cell.</li>
-              <li><b>Then wait your interval</b> — 15m / 1h / 4h / 1 day. Each capsule opens and buys the same slice again. Max 8 total buys.</li>
+              <li><b>Then wait your interval</b> — budget ÷ each buy = number of slices. Timer × remaining slices = how long the plan runs.</li>
             </ol>
             <p class="muted" style="text-align:left;padding-top:6px;">If you close the tab, capsules wait on-chain until you open the app again (even locked we can broadcast the drip). Token buys run when this wallet is unlocked. You can stop and reclaim unopened capsules.</p>
           </details>
@@ -659,7 +659,7 @@
     })();
   </script>
   <script type="module">
-    import('./js/app.js?v=106').catch(function (err) {
+    import('./js/app.js?v=107').catch(function (err) {
       console.error(err);
       var phone = document.getElementById('phone');
       var d = document.createElement('div');

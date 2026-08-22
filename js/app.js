@@ -45,7 +45,7 @@ import {
 } from './atrade.js?v=100';
 import { SCORPION_MEMORY } from './scorpionMemory.js?v=100';
 
-export const BUILD = '106';
+export const BUILD = '107';
 
 const TOKEN_FALLBACK_LOGO = 'assets/ttt.png';
 
@@ -4443,6 +4443,18 @@ function dcaEveryLabel(ms) {
   return 'every day';
 }
 
+function dcaSpanLabel(ms, laterCount) {
+  const t = Math.max(0, Number(laterCount || 0)) * Number(ms || 0);
+  if (!(t > 0)) return 'now only';
+  if (t < 3600000) return Math.round(t / 60000) + ' minutes';
+  if (t < 86400000) {
+    const h = t / 3600000;
+    return (Number.isInteger(h) ? h : h.toFixed(1)) + ' hour' + (h === 1 ? '' : 's');
+  }
+  const d = t / 86400000;
+  return (Number.isInteger(d) ? d : d.toFixed(1)) + ' day' + (d === 1 ? '' : 's');
+}
+
 function dcaPlanBits() {
   const tick = ($('trade-ticker')?.value || 'TOKEN').trim().toUpperCase();
   const budget = Number($('dca-budget')?.value || 0);
@@ -4460,23 +4472,34 @@ function paintDcaPlan() {
   if (!(slice >= 0.5)) { box.textContent = 'Each buy must be at least 0.5 KAS into the market.'; return; }
   if (!(budget >= slice)) { box.textContent = 'Budget must cover at least one buy.'; return; }
   if (buys < 1) { box.textContent = 'Budget ÷ each buy must be at least 1 buy.'; return; }
-  const n = Math.min(8, buys);
-  const later = Math.max(0, n - 1);
-  box.innerHTML = `<b>${esc(tick)}</b> · first buy of ${slice} KAS <b>when you sign</b>, then ${later} capsule${later === 1 ? '' : 's'} ${esc(dcaEveryLabel(every))}. Quoting fees…`;
+  const leftover = budget - buys * slice;
+  const later = Math.max(0, buys - 1);
+  const span = dcaSpanLabel(every, later);
+  box.innerHTML = `<b>${esc(tick)}</b> · ${buys} buys of ${slice} KAS (${esc(dcaEveryLabel(every))}, over ${esc(span)}). Quoting buy-now vs DCA…`;
   paintDcaLive();
   const gen = (paintDcaPlan._g = (paintDcaPlan._g || 0) + 1);
-  quoteKronTrade({ tick, side: 'buy', amount: String(slice) }).then(q => {
+  Promise.all([
+    quoteKronTrade({ tick, side: 'buy', amount: String(slice) }),
+    quoteKronTrade({ tick, side: 'buy', amount: String(budget) }).catch(() => null)
+  ]).then(([q, lump]) => {
     if (paintDcaPlan._g !== gen || !box.isConnected) return;
     paintDcaPlan._q = q;
+    paintDcaPlan._lump = lump;
     const first = Number(q.nativeLeave || 0) / 1e8;
     const next = Number(q.netGone || q.nativeLeave || 0) / 1e8;
-    const lockKas = later * (next + 0.01);
-    box.innerHTML = `<b>${esc(tick)}</b> · buy ${slice} KAS now, then ${later} capsule${later === 1 ? '' : 's'} ${esc(dcaEveryLabel(every))}.
-      KRON protocol fee is <b>every buy</b> (${esc(formatKasSompi(q.fee))} KAS — covenant, cannot prepay once). The 0.50 KAS cell is <b>once</b> on the first buy; later slices merge into it.
-      First buy leaves ~${first.toFixed(2)} KAS. Each later capsule holds ~${next.toFixed(2)} KAS (market + protocol + network). Prefund ~${(first + lockKas).toFixed(2)} KAS.`;
+    const dcaTotal = first + later * (next + 0.01);
+    const lumpLeave = lump ? Number(lump.nativeLeave || 0) / 1e8 : budget + Number(q.fee || 0) / 1e8 + 0.9;
+    const extra = Math.max(0, dcaTotal - lumpLeave);
+    box.innerHTML = `<b>${buys} buys</b> of ${slice} KAS ${esc(dcaEveryLabel(every))} · last slice in ${esc(span)}.
+      <span class="dca-cmp">
+        <span><em>Buy ${budget} KAS now</em>Protocol ${lump ? esc(formatKasSompi(lump.fee)) : 'once'} · cell 0.50 once · network ~0.40 once<br>Leaves ~${lumpLeave.toFixed(2)} KAS</span>
+        <span><em>DCA ${buys} × ${slice}</em>Protocol ${esc(formatKasSompi(q.fee))} × ${buys} · cell 0.50 once · network × ${buys}<br>Prefund ~${dcaTotal.toFixed(2)} KAS</span>
+      </span>
+      DCA costs ~${extra.toFixed(2)} KAS more than buying now (extra KRON protocol + network on each slice). First buy when you sign; capsules cover the rest.
+      ${leftover > 0.00000001 ? `Unused ${leftover.toFixed(4)} KAS stays in the wallet (budget not a multiple of each buy).` : ''}`;
   }).catch(e => {
     if (paintDcaPlan._g !== gen) return;
-    box.innerHTML = `<b>${esc(tick)}</b> · first buy now, then ${later} capsules. Could not quote fees: ${esc(errText(e))}`;
+    box.innerHTML = `${buys} buys of ${slice} KAS ${esc(dcaEveryLabel(every))} over ${esc(span)}. Could not quote: ${esc(errText(e))}`;
   });
 }
 
@@ -4525,10 +4548,11 @@ async function startDcaFromForm() {
   if (isTestnet()) { toast('Home DCA is mainnet KCC20. Use COOK Agent on TN10.'); return; }
   if (!wallet) { toast('Unlock a wallet'); return; }
   const { tick, slice, every, buys } = dcaPlanBits();
-  const n = Math.min(8, buys);
+  const n = buys;
   if (!validTick(tick)) { toast('Look up a ticker first'); return; }
   if (!(slice >= 0.5)) { toast('Each buy at least 0.5 KAS'); return; }
   if (n < 1) { toast('Budget must cover at least one buy'); return; }
+  if (n > 24) { toast('Too many slices (max 24). Raise each buy or lower the budget.'); return; }
   try { await lookupKronTick(tick); }
   catch (e) { toast(errText(e)); return; }
   hydrateNativeKey(wallet);
@@ -4580,12 +4604,20 @@ async function startDcaFromForm() {
     });
     drips = built.drips;
     const outputs = drips.map(d => ({ address: d.address, amount: BigInt(d.value) }));
-    fund = await sendKasMany({
-      wallet,
-      outputs,
-      utxos: await fetchAddressUtxos(wallet.address).catch(() => []),
-      signWithKasware: kaswareEnabled()
-    });
+    const ids = [];
+    for (let i = 0; i < outputs.length; i += 6) {
+      const chunk = outputs.slice(i, i + 6);
+      toast('Funding capsules ' + (i + 1) + '–' + (i + chunk.length) + '…');
+      const part = await sendKasMany({
+        wallet,
+        outputs: chunk,
+        utxos: await fetchAddressUtxos(wallet.address).catch(() => []),
+        signWithKasware: kaswareEnabled()
+      });
+      ids.push(part.txId);
+      fund = part;
+    }
+    fund = { ...fund, txId: ids.filter(Boolean).join(',') };
     for (const d of drips) {
       saveVault({
         type: 'dca',
@@ -4902,21 +4934,25 @@ async function reviewTrade() {
     const plan = dcaPlanBits();
     if (!validTick(plan.tick)) { toast('Look up a ticker first'); return; }
     if (!(plan.slice >= 0.5) || plan.buys < 1) { toast('Set budget and each buy'); return; }
-    const n = Math.min(8, plan.buys);
+    const n = plan.buys;
+    if (n > 24) { toast('Too many slices (max 24). Raise each buy or lower the budget.'); return; }
     const q = paintDcaPlan._q;
+    const lump = paintDcaPlan._lump;
     const first = q ? Number(q.nativeLeave || 0) / 1e8 : plan.slice + 1.5;
     const next = q ? Number(q.netGone || q.nativeLeave || 0) / 1e8 : plan.slice + 1;
     const later = Math.max(0, n - 1);
+    const dcaTotal = first + later * (next + 0.01);
+    const lumpLeave = lump ? Number(lump.nativeLeave || 0) / 1e8 : plan.budget + 0.9;
+    const span = dcaSpanLabel(plan.every, later);
     openSheet('Review DCA ' + plan.tick, `
-      <div class="kv"><span class="k">Token</span><span class="v">${esc(plan.tick)}</span></div>
-      <div class="kv"><span class="k">First buy</span><span class="v">${plan.slice} KAS now (includes 0.50 cell)</span></div>
-      <div class="kv"><span class="k">Then</span><span class="v">${later} capsule${later === 1 ? '' : 's'} ${esc(dcaEveryLabel(plan.every))}</span></div>
-      ${q ? `<div class="kv"><span class="k">Into market</span><span class="v">${esc(formatKasSompi(q.kasIn))} KAS each</span></div>
-      <div class="kv"><span class="k">KRON protocol</span><span class="v">${esc(formatKasSompi(q.fee))} KAS <b>each buy</b></span></div>
-      <div class="kv"><span class="k">Token cell</span><span class="v">0.50 KAS once, then reused</span></div>
-      <div class="kv"><span class="k">Later capsule</span><span class="v">~${next.toFixed(2)} KAS (no new cell)</span></div>` : ''}
-      <div class="kv"><span class="k">Prefund capsules</span><span class="v">~${(later * (next + 0.01)).toFixed(2)} KAS on-chain</span></div>
-      <p class="muted" style="text-align:left;padding-top:8px;">KRON protocol fees are covenant-required on every swap — they cannot be paid once for the plan. The 0.50 KAS cell is paid on the first buy; later slices merge into that cell. Capsules only drip into ${esc(plan.tick)} buys.</p>
+      <div class="kv"><span class="k">Buys</span><span class="v">${n} × ${plan.slice} KAS (${esc(dcaEveryLabel(plan.every))})</span></div>
+      <div class="kv"><span class="k">Schedule</span><span class="v">1 now, then ${later} over ${esc(span)}</span></div>
+      <div class="kv"><span class="k">Buy ${plan.budget} now</span><span class="v">~${lumpLeave.toFixed(2)} KAS leaves</span></div>
+      <div class="kv"><span class="k">DCA total</span><span class="v">~${dcaTotal.toFixed(2)} KAS (${later} capsules)</span></div>
+      <div class="kv"><span class="k">DCA extra</span><span class="v">~${Math.max(0, dcaTotal - lumpLeave).toFixed(2)} KAS vs lump sum</span></div>
+      ${q ? `<div class="kv"><span class="k">Protocol / slice</span><span class="v">${esc(formatKasSompi(q.fee))} KAS × ${n} buys</span></div>
+      <div class="kv"><span class="k">Cell</span><span class="v">0.50 KAS once</span></div>` : ''}
+      <p class="muted" style="text-align:left;padding-top:8px;">Buy-now pays KRON protocol once. DCA pays it on every slice (covenant). Cell is once. Capsules prefund later ${esc(plan.tick)} buys only.</p>
     `, {
       confirm: kaswareEnabled() ? 'Buy now + lock (KasWare)' : 'Buy now + lock with PIN',
       gold: true,

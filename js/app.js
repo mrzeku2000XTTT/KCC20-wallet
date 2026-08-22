@@ -3,16 +3,16 @@ import {
   isValidKaspaAddress, validateKaspaAddress, shortAddr, hexToBytes, privKeyToHex,
   derivePublicKey, kaspaAddressFromPubkey, bytesToHex, kasToSompi, sompiToKasString,
   validateAndCleanUtxo
-} from './crypto.js?v=88';
+} from './crypto.js?v=89';
 import {
   NATIVE_KAS, VAULT_PRODUCTS, loadWatchlist, addToken, removeToken,
   loadVaults, saveVault, updateVault, formatAmount, formatTokenUnits, tokenColor,
   fetchKcc20Portfolio, fetchKrc20Portfolio, fetchKcc20PortfolioMany, fetchKrc20PortfolioMany,
   krc20Logo, toTokenRaw, setVaultOwner, kcc20Identicon, VAULT_GROUPS
-} from './kcc20.js?v=88';
-import { parseIntent, describeIntent, askFor, parseDurationField, interpretVaultChat, normalizeChat } from './intent.js?v=88';
-import { payloadFromAddress } from './script.js?v=88';
-import { explainTransaction, scorpionAnswer } from './scorpion.js?v=88';
+} from './kcc20.js?v=89';
+import { parseIntent, describeIntent, askFor, parseDurationField, interpretVaultChat, normalizeChat } from './intent.js?v=89';
+import { payloadFromAddress } from './script.js?v=89';
+import { explainTransaction, scorpionAnswer } from './scorpion.js?v=89';
 import {
   sendKas, fetchAddressUtxos, fetchAddressBalance, loadKaspaSdk,
   buildTimelockCovenant, buildEscrowCovenant, buildMultisigCovenant, currentDaa,
@@ -20,21 +20,27 @@ import {
   compoundUtxos, sendKrc20, sendKcc20, loadKrc20Pending, lockKcc20Timelock, sweepKcc20Capsule,
   fetchOwnedUtxos, buildSentinelChain, buildRecurringChain, buildHashlockCovenant,
   newHashlockSecret, checkinHop, currentHop, parseXmssKit, p2shFromRedeemHex, spendXmssVault
-} from './tx.js?v=88';
-import { kronMarkets, quoteKronTrade, executeKronTrade, formatKasSompi, lookupKronTick, tradeCostLines, attachKronLogos } from './kronTrade.js?v=88';
+} from './tx.js?v=89';
+import { kronMarkets, quoteKronTrade, executeKronTrade, formatKasSompi, lookupKronTick, tradeCostLines, attachKronLogos } from './kronTrade.js?v=89';
 import {
   migrateReceiveBook, ownedAddresses, markAddressUsed, currentReceive,
   deriveReceiveBatch, unusedReceiveCount, ensurePrivacyBook
-} from './receive.js?v=88';
-import { knsResolve, knsPrimary, knsDomainsFor, knsOwnerMatches, knsAppUrl, looksLikeKasDomain, normalizeKasDomain } from './kns.js?v=88';
-import { runPhoneStudio, runServerStudio } from './studio.js?v=88';
+} from './receive.js?v=89';
+import { knsResolve, knsPrimary, knsDomainsFor, knsOwnerMatches, knsAppUrl, looksLikeKasDomain, normalizeKasDomain } from './kns.js?v=89';
+import { runPhoneStudio, runServerStudio } from './studio.js?v=89';
 import {
   isKaswareInstalled, isDesktopBrowser, kaswareEnabled, kaswareSigning, kaswareConnectedAddress,
   connectKasware, disconnectKasware, bindKaswareEvents, loadKaswarePref, compoundWithKasware,
   ensureKaswareSigner
-} from './kasware.js?v=88';
+} from './kasware.js?v=89';
+import {
+  cookMarkets, cookQuote, cookWrappers, pickWrappedMarketId,
+  cookDeploy, cookBuildOrder, cookFillOrder, cookSweep, cookWrap, cookMint,
+  extractSigning, signAndBroadcastPskt, cookTokenId, isTestnetAddr,
+  loadAgentJob, saveAgentJob, sompiToKas, kasToSompiNum
+} from './atrade.js?v=89';
 
-export const BUILD = '88';
+export const BUILD = '89';
 
 function errText(e) {
   if (e == null) return 'Unknown error';
@@ -210,6 +216,12 @@ let pinWait = null;
 let pinUnlockedFor = '';
 let pendingNewKey = null;
 let qrStream = null;
+let atPane = 'book';
+let atSrc = 'kron';
+let atCook = null;
+let lastCookToken = null;
+let agentTimer = null;
+let agentBusy = false;
 let qrRaf = 0;
 
 function haptic() { try { navigator.vibrate?.(12); } catch {} }
@@ -297,7 +309,7 @@ function showPage(id) {
   $('scroll')?.classList.toggle('home-noscroll', id === 'home' || id === 'vault' || id === 'you');
   currentTab = id;
   document.querySelectorAll('.tab').forEach(t => t.classList.toggle('active', t.dataset.tab === id));
-  const titles = { home: 'KCC20', tokens: 'Tokens', vault: 'Vault', activity: 'Activity', you: 'Profile' };
+  const titles = { home: 'KCC20', tokens: 'A-Trade', vault: 'Vault', activity: 'Activity', you: 'Profile' };
   if (id === 'home' && wallet) {
     $('nav-title').innerHTML = `<button type="button" class="nav-wallet" id="nav-wallet"><b>${esc(wallet.name || 'Wallet')}</b><span>▾</span></button>`;
     $('nav-wallet')?.addEventListener('click', openWalletSwitcher);
@@ -332,7 +344,7 @@ function showPage(id) {
     refreshAllWalletSnaps({ tokens: true }).catch(() => {});
   }
   if (id === 'tokens') {
-    try { renderKronMarkets(); } catch (e) { console.error(e); }
+    try { setAtPane(atPane || 'book'); } catch (e) { console.error(e); }
   }
   if (id === 'activity') {
     try { renderActivity(window.__txs || []); } catch (e) { console.error(e); }
@@ -800,6 +812,7 @@ function lockNow() {
   closeSheet();
   stopQrScan();
   hideTradeScreen();
+  stopAgentLoop();
   pinUnlockedFor = '';
   sessionUnlocked = false;
   $('tabbar')?.classList.remove('show');
@@ -1012,6 +1025,7 @@ async function unlockToHome() {
   loadKaspaSdk().catch(() => {});
   scheduleAllFreezeWatches();
   maybeAutoUnlock();
+  resumeAgentIfAny();
   const pend = wallet?.address ? loadKrc20Pending(wallet.address) : null;
   if (pend) toast('Unfinished KRC-20 reveal — open Send to finish it');
 }
@@ -1381,6 +1395,7 @@ function renderTokens() {
       </div>`).join('')
       : `<div class="empty">Optional: watch a ticker that the indexer has not listed yet.</div>`;
   }
+  renderBoosts();
 }
 
 function vaultStatusLine(v) {
@@ -2844,8 +2859,8 @@ function openTokenSheet(token) {
   `, { confirm: false, cancelLabel: 'Close' });
   $('tk-recv')?.addEventListener('click', () => { closeSheet(); openReceive({ token }); });
   $('tk-send')?.addEventListener('click', () => { closeSheet(); openSend({ token, assetKey }); });
-  $('tk-buy')?.addEventListener('click', () => { closeSheet(); openTrade({ tick: token.ticker, side: 'buy' }); });
-  $('tk-sell')?.addEventListener('click', () => { closeSheet(); openTrade({ tick: token.ticker, side: 'sell' }); });
+  $('tk-buy')?.addEventListener('click', () => { closeSheet(); jumpToAtTrade(token.ticker, 'buy'); });
+  $('tk-sell')?.addEventListener('click', () => { closeSheet(); jumpToAtTrade(token.ticker, 'sell'); });
   $('tk-freeze')?.addEventListener('click', () => { closeSheet(); openProduct('kcc20freeze', { tick: token.ticker }); });
 }
 
@@ -2877,6 +2892,648 @@ async function renderKronMarkets() {
   } catch (e) {
     box.innerHTML = `<div class="empty">${esc(errText(e))}</div>`;
   }
+}
+
+function jumpToAtTrade(tick, side) {
+  showPage('tokens');
+  setAtPane('book');
+  if ($('at-tick')) $('at-tick').value = String(tick || 'KRON').toUpperCase();
+  atSrc = 'kron';
+  document.querySelectorAll('#at-src button').forEach(b => b.classList.toggle('on', b.dataset.src === 'kron'));
+  $('kron-markets')?.classList.remove('hidden');
+  $('at-cook-mkts')?.classList.add('hidden');
+  syncAtLabels(side);
+  atQuotePreview();
+}
+
+function syncAtKwBtn() {
+  const btn = $('at-kw-btn');
+  if (!btn) return;
+  const on = kaswareEnabled();
+  btn.textContent = on ? 'KasWare' : 'Native';
+  btn.classList.toggle('on', on);
+}
+
+function syncAtNote() {
+  const el = $('at-note');
+  if (!el) return;
+  const kw = kaswareEnabled() ? 'KasWare signs.' : 'This wallet signs with PIN.';
+  if (atPane === 'launch' || atSrc === 'cook') {
+    el.textContent = 'Cook KCC20 V1 is public testnet (kaspatest). KRON Book is live mainnet. Covenants hold funds — we never custody. ' + kw;
+  } else if (atPane === 'agent') {
+    el.textContent = 'Scorpion trades KRON on mainnet only while this tab stays unlocked. We never hold keys, so it cannot trade if the phone is killed. ' + kw;
+  } else {
+    el.textContent = 'Covenants hold the funds. This app never custodied them. Limit is a max/min price. Slippage is checked on review. ' + kw;
+  }
+}
+
+function syncAtLabels(side) {
+  const s = side || 'buy';
+  const tick = ($('at-tick')?.value || 'TOKEN').toUpperCase();
+  const lab = $('at-amt-lab');
+  if (!lab) return;
+  if (atSrc === 'cook') lab.textContent = 'Tokens';
+  else lab.textContent = s === 'sell' ? `Amount (${tick})` : 'Pay (KAS)';
+}
+
+function setAtPane(pane) {
+  atPane = pane === 'tokens' ? 'tokens' : (pane || 'book');
+  const book = atPane === 'book';
+  const launch = atPane === 'launch';
+  const agent = atPane === 'agent';
+  const hold = atPane === 'tokens';
+  $('at-book')?.classList.toggle('hidden', !book);
+  $('at-launch')?.classList.toggle('hidden', !launch);
+  $('at-agent')?.classList.toggle('hidden', !agent);
+  $('at-holdings')?.classList.toggle('hidden', !hold);
+  document.querySelectorAll('#at-seg button').forEach(b => b.classList.toggle('on', b.dataset.at === atPane));
+  $('at-tokens-btn')?.classList.toggle('on', hold);
+  syncAtKwBtn();
+  syncAtNote();
+  if (book) {
+    if (atSrc === 'cook') renderCookMarkets();
+    else renderKronMarkets();
+    atQuotePreview();
+  }
+  if (hold) renderTokens();
+  if (agent) paintAgentStatus();
+}
+
+function atSlipPct() {
+  const n = Number($('at-slip')?.value);
+  return Number.isFinite(n) && n >= 0 ? n : 1;
+}
+
+function atLimitKas() {
+  const n = Number($('at-limit')?.value);
+  return Number.isFinite(n) && n > 0 ? n : 0;
+}
+
+function impliedKronPx(q) {
+  if (!q) return 0;
+  if (q.side === 'buy') {
+    const tok = Number(q.tokenOut) / (10 ** Number(q.decimals || 0));
+    const kas = Number(q.kasIn) / 1e8;
+    return tok > 0 ? kas / tok : 0;
+  }
+  const tok = Number(q.tokenIn) / (10 ** Number(q.decimals || 0));
+  const kas = Number(q.net || q.kasOut) / 1e8;
+  return tok > 0 ? kas / tok : 0;
+}
+
+function assertLimitSlip(q, { limit, slip, side }) {
+  const px = impliedKronPx(q);
+  if (limit > 0 && px > 0) {
+    if (side === 'buy' && px > limit * 1.0000001) {
+      throw new Error('Quote ' + px.toPrecision(4) + ' KAS/token is above your limit ' + limit);
+    }
+    if (side === 'sell' && px < limit * 0.999999) {
+      throw new Error('Quote ' + px.toPrecision(4) + ' KAS/token is below your limit ' + limit);
+    }
+  }
+  return px;
+}
+
+async function renderCookMarkets() {
+  const box = $('at-cook-mkts');
+  if (!box) return;
+  if (!box.dataset.loaded) box.innerHTML = `<div class="empty">Loading Cook book…</div>`;
+  try {
+    const rows = (await cookMarkets(16)).slice(0, 16);
+    box.dataset.loaded = '1';
+    box.innerHTML = rows.map(m => {
+      const tick = String(m.metadata?.ticker || m.ticker || '?').toUpperCase();
+      const name = m.metadata?.name || tick;
+      const ask = sompiToKas(m.bestAskUnitPriceSompi);
+      const bid = sompiToKas(m.bestBidUnitPriceSompi);
+      const id = m.tokenIdHex || m.metadata?.tokenIdHex || '';
+      return `
+        <button class="row token-row" type="button" data-cook-id="${esc(id)}" data-cook-tick="${esc(tick)}">
+          <div class="dot" style="background:rgba(212,176,122,.16);color:var(--gold-2)">${esc(tick.slice(0, 3))}</div>
+          <div>
+            <div class="title">${esc(tick)}</div>
+            <div class="sub">TN10 book · ${esc(name)}</div>
+          </div>
+          <div class="amt">
+            <b>${ask ? ask.toPrecision(4) : '—'} KAS</b>
+            <em class="mkt-chg">bid ${bid ? bid.toPrecision(3) : '—'}</em>
+          </div>
+        </button>`;
+    }).join('') || `<div class="empty">No Cook markets yet.</div>`;
+  } catch (e) {
+    box.innerHTML = `<div class="empty">${esc(errText(e))}</div>`;
+  }
+}
+
+function pickCookRow(id, tick) {
+  atCook = { tokenId: id, tick: String(tick || '').toUpperCase() };
+  if ($('at-tick')) $('at-tick').value = atCook.tick;
+  atSrc = 'cook';
+  syncAtLabels('buy');
+  atQuotePreview();
+}
+
+function setAtSrc(src) {
+  atSrc = src === 'cook' ? 'cook' : 'kron';
+  document.querySelectorAll('#at-src button').forEach(b => b.classList.toggle('on', b.dataset.src === atSrc));
+  $('kron-markets')?.classList.toggle('hidden', atSrc !== 'kron');
+  $('at-cook-mkts')?.classList.toggle('hidden', atSrc !== 'cook');
+  syncAtLabels('buy');
+  syncAtNote();
+  if (atSrc === 'cook') renderCookMarkets();
+  else renderKronMarkets();
+  atQuotePreview();
+}
+
+async function atQuotePreview() {
+  const box = $('at-quote');
+  if (!box) return;
+  const tick = ($('at-tick')?.value || '').trim().toUpperCase();
+  const amount = ($('at-amt')?.value || '').trim();
+  const limit = atLimitKas();
+  const slip = atSlipPct();
+  if (!tick) { box.textContent = 'Pick a market.'; return; }
+  if (!amount) {
+    box.textContent = atSrc === 'cook'
+      ? (tick + ' · Cook TN10 book. Amount is tokens. Limit rests an order; empty limit takes the book. Slip ' + slip + '%.')
+      : (tick + ' · KRON mainnet AMM. Buy amount is KAS. Limit is a max/min price. Slip ' + slip + '%.');
+    return;
+  }
+  box.textContent = 'Quoting…';
+  try {
+    if (atSrc === 'cook') {
+      const id = atCook?.tokenId;
+      if (!id) { box.textContent = 'Tap a Cook market first.'; return; }
+      const side = 'buy';
+      const limSompi = limit > 0 ? String(kasToSompiNum(limit)) : undefined;
+      const q = await cookQuote(id, { side, amount, mode: limit > 0 ? 'limit' : 'market', limitUnitPriceSompi: limSompi });
+      if (!q?.valid) {
+        box.textContent = (q?.errors || []).join(' ') || 'No fill at that size/price. Set a limit to rest an order.';
+        return;
+      }
+      const px = sompiToKas(q.averageUnitPriceSompi || q.unitPriceSompi);
+      box.textContent = `Cook ${tick}: ~${px.toPrecision(4)} KAS/token · pay ${sompiToKas(q.buyerPaysSompi).toPrecision(4)} KAS · fee ${sompiToKas(q.protocolFeeSompi).toPrecision(3)} KAS · ${q.executionMode || 'fill'}`;
+      return;
+    }
+    const q = await quoteKronTrade({ tick, side: 'buy', amount });
+    const px = impliedKronPx(q);
+    box.textContent = `${q.tick} ${q.graduated ? 'pool' : 'curve'}: you get ${formatTokenUnits(q.tokenOut, q.decimals)} ${q.tick} · ~${px ? px.toPrecision(4) : '—'} KAS/token · slip ${slip}%` + (limit ? ` · limit ${limit}` : '');
+  } catch (e) {
+    box.textContent = errText(e);
+  }
+}
+
+async function confirmAtSign(title, body, run) {
+  const kw = kaswareEnabled();
+  openSheet(title, body, {
+    confirm: kw ? 'Pay with KasWare' : 'Pay with PIN',
+    gold: true,
+    onConfirm: async () => {
+      try {
+        if (kw) {
+          setSheetStatus('Opening KasWare…');
+          await ensureKaswareSigner(wallet);
+        } else {
+          await requirePin(title);
+        }
+        await run();
+      } catch (e) {
+        if (errText(e) === 'cancelled') return;
+        toast(errText(e));
+        setSheetStatus(errText(e), true);
+      }
+    }
+  });
+}
+
+async function reviewAtTrade(side) {
+  const amount = ($('at-amt')?.value || '').trim();
+  const tick = ($('at-tick')?.value || 'KRON').trim().toUpperCase();
+  const limit = atLimitKas();
+  const slip = atSlipPct();
+  if (!amount) { toast('Enter an amount'); return; }
+  if (!wallet) { toast('Unlock a wallet'); return; }
+  if (atSrc === 'cook') return reviewCookTrade(side);
+  let q;
+  try { q = await quoteKronTrade({ tick, side, amount }); }
+  catch (e) { toast(errText(e)); return; }
+  let px = 0;
+  try { px = assertLimitSlip(q, { limit, slip, side }); }
+  catch (e) { toast(errText(e)); return; }
+  const bits = q.side === 'buy'
+    ? `<div class="kv"><span class="k">Pay</span><span class="v">${esc(formatKasSompi(q.kasIn))} KAS</span></div>
+       <div class="kv"><span class="k">You get</span><span class="v">${esc(formatTokenUnits(q.tokenOut, q.decimals))} ${esc(q.tick)}</span></div>
+       <div class="kv"><span class="k">Price</span><span class="v">${px ? px.toPrecision(4) : '—'} KAS/${esc(q.tick)}</span></div>
+       <div class="kv"><span class="k">Slippage</span><span class="v">${slip}%</span></div>
+       ${limit ? `<div class="kv"><span class="k">Limit</span><span class="v">≤ ${limit} KAS</span></div>` : ''}
+       <div class="kv"><span class="k">Protocol fees</span><span class="v">${esc(formatKasSompi(q.fee))} KAS</span></div>
+       <p class="muted" style="text-align:left;padding-top:8px;">KRON AMM on mainnet. Covenants hold pool funds. This app never custody. Re-quoted at confirm — worse than slip/limit is rejected.</p>`
+    : `<div class="kv"><span class="k">Sell</span><span class="v">${esc(formatTokenUnits(q.tokenIn, q.decimals))} ${esc(q.tick)}</span></div>
+       <div class="kv"><span class="k">You receive</span><span class="v">${esc(formatKasSompi(q.net))} KAS</span></div>
+       <div class="kv"><span class="k">Price</span><span class="v">${px ? px.toPrecision(4) : '—'} KAS/${esc(q.tick)}</span></div>
+       <div class="kv"><span class="k">Slippage</span><span class="v">${slip}%</span></div>
+       ${limit ? `<div class="kv"><span class="k">Limit</span><span class="v">≥ ${limit} KAS</span></div>` : ''}`;
+  await confirmAtSign('Review ' + q.tick + ' ' + side, bits, async () => {
+    setSheetStatus('Re-quoting…');
+    const q2 = await quoteKronTrade({ tick, side, amount });
+    assertLimitSlip(q2, { limit, slip, side });
+    if (side === 'buy' && Number(q2.tokenOut) < Number(q.tokenOut) * (100 - slip) / 100) {
+      throw new Error('Slippage: fewer tokens than quoted');
+    }
+    if (side === 'sell' && Number(q2.net) < Number(q.net) * (100 - slip) / 100) {
+      throw new Error('Slippage: less KAS than quoted');
+    }
+    await runTrade({ tick, side, amount, quote: q2, forceKasware: kaswareEnabled() });
+  });
+}
+
+async function reviewCookTrade(side) {
+  if (!isTestnetAddr(wallet?.address)) {
+    toast('Cook book is TN10. Import a kaspatest wallet to sign. KRON live still trades mainnet.');
+    return;
+  }
+  const amount = ($('at-amt')?.value || '').trim();
+  const tick = ($('at-tick')?.value || '').trim().toUpperCase();
+  const limit = atLimitKas();
+  const slip = atSlipPct();
+  const id = atCook?.tokenId;
+  if (!id) { toast('Tap a Cook market'); return; }
+  const wrappers = await cookWrappers(id);
+  const wrapped = pickWrappedMarketId(wrappers);
+  if (!wrapped) { toast('No wrapper market for this token yet'); return; }
+  const limSompi = limit > 0 ? String(kasToSompiNum(limit)) : '';
+  let q = null;
+  try {
+    q = await cookQuote(id, {
+      side,
+      amount,
+      mode: limit > 0 ? 'limit' : 'market',
+      limitUnitPriceSompi: limSompi || undefined
+    });
+  } catch (e) {
+    q = { valid: false, errors: [errText(e)] };
+  }
+  const rest = !q?.valid || !(q.fills || []).length;
+  if (rest && !(limit > 0)) {
+    toast((q?.errors || []).join(' ') || 'No fill. Set a limit to rest on the book.');
+    return;
+  }
+  const px = q?.valid ? sompiToKas(q.averageUnitPriceSompi || q.unitPriceSompi) : limit;
+  const bits = rest
+    ? `<div class="kv"><span class="k">Rest ${side}</span><span class="v">${esc(amount)} ${esc(tick)}</span></div>
+       <div class="kv"><span class="k">Limit</span><span class="v">${limit} KAS/token</span></div>
+       <p class="muted" style="text-align:left;padding-top:8px;">Places a KCC20 DEX Orderbook V1 limit on Cook TN10. You sign the PSKT. Cook never sees keys.</p>`
+    : `<div class="kv"><span class="k">${esc(side)}</span><span class="v">${esc(amount)} ${esc(tick)}</span></div>
+       <div class="kv"><span class="k">Avg</span><span class="v">${px ? px.toPrecision(4) : '—'} KAS</span></div>
+       <div class="kv"><span class="k">You pay</span><span class="v">${sompiToKas(q.buyerPaysSompi).toPrecision(4)} KAS</span></div>
+       <div class="kv"><span class="k">Slippage</span><span class="v">${slip}%</span></div>
+       <p class="muted" style="text-align:left;padding-top:8px;">Fills Cook TN10 order book. Wallet signs. We broadcast. No custody.</p>`;
+  await confirmAtSign((rest ? 'Rest ' : 'Fill ') + tick + ' ' + side, bits, async () => {
+    await runCookOrder({ side, amount, id, wrapped, rest, quote: q, limit, slip });
+  });
+}
+
+async function runCookOrder({ side, amount, id, wrapped, rest, quote, limit, slip }) {
+  setSheetStatus('Building unsigned PSKT…');
+  const addr = wallet.address;
+  let build;
+  if (rest) {
+    build = await cookBuildOrder({
+      walletAddress: addr,
+      tokenId: id,
+      wrappedMarketId: wrapped,
+      side,
+      tokenAmount: amount,
+      unitPriceSompi: String(kasToSompiNum(limit))
+    });
+  } else if ((quote.fills || []).length > 1 || quote.executionMode === 'sweep') {
+    const cap = Math.round(Number(quote.buyerPaysSompi || 0) * (100 + slip) / 100);
+    build = await cookSweep({
+      walletAddress: addr,
+      tokenId: id,
+      wrappedMarketId: wrapped,
+      side,
+      tokenAmount: amount,
+      mode: limit > 0 ? 'limit' : 'market',
+      limitUnitPriceSompi: limit > 0 ? String(kasToSompiNum(limit)) : undefined,
+      expectedFills: (quote.fills || []).map(f => ({
+        orderId: f.orderId,
+        tokenAmount: String(f.tokenAmount),
+        unitPriceSompi: String(f.unitPriceSompi)
+      })),
+      maxBuyerPaysSompi: String(cap || quote.buyerPaysSompi || '')
+    });
+  } else {
+    const f = quote.fills[0];
+    build = await cookFillOrder({
+      walletAddress: addr,
+      tokenId: id,
+      wrappedMarketId: wrapped,
+      side,
+      targetOrderId: f.orderId || quote.orderId,
+      tokenAmount: amount,
+      unitPriceSompi: String(f.unitPriceSompi || quote.unitPriceSompi)
+    });
+  }
+  await signCookBuild(build, 'Cook ' + side);
+}
+
+async function signCookBuild(build, label) {
+  const sign = extractSigning(build);
+  if (build?.payload?.builderError || build?.builderError) {
+    throw new Error(build.payload?.builderError || build.builderError);
+  }
+  if (!sign.ready || !sign.json) throw new Error(sign.status || 'Build is not ready to sign');
+  const { txId } = await signAndBroadcastPskt({
+    wallet,
+    txJson: sign.json,
+    signInputs: sign.inputs,
+    onStatus: (m) => { toast(m); setSheetStatus(m); }
+  });
+  const cid = cookTokenId(build);
+  if (cid) lastCookToken = { tokenId: cid, tick: ($('at-ltick')?.value || $('at-tick')?.value || '').toUpperCase() };
+  afterTx();
+  openSheet(label + ' sent', `
+    <div class="kv"><span class="k">Network</span><span class="v">${isTestnetAddr(wallet.address) ? 'TN10' : 'mainnet'}</span></div>
+    <div class="kv"><span class="k">Signed</span><span class="v">${kaswareEnabled() ? 'KasWare' : 'This device'}</span></div>
+    ${txidBlock(txId)}
+  `, { confirm: 'Done', cancel: false, onConfirm: () => { closeSheet(); refreshAll(); } });
+}
+
+async function runCookLaunch() {
+  if (!wallet) { toast('Unlock a wallet'); return; }
+  if (!isTestnetAddr(wallet.address)) {
+    toast('Launch via Cook is TN10. Import a kaspatest wallet. KRON Book is live mainnet KCC20.');
+    return;
+  }
+  const ticker = ($('at-ltick')?.value || '').trim().toUpperCase();
+  const tokenName = ($('at-lname')?.value || ticker).trim();
+  const maxSupply = ($('at-lmax')?.value || '1000000').trim();
+  const premintSupply = ($('at-lpre')?.value || '0').trim();
+  const mintPricePerTokenSompi = ($('at-lprice')?.value || '0').trim();
+  if (!/^[A-Z0-9]{2,8}$/.test(ticker)) { toast('Ticker 2–8 letters'); return; }
+  const bits = `
+    <div class="kv"><span class="k">Ticker</span><span class="v">${esc(ticker)}</span></div>
+    <div class="kv"><span class="k">Name</span><span class="v">${esc(tokenName)}</span></div>
+    <div class="kv"><span class="k">Max</span><span class="v">${esc(maxSupply)}</span></div>
+    <div class="kv"><span class="k">Premint</span><span class="v">${esc(premintSupply)}</span></div>
+    <p class="muted" style="text-align:left;padding-top:8px;">Cook builds an unsigned KCC20 Token V1 deploy. You sign. Relay never holds keys. Testnet until the standard is on mainnet.</p>`;
+  await confirmAtSign('Launch ' + ticker, bits, async () => {
+    setSheetStatus('Building deploy…');
+    const build = await cookDeploy({
+      walletAddress: wallet.address,
+      ticker,
+      tokenName,
+      maxSupply,
+      premintSupply,
+      mintPricePerTokenSompi
+    });
+    await signCookBuild(build, 'Launch ' + ticker);
+    const mintAmt = Number(premintSupply);
+    if (mintAmt > 0 && lastCookToken?.tokenId) {
+      try {
+        setSheetStatus('Minting premint…');
+        const mint = await cookMint({
+          walletAddress: wallet.address,
+          tokenId: lastCookToken.tokenId,
+          tokenAmount: String(mintAmt)
+        });
+        await signCookBuild(mint, 'Mint ' + ticker);
+      } catch (e) {
+        toast('Deployed. Premint mint: ' + errText(e));
+      }
+    }
+  });
+}
+
+async function runCookGraduate() {
+  if (!wallet) { toast('Unlock a wallet'); return; }
+  if (!isTestnetAddr(wallet.address)) {
+    toast('Wrap-to-book is Cook TN10. KRON tokens graduate on KRON itself.');
+    return;
+  }
+  const tick = ($('at-ltick')?.value || atCook?.tick || lastCookToken?.tick || '').trim().toUpperCase();
+  const amount = ($('at-lpre')?.value || '').trim();
+  if (!amount || Number(amount) <= 0) { toast('Set Premint to the wrap amount'); return; }
+  let id = lastCookToken?.tokenId || atCook?.tokenId || '';
+  if (!id && tick) {
+    const rows = await cookMarkets(40);
+    const hit = rows.find(m => String(m.metadata?.ticker || '').toUpperCase() === tick);
+    id = hit?.tokenIdHex || '';
+  }
+  if (!id) { toast('Launch first, or pick the token on Cook book'); return; }
+  const wrappers = await cookWrappers(id);
+  const wrapped = pickWrappedMarketId(wrappers);
+  if (!wrapped) { toast('No DEX wrapper yet for this token'); return; }
+  const bits = `
+    <div class="kv"><span class="k">Token</span><span class="v">${esc(tick || id.slice(0, 8))}</span></div>
+    <div class="kv"><span class="k">Wrap</span><span class="v">${esc(amount)}</span></div>
+    <p class="muted" style="text-align:left;padding-top:8px;">Wraps canonical KCC20 V1 into DEX Orderbook V1 so it can rest/fill on Cook. You sign. No custody.</p>`;
+  await confirmAtSign('Graduate / wrap ' + (tick || 'token'), bits, async () => {
+    setSheetStatus('Building wrap…');
+    const build = await cookWrap({
+      walletAddress: wallet.address,
+      tokenId: id,
+      wrappedMarketId: wrapped,
+      tokenAmount: amount
+    });
+    await signCookBuild(build, 'Wrap ' + tick);
+  });
+}
+
+function paintAgentStatus() {
+  const el = $('ag-status');
+  const btn = $('ag-toggle');
+  const job = loadAgentJob();
+  if (!el) return;
+  const running = !!(job?.on && agentTimer);
+  if (btn) btn.textContent = running ? 'Stop Scorpion agent' : 'Start Scorpion agent';
+  if (!job) {
+    el.textContent = 'Agent can trade only while this wallet is unlocked. Keys never leave the device or KasWare.';
+    return;
+  }
+  const last = job.last || 'waiting for a cross';
+  el.textContent = (running ? 'Scorpion on · ' : 'Paused · ') + job.tick + ' · spent ' + (job.spentKas || 0).toFixed(3) + '/' + Number(job.maxKas || 0) + ' KAS · ' + last;
+}
+
+function stopAgentLoop() {
+  if (agentTimer) { clearInterval(agentTimer); agentTimer = null; }
+  paintAgentStatus();
+}
+
+function resumeAgentIfAny() {
+  const job = loadAgentJob();
+  if (job?.on && sessionOpen()) startAgentLoop();
+  else paintAgentStatus();
+}
+
+function startAgentLoop() {
+  stopAgentLoop();
+  const job = loadAgentJob();
+  if (!job?.on) return;
+  agentTimer = setInterval(() => { tickAgent().catch(() => {}); }, 18000);
+  paintAgentStatus();
+  tickAgent().catch(() => {});
+}
+
+async function toggleAgent() {
+  const job = loadAgentJob();
+  if (job?.on) {
+    saveAgentJob({ ...job, on: false, last: 'stopped' });
+    stopAgentLoop();
+    toast('Scorpion stopped');
+    paintAgentStatus();
+    return;
+  }
+  if (!wallet) { toast('Unlock a wallet'); return; }
+  const tick = ($('ag-tick')?.value || 'KRON').trim().toUpperCase();
+  const sizeKas = Number($('ag-size')?.value || 0.15);
+  const buyBelow = Number($('ag-buy')?.value || 0);
+  const sellAbove = Number($('ag-sell')?.value || 0);
+  const maxKas = Number($('ag-max')?.value || 1);
+  if (!tick) { toast('Set a token'); return; }
+  if (!(sizeKas > 0)) { toast('Set a size'); return; }
+  if (!(buyBelow > 0) && !(sellAbove > 0)) { toast('Set a buy-below and/or sell-above'); return; }
+  if (kaswareEnabled()) {
+    toast('KasWare will pop for each fill');
+  } else {
+    try { await requirePin('Start Scorpion on ' + tick); }
+    catch (e) { if (errText(e) === 'cancelled') return; toast(errText(e)); return; }
+  }
+  saveAgentJob({
+    on: true, tick, sizeKas, buyBelow, sellAbove, maxKas,
+    spentKas: 0, last: 'armed', startedAt: Date.now()
+  });
+  startAgentLoop();
+  toast('Scorpion armed on ' + tick);
+  paintAgentStatus();
+}
+
+async function tickAgent() {
+  if (agentBusy) return;
+  if (!sessionOpen() || document.visibilityState !== 'visible') {
+    paintAgentStatus();
+    return;
+  }
+  const job = loadAgentJob();
+  if (!job?.on) { stopAgentLoop(); return; }
+  agentBusy = true;
+  try {
+    const info = await lookupKronTick(job.tick);
+    const px = Number(info.price || 0);
+    if (!(px > 0)) { job.last = 'no KRON price'; saveAgentJob(job); paintAgentStatus(); return; }
+    if (job.buyBelow > 0 && px <= job.buyBelow && (job.spentKas || 0) + job.sizeKas <= job.maxKas + 1e-9) {
+      job.last = 'buying @ ' + px.toPrecision(4);
+      saveAgentJob(job);
+      paintAgentStatus();
+      const result = await executeKronTrade({
+        wallet,
+        tick: job.tick,
+        side: 'buy',
+        amount: String(job.sizeKas),
+        utxos: await fetchAddressUtxos(wallet.address).catch(() => []),
+        forceKasware: kaswareEnabled(),
+        onStatus: (m) => toast(m)
+      });
+      job.spentKas = (job.spentKas || 0) + job.sizeKas;
+      job.last = 'bought ' + job.sizeKas + ' KAS · ' + (result.txId || '').slice(0, 10);
+      saveAgentJob(job);
+      afterTx();
+    } else if (job.sellAbove > 0 && px >= job.sellAbove) {
+      const hold = holdingForTick(job.tick);
+      if (!hold || !(Number(hold.balance) > 0)) {
+        job.last = 'price ' + px.toPrecision(4) + ' but no ' + job.tick;
+        saveAgentJob(job);
+        paintAgentStatus();
+        return;
+      }
+      const have = Number(hold.balance || 0) / (10 ** Number(hold.decimals || 0));
+      const want = job.sizeKas / px;
+      const amt = Math.min(have, want);
+      if (!(amt > 0)) { job.last = 'size too small to sell'; saveAgentJob(job); return; }
+      job.last = 'selling @ ' + px.toPrecision(4);
+      saveAgentJob(job);
+      paintAgentStatus();
+      const result = await executeKronTrade({
+        wallet,
+        tick: job.tick,
+        side: 'sell',
+        amount: String(amt),
+        utxos: await fetchAddressUtxos(wallet.address).catch(() => []),
+        forceKasware: kaswareEnabled(),
+        onStatus: (m) => toast(m)
+      });
+      job.last = 'sold · ' + (result.txId || '').slice(0, 10);
+      saveAgentJob(job);
+      afterTx();
+    } else {
+      job.last = px.toPrecision(4) + ' KAS · waiting';
+      saveAgentJob(job);
+    }
+    paintAgentStatus();
+  } catch (e) {
+    const job2 = loadAgentJob() || job;
+    job2.last = errText(e);
+    saveAgentJob(job2);
+    paintAgentStatus();
+  } finally {
+    agentBusy = false;
+  }
+}
+
+function loadBoosts() {
+  try {
+    const list = JSON.parse(localStorage.getItem(BOOST_KEY) || '[]');
+    const live = list.filter(b => Number(b.until || 0) > Date.now());
+    if (live.length !== list.length) localStorage.setItem(BOOST_KEY, JSON.stringify(live));
+    return live.sort((a, b) => (b.pts || 0) - (a.pts || 0));
+  } catch { return []; }
+}
+
+function saveBoosts(list) {
+  localStorage.setItem(BOOST_KEY, JSON.stringify(list || []));
+}
+
+function renderBoosts() {
+  const rail = $('boost-rail');
+  if (!rail) return;
+  const live = loadBoosts();
+  rail.innerHTML = live.map(b => `
+    <div class="boost-pill">
+      <b>${esc(b.tick)}</b>
+      <em>${esc(b.pts || BOOST_PTS)} pts</em>
+      <span>${Math.max(0, Math.ceil((b.until - Date.now()) / 3600000))}h left</span>
+    </div>`).join('');
+}
+
+function openBoost() {
+  haptic();
+  openSheet('Boost a token', `
+    <label class="field"><span>Ticker</span>
+      <input id="boost-tick" maxlength="12" placeholder="KRON" spellcheck="false" value="${esc(($('at-tick')?.value || 'KRON').toUpperCase())}">
+    </label>
+    <p class="muted" style="text-align:left;">Sends ${BOOST_KAS} KAS to this same wallet. Features the ticker here for 24h. Points stack. We never take the KAS.</p>
+  `, {
+    confirm: kaswareEnabled() ? 'Pay with KasWare' : 'Boost ' + BOOST_KAS + ' KAS',
+    gold: true,
+    onConfirm: async () => {
+      const tick = ($('boost-tick')?.value || '').trim().toUpperCase();
+      if (!/^[A-Z0-9]{2,12}$/.test(tick)) throw new Error('Ticker 2–12 letters');
+      if (kaswareEnabled()) await ensureKaswareSigner(wallet);
+      else await requirePin('Boost ' + tick);
+      setSheetStatus('Sending…');
+      const res = await sendKas({ wallet, dest: wallet.address, amountKas: String(BOOST_KAS) });
+      const list = loadBoosts();
+      const hit = list.find(b => b.tick === tick);
+      if (hit) { hit.pts = (hit.pts || 0) + BOOST_PTS; hit.until = Date.now() + BOOST_MS; hit.txId = res?.txId || hit.txId; }
+      else list.push({ tick, pts: BOOST_PTS, until: Date.now() + BOOST_MS, txId: res?.txId || '' });
+      saveBoosts(list);
+      renderBoosts();
+      afterTx();
+      closeSheet();
+      toast(tick + ' boosted');
+    }
+  });
 }
 
 function hideTradeScreen() {
@@ -3840,7 +4497,7 @@ function openKaswareSheet() {
   const match = kaswareSigning(wallet);
   const desktop = isDesktopBrowser();
   openSheet('KasWare', `
-    <p class="muted" style="text-align:left;padding:0 0 10px;">Desktop Chrome / Edge. When this is on, KasWare pops up to sign KAS sends, vault locks, compound, and KRC-20 — same as the in-app PIN, but the key never leaves KasWare.</p>
+    <p class="muted" style="text-align:left;padding:0 0 10px;">Desktop Chrome / Edge. When this is on, KasWare pops up to sign KAS sends, vault locks, compound, KRC-20, and A-Trade (KRON + Cook PSKT) — same as the in-app PIN, but the key never leaves KasWare.</p>
     <div class="kv"><span class="k">Extension</span><span class="v">${installed ? 'Found' : (desktop ? 'Not installed' : 'Desktop only')}</span></div>
     <div class="kv"><span class="k">This wallet</span><span class="v">${esc(shortAddr(wallet?.address || '', 10, 6) || '—')}</span></div>
     <div class="kv"><span class="k">KasWare</span><span class="v">${connected ? esc(shortAddr(connected, 10, 6)) : 'Not connected'}</span></div>
@@ -3851,7 +4508,7 @@ function openKaswareSheet() {
     </label>
     ${!installed ? `<p class="muted" style="text-align:left;padding:8px 0 0;">Install <a href="https://chromewebstore.google.com/detail/kasware-wallet/hklhheigdmpoolooomdihmhlpjjdbklf" target="_blank" rel="noopener" style="color:var(--gold-2)">KasWare Wallet</a> in this browser, then come back here.</p>` : ''}
     ${on && connected && wallet?.address && connected !== wallet.address ? `<p class="muted" style="text-align:left;padding:8px 0 0;">KasWare is a different account. Turn the toggle on and we will switch this profile to that address (watch / sign-only — no key stored here).</p>` : ''}
-    <p class="muted" style="text-align:left;padding:8px 0 0;">When this is on, KAS sends, vault locks, compound, KRC-20, and KRON buys/sells pop KasWare. Vault sweeps still use the in-app key when this wallet has one.</p>
+    <p class="muted" style="text-align:left;padding:8px 0 0;">When this is on, KAS sends, vault locks, compound, KRC-20, KRON buys/sells, and Cook PSKTs pop KasWare. Vault sweeps still use the in-app key when this wallet has one.</p>
   `, { confirm: 'Done', cancel: false });
   $('kw-on')?.addEventListener('change', async (e) => {
     const want = !!e.target.checked;
@@ -3876,6 +4533,7 @@ function openKaswareSheet() {
     openKaswareSheet();
     if (currentTab === 'you') renderProfile();
     if (currentTab === 'home') renderHome();
+    syncAtKwBtn();
   });
 }
 
@@ -4894,8 +5552,8 @@ function bind() {
   click('btn-import', importWallet);
   click('btn-send', openSend);
   click('btn-receive', openReceive);
-  click('btn-trade', () => openTrade({ tick: 'KRON', side: 'buy' }));
-  click('btn-trade-tokens', () => openTrade({ tick: 'KRON', side: 'buy' }));
+  click('btn-trade', () => { showPage('tokens'); setAtPane('book'); });
+  click('btn-trade-tokens', () => { showPage('tokens'); setAtPane('book'); });
   click('trade-close', hideTradeScreen);
   click('trade-lookup', lookupTradeTicker);
   click('trade-go', () => reviewTrade());
@@ -4917,8 +5575,42 @@ function bind() {
   $('pin-cancel')?.addEventListener('click', cancelPinGate);
   $('kron-markets')?.addEventListener('click', e => {
     const row = e.target.closest('[data-trade-tick]');
-    if (row?.dataset.tradeTick) openTrade({ tick: row.dataset.tradeTick, side: 'buy' });
+    if (!row?.dataset.tradeTick) return;
+    if (currentTab === 'tokens') {
+      if ($('at-tick')) $('at-tick').value = row.dataset.tradeTick;
+      atSrc = 'kron';
+      atQuotePreview();
+      return;
+    }
+    openTrade({ tick: row.dataset.tradeTick, side: 'buy' });
   });
+  $('at-seg')?.addEventListener('click', e => {
+    const b = e.target.closest('[data-at]');
+    if (!b?.dataset.at) return;
+    haptic();
+    setAtPane(b.dataset.at);
+  });
+  click('at-tokens-btn', () => { haptic(); setAtPane(atPane === 'tokens' ? 'book' : 'tokens'); });
+  click('at-kw-btn', () => openKaswareSheet());
+  $('at-src')?.addEventListener('click', e => {
+    const b = e.target.closest('[data-src]');
+    if (b?.dataset.src) { haptic(); setAtSrc(b.dataset.src); }
+  });
+  click('at-buy', () => reviewAtTrade('buy'));
+  click('at-sell', () => { syncAtLabels('sell'); reviewAtTrade('sell'); });
+  click('at-launch-go', () => runCookLaunch().catch(err => toast(errText(err))));
+  click('at-grad-go', () => runCookGraduate().catch(err => toast(errText(err))));
+  click('ag-toggle', () => toggleAgent().catch(err => toast(errText(err))));
+  click('boost-open', openBoost);
+  $('at-cook-mkts')?.addEventListener('click', e => {
+    const row = e.target.closest('[data-cook-id]');
+    if (row?.dataset.cookId) pickCookRow(row.dataset.cookId, row.dataset.cookTick);
+  });
+  const atQuoteSoon = () => { clearTimeout(setAtPane._q); setAtPane._q = setTimeout(atQuotePreview, 280); };
+  $('at-tick')?.addEventListener('input', atQuoteSoon);
+  $('at-amt')?.addEventListener('input', atQuoteSoon);
+  $('at-limit')?.addEventListener('input', atQuoteSoon);
+  $('at-slip')?.addEventListener('input', atQuoteSoon);
   click('btn-copy-addr', async () => { await navigator.clipboard.writeText(wallet.address); toast('Copied'); });
   click('btn-move-wallet', () => openMoveToOwned());
   click('card-wallet', openWalletSwitcher);
@@ -4996,7 +5688,7 @@ function bind() {
     haptic();
     const tab = t.dataset.tab;
     showPage(tab);
-    if (tab === 'tokens') { renderTokens(); renderKronMarkets(); }
+    if (tab === 'tokens') setAtPane(atPane || 'book');
     if (tab === 'vault') renderVault();
     if (tab === 'activity') renderActivity(window.__txs || []);
     if (tab === 'you') renderProfile();
@@ -5147,6 +5839,7 @@ function bind() {
     if (document.visibilityState === 'visible' && wallet) {
       tickLive(true);
       maybeAutoUnlock();
+      resumeAgentIfAny();
     }
   });
 }

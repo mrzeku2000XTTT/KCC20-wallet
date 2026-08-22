@@ -12,7 +12,7 @@
   <link rel="icon" href="assets/icon.png">
   <title>KCC20 Wallet</title>
   <meta http-equiv="Cache-Control" content="no-store, no-cache, must-revalidate">
-  <link rel="stylesheet" href="css/app.css?v=88">
+  <link rel="stylesheet" href="css/app.css?v=89">
 </head>
 <body>
   <img class="bg-poster" src="assets/bg.jpg" alt="">
@@ -98,34 +98,119 @@
           <div class="holdings-pills" id="holdings"></div>
         </section>
 
-        <!-- TOKENS -->
-        <section class="page" id="page-tokens">
-          <div class="boost-card glass" id="boost-card">
-            <div class="boost-top">
-              <div>
-                <b>Boost a token</b>
-                <p>Send 0.15 KAS to yourself to feature it here for 24h. Points stack.</p>
-              </div>
-              <button class="boost-go" id="boost-open" type="button">Boost</button>
+        <!-- A-TRADE -->
+        <section class="page at-fit" id="page-tokens">
+          <div class="at-head">
+            <div class="seg" id="at-seg">
+              <button class="on" data-at="book" type="button">Book</button>
+              <button data-at="launch" type="button">Launch</button>
+              <button data-at="agent" type="button">Agent</button>
             </div>
-            <div class="boost-rail" id="boost-rail"></div>
+            <button class="at-tokens-btn" id="at-kw-btn" type="button">Native</button>
+            <button class="at-tokens-btn" id="at-tokens-btn" type="button">Tokens</button>
           </div>
-          <div class="section-label">KRON DEX</div>
-          <button class="glass utxo-bar" id="btn-trade-tokens" type="button">
-            <span>TRADE KCC20</span>
-            <span class="utxo-go">Trade</span>
-          </button>
-          <div class="glass list" id="kron-markets"></div>
-          <div class="section-label">Native</div>
-          <div class="glass list" id="token-native"></div>
-          <div class="section-label">KCC20 · KRON</div>
-          <div class="glass list" id="token-list"></div>
-          <div class="section-label">KRC-20 · KasWare / Kasplex</div>
-          <div class="glass list" id="token-krc20"></div>
-          <div class="section-label">Watchlist</div>
-          <div class="glass list" id="token-watch"></div>
-          <button class="btn btn-gold" id="btn-add-token" style="margin-top:8px;">Watch a token</button>
-          <p class="muted">KCC20 (KRON, KKDAG / Kas Knight, and other covenant tokens) loads live from kascov.io. KRC-20 loads from Kasplex. Same address as KasWare shows the same tokens — no manual refresh.</p>
+          <p class="at-note" id="at-note">Covenants hold the funds. This app never custodied them. Sign with this wallet or KasWare.</p>
+
+          <div id="at-book">
+            <div class="at-row">
+              <label class="field grow"><span>Ticker</span>
+                <input id="at-tick" placeholder="KRON / KKDAG" value="KRON" spellcheck="false">
+              </label>
+              <label class="field small"><span>Slip %</span>
+                <input id="at-slip" type="number" min="0.1" max="15" step="0.1" value="1">
+              </label>
+            </div>
+            <div class="at-row">
+              <label class="field grow"><span id="at-amt-lab">Pay (KAS)</span>
+                <input id="at-amt" placeholder="0.15" inputmode="decimal">
+              </label>
+              <label class="field grow"><span>Limit (KAS/token)</span>
+                <input id="at-limit" placeholder="optional" inputmode="decimal">
+              </label>
+            </div>
+            <div class="at-quote" id="at-quote">Pick a market. Limit is a max/min price. Slippage is checked on review.</div>
+            <div class="btn-row" style="margin:6px 0 8px;">
+              <button class="btn btn-gold" id="at-buy" type="button">Buy</button>
+              <button class="btn btn-glass" id="at-sell" type="button">Sell</button>
+            </div>
+            <div class="seg at-src" id="at-src">
+              <button class="on" data-src="kron" type="button">KRON live</button>
+              <button data-src="cook" type="button">Cook book</button>
+            </div>
+            <div class="glass list at-mkts" id="kron-markets"></div>
+            <div class="glass list at-mkts hidden" id="at-cook-mkts"></div>
+          </div>
+
+          <div id="at-launch" class="hidden">
+            <div class="at-row">
+              <label class="field grow"><span>Ticker</span>
+                <input id="at-ltick" maxlength="8" placeholder="KAHA" spellcheck="false">
+              </label>
+              <label class="field grow"><span>Name</span>
+                <input id="at-lname" maxlength="24" placeholder="Kaha Coin">
+              </label>
+            </div>
+            <div class="at-row">
+              <label class="field grow"><span>Max supply</span>
+                <input id="at-lmax" inputmode="numeric" value="1000000">
+              </label>
+              <label class="field grow"><span>Premint</span>
+                <input id="at-lpre" inputmode="numeric" value="0">
+              </label>
+            </div>
+            <label class="field"><span>Mint price (sompi / token)</span>
+              <input id="at-lprice" inputmode="numeric" value="0">
+            </label>
+            <button class="btn btn-gold" id="at-launch-go" type="button">Launch KCC20</button>
+            <button class="btn btn-glass" id="at-grad-go" type="button" style="margin-top:8px;">Graduate / wrap to book</button>
+            <p class="muted at-tiny">KCC20 V1 deploy via Cook public builders. You sign. Relay never holds keys. Cook is public testnet until the standard is on mainnet — KRON Book still trades live mainnet KCC20.</p>
+          </div>
+
+          <div id="at-agent" class="hidden">
+            <div class="at-row">
+              <label class="field grow"><span>Token</span>
+                <input id="ag-tick" placeholder="KRON" value="KRON" spellcheck="false">
+              </label>
+              <label class="field small"><span>Size KAS</span>
+                <input id="ag-size" type="number" min="0.05" step="0.05" value="0.15">
+              </label>
+            </div>
+            <div class="at-row">
+              <label class="field grow"><span>Buy below</span>
+                <input id="ag-buy" placeholder="KAS per token" inputmode="decimal">
+              </label>
+              <label class="field grow"><span>Sell above</span>
+                <input id="ag-sell" placeholder="KAS per token" inputmode="decimal">
+              </label>
+            </div>
+            <label class="field"><span>Max KAS this session</span>
+              <input id="ag-max" type="number" min="0.15" step="0.15" value="1">
+            </label>
+            <button class="btn btn-gold" id="ag-toggle" type="button">Start Scorpion agent</button>
+            <p class="at-quote" id="ag-status">Agent can trade only while this wallet is unlocked. Keys never leave the device or KasWare.</p>
+          </div>
+
+          <div id="at-holdings" class="hidden">
+            <div class="boost-card glass" id="boost-card">
+              <div class="boost-top">
+                <div>
+                  <b>Boost a token</b>
+                  <p>Send 0.15 KAS to yourself to feature it here for 24h. Points stack.</p>
+                </div>
+                <button class="boost-go" id="boost-open" type="button">Boost</button>
+              </div>
+              <div class="boost-rail" id="boost-rail"></div>
+            </div>
+            <div class="section-label">Native</div>
+            <div class="glass list" id="token-native"></div>
+            <div class="section-label">KCC20 · KRON</div>
+            <div class="glass list" id="token-list"></div>
+            <div class="section-label">KRC-20 · KasWare / Kasplex</div>
+            <div class="glass list" id="token-krc20"></div>
+            <div class="section-label">Watchlist</div>
+            <div class="glass list" id="token-watch"></div>
+            <button class="btn btn-gold" id="btn-add-token" style="margin-top:8px;">Watch a token</button>
+          </div>
         </section>
 
         <!-- VAULT -->
@@ -251,7 +336,7 @@
         </button>
         <button class="tab" data-tab="tokens">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="8"/><path d="M12 8v8M9.5 10.5c.6-1 1.5-1.5 2.5-1.5s2 .6 2.5 1.5M9.5 13.5c.6 1 1.5 1.5 2.5 1.5s2-.6 2.5-1.5"/></svg>
-          <span>Tokens</span>
+          <span>A-Trade</span>
         </button>
         <button class="tab" data-tab="vault">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="5" y="11" width="14" height="10" rx="2"/><path d="M8 11V8a4 4 0 018 0v3"/></svg>
@@ -481,7 +566,7 @@
     })();
   </script>
   <script type="module">
-    import('./js/app.js?v=88').catch(function (err) {
+    import('./js/app.js?v=89').catch(function (err) {
       console.error(err);
       var phone = document.getElementById('phone');
       var d = document.createElement('div');

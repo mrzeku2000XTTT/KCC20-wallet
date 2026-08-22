@@ -21,7 +21,7 @@ import {
   fetchOwnedUtxos, buildSentinelChain, buildRecurringChain, buildHashlockCovenant,
   newHashlockSecret, checkinHop, currentHop, parseXmssKit, p2shFromRedeemHex, spendXmssVault,
   disconnectRpc
-} from './tx.js?v=90';
+} from './tx.js?v=93';
 import { kronMarkets, quoteKronTrade, executeKronTrade, formatKasSompi, lookupKronTick, tradeCostLines, attachKronLogos } from './kronTrade.js?v=89';
 import {
   migrateReceiveBook, ownedAddresses, markAddressUsed, currentReceive,
@@ -32,17 +32,17 @@ import { runPhoneStudio, runServerStudio } from './studio.js?v=89';
 import {
   isKaswareInstalled, isDesktopBrowser, kaswareEnabled, kaswareSigning, kaswareConnectedAddress,
   connectKasware, disconnectKasware, bindKaswareEvents, loadKaswarePref, compoundWithKasware,
-  ensureKaswareSigner
-} from './kasware.js?v=89';
+  ensureKaswareSigner, syncKaswareNetwork
+} from './kasware.js?v=93';
 import {
   cookMarkets, cookQuote, cookWrappers, pickWrappedMarketId,
   cookDeploy, cookBuildOrder, cookFillOrder, cookSweep, cookWrap, cookMint,
   extractSigning, signAndBroadcastPskt, cookTokenId, isTestnetAddr,
   loadAgentJob, saveAgentJob, sompiToKas, kasToSompiNum,
-  rememberLaunch, loadLaunched, cookOwnerBalances
-} from './atrade.js?v=92';
+  rememberLaunch, loadLaunched, cookOwnerBalances, cookDeployed
+} from './atrade.js?v=93';
 
-export const BUILD = '92';
+export const BUILD = '93';
 
 function errText(e) {
   if (e == null) return 'Unknown error';
@@ -1423,27 +1423,59 @@ function renderTokens() {
 
 async function renderTokKcom() {
   const box = $('token-kcom');
-  if (!box || !wallet?.address) return;
-  box.innerHTML = `<div class="empty">Loading KaspaCom balances…</div>`;
-  try {
-    const rows = await cookOwnerBalances(wallet.address);
-    box.innerHTML = rows.length
-      ? rows.map(r => {
-          const tick = r.ticker || r.metadata?.ticker || r.tick || '?';
-          const amt = r.totalAmount || r.nativeAmount || r.amount || r.balance || '0';
-          return `<div class="row token-row">
-            <div class="dot" style="background:rgba(212,176,122,.16);color:var(--gold-2)">${esc(String(tick).slice(0, 3))}</div>
-            <div>
-              <div class="title">${esc(String(tick).toUpperCase())}</div>
-              <div class="sub">${esc(r.name || r.metadata?.name || 'Cook')}</div>
-            </div>
-            <div class="amt"><b>${esc(String(amt))}</b></div>
-          </div>`;
-        }).join('')
-      : `<div class="empty">No Cook / KaspaCom balances on ${esc(shortAddr(wallet.address, 8, 6))}.</div>`;
-  } catch (e) {
-    box.innerHTML = `<div class="empty">${esc(errText(e))}</div>`;
+  if (!box) return;
+  box.innerHTML = `<div class="empty">Indexing Cook tokens…</div>`;
+  const addr = wallet?.address || '';
+  let held = [], deployed = [], mkts = [];
+  try { held = await cookOwnerBalances(addr); } catch {}
+  try { deployed = addr ? await cookDeployed(addr) : []; } catch {}
+  try { mkts = await cookMarkets(24); } catch {}
+  const launched = loadLaunched().filter(t => !t.network || t.network === 'testnet-10');
+  const row = (tick, name, sub, extra = '') => `
+    <button class="row token-row" type="button" data-cook-tick="${esc(tick)}" ${extra}>
+      <div class="dot" style="background:rgba(212,176,122,.16);color:var(--gold-2)">${esc(String(tick || '?').slice(0, 3))}</div>
+      <div>
+        <div class="title">${esc(String(tick || '?').toUpperCase())}</div>
+        <div class="sub">${esc(name || 'Cook')}</div>
+      </div>
+      <div class="amt"><b>${esc(sub || '')}</b></div>
+    </button>`;
+  const chunks = [];
+  if (launched.length) {
+    chunks.push('<div class="section-label">Launched here</div>');
+    chunks.push(launched.map(t => row(t.tick, t.name, t.network === 'testnet-10' ? 'TN10' : '', `data-cook-id="${esc(t.tokenId || '')}"`)).join(''));
   }
+  if (held.length) {
+    chunks.push('<div class="section-label">Your Cook balances</div>');
+    chunks.push(held.map(r => {
+      const tick = r.ticker || r.metadata?.ticker || r.tick || '?';
+      const amt = r.totalAmount || r.nativeAmount || r.amount || r.balance || '0';
+      return row(tick, r.name || r.metadata?.name, String(amt));
+    }).join(''));
+  }
+  if (deployed.length) {
+    chunks.push('<div class="section-label">Deployed by you</div>');
+    chunks.push(deployed.map(r => {
+      const tick = r.ticker || r.metadata?.ticker || r.tokenName || '?';
+      return row(tick, r.tokenName || r.metadata?.name, 'deployed', `data-cook-id="${esc(r.covenantId || r.tokenIdHex || '')}"`);
+    }).join(''));
+  }
+  if (mkts.length) {
+    chunks.push('<div class="section-label">Cook TN10 book</div>');
+    chunks.push(mkts.map(m => {
+      const tick = String(m.metadata?.ticker || m.ticker || '?').toUpperCase();
+      const ask = sompiToKas(m.bestAskUnitPriceSompi);
+      return row(tick, m.metadata?.name || 'Cook', ask ? ask.toPrecision(4) + ' KAS' : 'book', `data-cook-id="${esc(m.tokenIdHex || '')}"`);
+    }).join(''));
+  }
+  box.innerHTML = chunks.join('') || `<div class="empty">No Cook tokens yet. Launch one, or wait for the TN10 book to index.</div>`;
+  box.querySelectorAll('[data-cook-id], [data-cook-tick]').forEach(el => {
+    el.addEventListener('click', () => {
+      if (el.dataset.cookId) pickCookRow(el.dataset.cookId, el.dataset.cookTick);
+      else if ($('at-tick')) $('at-tick').value = String(el.dataset.cookTick || '').toUpperCase();
+      setAtPane('book');
+    });
+  });
 }
 
 function vaultStatusLine(v) {
@@ -2957,11 +2989,6 @@ function jumpToAtTrade(tick, side) {
 function syncAtKwBtn() {
   const btn = $('at-kw-btn');
   if (!btn) return;
-  if (isTestnet()) {
-    btn.textContent = 'Native';
-    btn.classList.remove('on');
-    return;
-  }
   const on = kaswareEnabled();
   btn.textContent = on ? 'KasWare' : 'Native';
   btn.classList.toggle('on', on);
@@ -3168,7 +3195,7 @@ async function atQuotePreview() {
 }
 
 async function confirmAtSign(title, body, run) {
-  const kw = kaswareEnabled() && !isTestnet();
+  const kw = kaswareEnabled();
   openSheet(title, body, {
     confirm: kw ? 'Pay with KasWare' : 'Pay with PIN',
     gold: true,
@@ -3348,7 +3375,7 @@ async function signCookBuild(build, label) {
   afterTx();
   openSheet(label + ' sent', `
     <div class="kv"><span class="k">Network</span><span class="v">${isTestnetAddr(wallet.address) ? 'TN10' : 'mainnet'}</span></div>
-    <div class="kv"><span class="k">Signed</span><span class="v">This device</span></div>
+    <div class="kv"><span class="k">Signed</span><span class="v">${kaswareEnabled() ? 'KasWare' : 'This device'}</span></div>
     <div class="kv"><span class="k">Ticker</span><span class="v">${esc(tick || '—')}</span></div>
     ${txidBlock(txId)}
   `, { confirm: 'View in TOKENS', cancel: false, onConfirm: () => { closeSheet(); setAtPane('tokens'); setTokPane('scorpion'); refreshAll(); } });
@@ -3358,7 +3385,14 @@ async function applyAppNetwork(id) {
   const next = id === 'testnet-10' ? 'testnet-10' : 'mainnet';
   setNetworkId(next);
   try { await disconnectRpc(); } catch {}
-  if (wallet) {
+  if (kaswareEnabled() && isKaswareInstalled()) {
+    try {
+      const linked = await connectKasware();
+      await adoptKaswareAccount(linked);
+    } catch (e) {
+      toast('KasWare network: ' + errText(e));
+    }
+  } else if (wallet) {
     applyWalletNetwork(wallet, next);
     saveWallet();
     const list = loadWalletList();
@@ -3368,7 +3402,7 @@ async function applyAppNetwork(id) {
       saveWalletList(list);
     }
   }
-  toast(next === 'testnet-10' ? 'TN10 — same key, kaspatest address. Cook launch is on.' : 'Mainnet — kaspa: address. KRON Book is live.');
+  toast(next === 'testnet-10' ? 'TN10 — KasWare stays on testnet-10. Cook launch is on.' : 'Mainnet — kaspa: address. KRON Book is live.');
   renderHome();
   if (currentTab === 'you') renderProfile();
   if (currentTab === 'tokens') setAtPane(atPane || 'book');
@@ -3424,13 +3458,23 @@ async function runCookLaunch() {
     }, { once: true });
     return;
   }
-  applyWalletNetwork(wallet);
+  if (kaswareEnabled()) {
+    try {
+      const linked = await connectKasware();
+      await adoptKaswareAccount(linked);
+    } catch (e) {
+      toast(errText(e));
+      return;
+    }
+  } else {
+    applyWalletNetwork(wallet);
+  }
   if (!isTestnetAddr(wallet.address)) {
-    toast('This address is not kaspatest. Toggle Network off and on Testnet-10.');
+    toast('This address is not kaspatest. Keep Network on Testnet-10 and KasWare on TN10.');
     return;
   }
-  if (!wallet.privKey) {
-    toast('TN10 signs with this wallet’s key. KasWare is mainnet — turn it off and use Native, or import the seed.');
+  if (!wallet.privKey && !kaswareEnabled()) {
+    toast('Need Native key or KasWare on TN10 to sign.');
     return;
   }
   try { utxos = await fetchAddressUtxos(wallet.address); } catch {}
@@ -3462,7 +3506,7 @@ async function runCookLaunch() {
     <div class="kv"><span class="k">Mint price</span><span class="v">${mintKas || 0} KAS / token</span></div>
     <div class="kv"><span class="k">Pay from</span><span class="v">${esc(shortAddr(wallet.address, 10, 6))}</span></div>
     <div class="kv"><span class="k">UTXOs</span><span class="v">${Array.isArray(utxos) ? utxos.length : 0}</span></div>
-    <p class="muted" style="text-align:left;padding-top:8px;">Cook builds an unsigned KCC20 Token V1 deploy. This device signs (KasWare cannot sign TN10). Needs ~1.2 TKAS for the covenant cell + fee.</p>`;
+    <p class="muted" style="text-align:left;padding-top:8px;">Cook builds an unsigned KCC20 Token V1 deploy. ${kaswareEnabled() ? 'KasWare on TN10 signs.' : 'This device signs.'} Needs ~1.2 TKAS for the covenant cell + fee.</p>`;
   await confirmAtSign('Launch ' + ticker, bits, async () => {
     setSheetStatus('Building deploy…');
     const build = await cookDeploy({
@@ -4688,7 +4732,7 @@ function openKaswareSheet() {
   const match = kaswareSigning(wallet);
   const desktop = isDesktopBrowser();
   openSheet('KasWare', `
-    <p class="muted" style="text-align:left;padding:0 0 10px;">Desktop Chrome / Edge. When this is on, KasWare pops up to sign KAS sends, vault locks, compound, KRC-20, and A-Trade (KRON + Cook PSKT) — same as the in-app PIN, but the key never leaves KasWare.</p>
+    <p class="muted" style="text-align:left;padding:0 0 10px;">Desktop Chrome / Edge. KasWare follows this app’s Network toggle: TN10 stays kaspatest, mainnet stays kaspa:. It signs sends, vault locks, compound, KRC-20, and Cook launches — keys never leave KasWare.</p>
     <div class="kv"><span class="k">Extension</span><span class="v">${installed ? 'Found' : (desktop ? 'Not installed' : 'Desktop only')}</span></div>
     <div class="kv"><span class="k">This wallet</span><span class="v">${esc(shortAddr(wallet?.address || '', 10, 6) || '—')}</span></div>
     <div class="kv"><span class="k">KasWare</span><span class="v">${connected ? esc(shortAddr(connected, 10, 6)) : 'Not connected'}</span></div>
@@ -6092,6 +6136,14 @@ async function init() {
   }
   try { applyLook(); } catch {}
   try { bindKaswareEvents(); } catch {}
+  window.addEventListener('kcc20-kasware-net', async (ev) => {
+    if (!kaswareEnabled()) return;
+    const want = isTestnet() ? 'kaspa_testnet_10' : 'kaspa_mainnet';
+    const got = String(ev.detail || '');
+    if (got && got !== want) {
+      try { await syncKaswareNetwork(); } catch {}
+    }
+  });
   const saved = loadStoredWallet();
   const hasLocalKey = !!(saved?.address && saved?.privKey);
   const kaswareOnly = !!(saved?.address && saved?.kasware && !saved.privKey);

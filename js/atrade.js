@@ -1,7 +1,7 @@
 /* KCC20 A-Trade — Cook public API (order book / launch) + local Scorpion agent.
    Never holds keys. Wallet or KasWare signs PSKT; we only broadcast. */
-import { loadKaspaSdk, connectPublicNode } from './tx.js?v=90';
-import { kaswareEnabled, kaswareSigning, ensureKaswareSigner, signPsktWithKasware } from './kasware.js?v=89';
+import { loadKaspaSdk, connectPublicNode } from './tx.js?v=93';
+import { kaswareEnabled, kaswareSigning, ensureKaswareSigner, signPsktWithKasware } from './kasware.js?v=93';
 
 const COOK_DIRECT = 'https://dev-api-kcc20.kaspa.com';
 const AGENT_KEY = 'kcc20_agent_v1';
@@ -63,6 +63,11 @@ export function rememberLaunch(row) {
   const list = loadLaunched().filter(x => x.tokenId !== row.tokenId && !(x.tick === row.tick && x.network === row.network));
   list.unshift({ ...row, at: Date.now() });
   saveLaunched(list.slice(0, 40));
+}
+
+export async function cookDeployed(addr) {
+  const data = await cookGet('/tokens/owners/' + encodeURIComponent(addr) + '/deployed');
+  return Array.isArray(data?.items) ? data.items : (Array.isArray(data) ? data : []);
 }
 
 export async function cookOwnerBalances(addr) {
@@ -291,7 +296,7 @@ export async function signAndBroadcastPskt({ wallet, txJson, signInputs, onStatu
   const k = await loadKaspaSdk();
   let signedJson = txJson;
   const tn = isTestnetAddr(wallet?.address);
-  const useKw = kaswareEnabled() && !tn;
+  const useKw = kaswareEnabled();
   if (useKw) {
     onStatus?.('Approve in KasWare…');
     await ensureKaswareSigner(wallet);
@@ -299,7 +304,7 @@ export async function signAndBroadcastPskt({ wallet, txJson, signInputs, onStatu
   } else {
     if (!wallet?.privKey) {
       throw new Error(tn
-        ? 'TN10 signs with this wallet’s key. KasWare is mainnet — turn it off in Settings, or import the seed into this app.'
+        ? 'No in-app key on TN10. Turn on KasWare (set to TN10) or import the seed.'
         : 'No in-app key — turn on KasWare or import a wallet');
     }
     onStatus?.('Signing locally…');

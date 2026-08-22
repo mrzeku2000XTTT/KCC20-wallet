@@ -4,7 +4,7 @@ import {
   validateAndCleanUtxo, deepCloneAndFreeze, kasToSompi,
   kaspaRestBase, networkId
 } from './crypto.js?v=90';
-import { kaswareSigning, sendKaspaWithKasware, sendKrc20WithKasware } from './kasware.js?v=85';
+import { kaswareSigning, sendKaspaWithKasware, sendKrc20WithKasware } from './kasware.js?v=93';
 
 function API() { return kaspaRestBase(); }
 

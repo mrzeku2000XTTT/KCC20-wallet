@@ -1,4 +1,5 @@
 /* KasWare desktop extension — optional signer. Keys stay in KasWare. */
+import { networkId } from './crypto.js?v=90';
 
 const STORE = 'kcc20_kasware_v1';
 
@@ -36,6 +37,24 @@ export function saveKaswarePref(pref) {
 
 export function kaswareEnabled() {
   return !!loadKaswarePref().enabled;
+}
+
+export function kaswareNetName(net) {
+  return (net || networkId()) === 'testnet-10' ? 'kaspa_testnet_10' : 'kaspa_mainnet';
+}
+
+export async function syncKaswareNetwork() {
+  const p = kaswareProvider();
+  if (!p?.switchNetwork) return '';
+  const want = kaswareNetName();
+  try {
+    const cur = String(await p.getNetwork?.() || '');
+    if (cur && cur === want) return want;
+  } catch {}
+  try {
+    await p.switchNetwork(want);
+  } catch (e) { rejectUser(e); }
+  return want;
 }
 
 export function payWithKaswareLabel() {
@@ -76,6 +95,7 @@ export async function ensureKaswareSigner(wallet) {
   if (!kaswareEnabled()) return false;
   const p = kaswareProvider();
   if (!p) throw new Error('KasWare is not in this browser. Open Chrome/Edge with the KasWare extension, then toggle it on in Settings.');
+  await syncKaswareNetwork();
   let addr = kaswareConnectedAddress();
   try {
     const accounts = await p.getAccounts();
@@ -92,7 +112,7 @@ export async function ensureKaswareSigner(wallet) {
     saveKaswarePref(pref);
   }
   if (wallet?.address && addr && !sameKasAddr(wallet.address, addr)) {
-    throw new Error('KasWare is on a different account than this wallet. Switch wallets, or reconnect KasWare in Settings.');
+    throw new Error('KasWare is on a different account than this wallet. Switch KasWare to the same ' + (networkId() === 'testnet-10' ? 'TN10' : 'mainnet') + ' account, or reconnect in Settings.');
   }
   return true;
 }
@@ -127,12 +147,16 @@ export async function connectKasware() {
   try {
     accounts = await p.requestAccounts();
   } catch (e) { rejectUser(e); }
+  await syncKaswareNetwork();
+  try {
+    const again = await p.getAccounts();
+    if (firstAddr(again)) accounts = again;
+  } catch {}
   const address = firstAddr(accounts);
   if (!address) throw new Error('KasWare did not return an address');
-  try { await p.switchNetwork('kaspa_mainnet'); } catch {}
   let pubKey = '';
   try { pubKey = await p.getPublicKey(); } catch {}
-  const pref = { enabled: true, address, pubKey: pubKey || '', at: Date.now() };
+  const pref = { enabled: true, address, pubKey: pubKey || '', at: Date.now(), network: kaswareNetName() };
   saveKaswarePref(pref);
   bindKaswareEvents();
   return pref;

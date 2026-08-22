@@ -704,6 +704,10 @@ img { display: block; max-width: 100%; }
   margin: 16px 0 8px;
 }
 .tk-actions.tk-2 { grid-template-columns: repeat(2, 1fr); }
+.tk-actions.tk-5 { grid-template-columns: repeat(5, 1fr); gap: 6px; }
+.tk-actions.tk-5 .tk-act { padding: 10px 2px 8px; }
+.tk-actions.tk-5 .tk-act-orb { width: 40px; height: 40px; }
+.tk-actions.tk-5 .tk-act span:last-child { font-size: 10px; }
 .tk-act {
   display: flex; flex-direction: column; align-items: center; gap: 7px;
   padding: 12px 4px 10px; border-radius: 16px;
@@ -1546,6 +1550,22 @@ button.tx { width: 100%; text-align: left; color: inherit; }
 .trade-meta .title { font-size: 16px; font-weight: 650; }
 .trade-meta .sub { font-size: 12px; color: var(--label-2); margin-top: 2px; }
 #trade-screen .btn-gold { height: 52px; margin-top: auto; }
+#trade-spot, #trade-dca { display: flex; flex-direction: column; flex: 1; min-height: 0; }
+#trade-spot.hidden, #trade-dca.hidden { display: none !important; }
+.dca-steps { margin: 8px 0 0; padding-left: 18px; }
+.dca-steps li { font-size: 12px; color: var(--label-2); line-height: 1.4; margin: 0 0 6px; }
+.dca-steps b { color: var(--label); }
+.dca-live { padding: 12px 14px; margin: 8px 0; text-align: left; }
+.dca-live b { display: block; font-size: 14px; font-weight: 750; }
+.dca-live p { margin: 4px 0 0; font-size: 12px; color: var(--label-2); line-height: 1.35; }
+.dca-home {
+  display: flex; align-items: center; gap: 10px;
+  padding: 10px 12px; margin: 0 0 12px; text-align: left;
+  width: 100%;
+}
+.dca-home b { display: block; font-size: 13px; }
+.dca-home span { display: block; font-size: 11px; color: var(--label-2); }
+.tk-act.tk-dca .tk-act-orb { background: rgba(10,132,255,0.16); color: #64d2ff; }
 .pin-pad button:active { background: rgba(255,255,255,0.28); }
 .pin-lock.shake .pin-dots { animation: pinshake 0.4s ease; }
 @keyframes pinshake {

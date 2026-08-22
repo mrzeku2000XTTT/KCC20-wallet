@@ -45,7 +45,7 @@ import {
 } from './atrade.js?v=100';
 import { SCORPION_MEMORY } from './scorpionMemory.js?v=100';
 
-export const BUILD = '101';
+export const BUILD = '102';
 
 const TOKEN_FALLBACK_LOGO = 'assets/ttt.png';
 
@@ -235,7 +235,10 @@ let lastCookToken = null;
 let tokPane = 'kron';
 let agentTimer = null;
 let agentBusy = false;
+let dcaTimer = null;
+let dcaBusy = false;
 let qrRaf = 0;
+const DCA_KEY = 'kcc20_dca_v1';
 
 function haptic() { try { navigator.vibrate?.(12); } catch {} }
 
@@ -1113,6 +1116,7 @@ async function unlockToHome() {
   scheduleAllFreezeWatches();
   maybeAutoUnlock();
   resumeAgentIfAny();
+  resumeDcaIfAny();
   const pend = wallet?.address ? loadKrc20Pending(wallet.address) : null;
   if (pend) toast('Unfinished KRC-20 reveal — open Send to finish it');
 }
@@ -1220,6 +1224,7 @@ function renderHome() {
   if (navW) navW.innerHTML = walletTitleHtml(wallet);
   renderHomeWallets();
   renderHoldings();
+  paintDcaHome();
 }
 
 function knsCheck(title = 'KNS verified') {
@@ -3072,6 +3077,7 @@ const ICO_SEND = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" str
 const ICO_BUY = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9"><path d="M12 5v14M5 12h14"/></svg>';
 const ICO_SELL = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9"><path d="M5 12h14"/></svg>';
 const ICO_LOCK = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="5" y="11" width="14" height="10" rx="2"/><path d="M8 11V8a4 4 0 018 0v3"/></svg>';
+const ICO_DCA = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="8"/><path d="M12 8v4l3 2"/></svg>';
 
 function openKasSheet() {
   haptic();
@@ -3106,6 +3112,7 @@ function openTokenSheet(token) {
     tkAct('tk-send', 'Send', ICO_SEND),
     ...(kcc ? [
       tkAct('tk-buy', 'Buy', ICO_BUY, ' tk-buy'),
+      tkAct('tk-dca', 'DCA', ICO_DCA, ' tk-dca'),
       tkAct('tk-sell', 'Sell', ICO_SELL, ' tk-sell')
     ] : [])
   ].join('');
@@ -3115,13 +3122,14 @@ function openTokenSheet(token) {
       <div class="tk-amt">${esc(amt)}<small>${esc(token.ticker)}</small></div>
       <div class="tk-meta">${esc(token.name || token.ticker)} · ${esc(proto)}${token.cells ? ' · ' + esc(token.cells) + ' cells' : ''}</div>
     </div>
-    <div class="tk-actions${kcc ? '' : ' tk-2'}">${acts}</div>
+    <div class="tk-actions${kcc ? ' tk-5' : ' tk-2'}">${acts}</div>
     ${kcc ? `<button class="btn btn-glass tk-more" id="tk-freeze" type="button">${ICO_LOCK} Freeze</button>` : ''}
     <p class="muted" style="padding-top:12px;"><a href="${esc(link)}" target="_blank" rel="noopener" style="color:var(--gold-2)">Open explorer</a></p>
   `, { confirm: false, cancelLabel: 'Close' });
   $('tk-recv')?.addEventListener('click', () => { closeSheet(); openReceive({ token }); });
   $('tk-send')?.addEventListener('click', () => { closeSheet(); openSend({ token, assetKey }); });
   $('tk-buy')?.addEventListener('click', () => { closeSheet(); openTrade({ tick: token.ticker, side: 'buy' }); });
+  $('tk-dca')?.addEventListener('click', () => { closeSheet(); openTrade({ tick: token.ticker, side: 'dca' }); });
   $('tk-sell')?.addEventListener('click', () => { closeSheet(); openTrade({ tick: token.ticker, side: 'sell' }); });
   $('tk-freeze')?.addEventListener('click', () => { closeSheet(); openProduct('kcc20freeze', { tick: token.ticker }); });
 }
@@ -4419,6 +4427,221 @@ function openBoost() {
   });
 }
 
+function loadDcaJob() {
+  try { return JSON.parse(localStorage.getItem(DCA_KEY) || 'null') || null; } catch { return null; }
+}
+function saveDcaJob(job) {
+  if (!job) localStorage.removeItem(DCA_KEY);
+  else localStorage.setItem(DCA_KEY, JSON.stringify(job));
+}
+
+function dcaEveryLabel(ms) {
+  const n = Number(ms || 0);
+  if (n <= 900000) return 'every 15 minutes';
+  if (n <= 3600000) return 'every 1 hour';
+  if (n <= 14400000) return 'every 4 hours';
+  return 'every day';
+}
+
+function dcaPlanBits() {
+  const tick = ($('trade-ticker')?.value || 'TOKEN').trim().toUpperCase();
+  const budget = Number($('dca-budget')?.value || 0);
+  const slice = Number($('dca-slice')?.value || 0);
+  const every = Number($('dca-every')?.value || 3600000);
+  const buys = slice > 0 ? Math.floor(budget / slice) : 0;
+  return { tick, budget, slice, every, buys };
+}
+
+function paintDcaPlan() {
+  const box = $('dca-plan');
+  if (!box) return;
+  const { tick, budget, slice, every, buys } = dcaPlanBits();
+  if (!validTick(tick)) { box.textContent = 'Look up a KCC20 ticker first.'; return; }
+  if (!(slice >= 0.5)) { box.textContent = 'Each buy must be at least 0.5 KAS into the market.'; return; }
+  if (!(budget >= slice)) { box.textContent = 'Budget must cover at least one buy.'; return; }
+  if (buys < 1) { box.textContent = 'Budget ÷ each buy must be at least 1 buy.'; return; }
+  const extra = (slice + 1.5) * buys;
+  box.innerHTML = `<b>${esc(tick)}</b> · ${buys} buys of ${slice} KAS ${esc(dcaEveryLabel(every))}.
+    Market total ${budget.toFixed(2)} KAS. Keep about ${extra.toFixed(1)} KAS in this wallet (cell + network on each slice).
+    This tab stays unlocked. We never custody the coins.`;
+  paintDcaLive();
+}
+
+function paintDcaLive() {
+  const el = $('dca-live');
+  if (!el) return;
+  const job = loadDcaJob();
+  const running = !!(job?.on && dcaTimer);
+  el.classList.toggle('hidden', !job);
+  if (!job) return;
+  const left = Math.max(0, Number(job.nextAt || 0) - Date.now());
+  const wait = left > 60000 ? Math.ceil(left / 60000) + 'm' : Math.ceil(left / 1000) + 's';
+  el.innerHTML = `
+    <b>${running ? 'DCA on' : 'DCA paused'} · ${esc(job.tick)}</b>
+    <p>${job.buys || 0} / ${job.maxBuys} buys · spent ${(job.spentKas || 0).toFixed(2)} / ${Number(job.budgetKas || 0)} KAS
+      · ${running ? ('next in ' + wait) : (job.last || 'stopped')}</p>
+    <button class="btn btn-glass" id="dca-stop" type="button" style="margin-top:8px;height:40px;">Stop DCA</button>`;
+  $('dca-stop')?.addEventListener('click', stopDca);
+}
+
+function stopDca() {
+  const job = loadDcaJob();
+  if (job) saveDcaJob({ ...job, on: false, last: 'stopped' });
+  if (dcaTimer) { clearInterval(dcaTimer); dcaTimer = null; }
+  paintDcaLive();
+  paintDcaHome();
+  toast('DCA stopped');
+  syncTradeLabel();
+}
+
+function resumeDcaIfAny() {
+  const job = loadDcaJob();
+  if (job?.on && sessionOpen()) startDcaLoop();
+  paintDcaHome();
+}
+
+function startDcaLoop() {
+  if (dcaTimer) clearInterval(dcaTimer);
+  dcaTimer = setInterval(() => { tickDca().catch(() => {}); }, 15000);
+  paintDcaLive();
+  paintDcaHome();
+  tickDca().catch(() => {});
+}
+
+async function startDcaFromForm() {
+  if (isTestnet()) { toast('Home DCA is mainnet KCC20. Use COOK Agent on TN10.'); return; }
+  if (!wallet) { toast('Unlock a wallet'); return; }
+  const { tick, budget, slice, every, buys } = dcaPlanBits();
+  if (!validTick(tick)) { toast('Look up a ticker first'); return; }
+  if (!(slice >= 0.5)) { toast('Each buy at least 0.5 KAS'); return; }
+  if (buys < 1) { toast('Budget must cover at least one buy'); return; }
+  try { await lookupKronTick(tick); }
+  catch (e) { toast(errText(e)); return; }
+  if (kaswareEnabled()) {
+    toast('KasWare will pop for each DCA buy');
+  } else {
+    hydrateNativeKey(wallet);
+    if (!hexKey(wallet?.privKey)) {
+      toast('Import the 64-hex key to sign natively, or turn KasWare on');
+      return;
+    }
+    try { await requirePin('Start DCA on ' + tick); }
+    catch (e) { if (errText(e) === 'cancelled') return; toast(errText(e)); return; }
+  }
+  saveDcaJob({
+    on: true,
+    tick,
+    sliceKas: slice,
+    budgetKas: budget,
+    maxBuys: buys,
+    buys: 0,
+    spentKas: 0,
+    intervalMs: every,
+    nextAt: Date.now() + 4000,
+    last: 'armed — first buy in a few seconds',
+    startedAt: Date.now(),
+    walletId: wallet.id,
+    address: wallet.address
+  });
+  startDcaLoop();
+  toast('DCA armed on ' + tick);
+  paintDcaPlan();
+}
+
+async function tickDca() {
+  if (dcaBusy) return;
+  const job = loadDcaJob();
+  if (!job?.on) { if (dcaTimer) { clearInterval(dcaTimer); dcaTimer = null; } paintDcaLive(); paintDcaHome(); return; }
+  if (!sessionOpen() || document.visibilityState !== 'visible') {
+    job.last = 'waiting — keep this tab unlocked';
+    saveDcaJob(job);
+    paintDcaLive();
+    paintDcaHome();
+    return;
+  }
+  if (job.walletId && wallet?.id && job.walletId !== wallet.id) {
+    job.last = 'paused — switch back to the wallet that armed DCA';
+    saveDcaJob(job);
+    paintDcaLive();
+    paintDcaHome();
+    return;
+  }
+  if (Date.now() < Number(job.nextAt || 0)) {
+    paintDcaLive();
+    paintDcaHome();
+    return;
+  }
+  if ((job.buys || 0) >= Number(job.maxBuys || 0) || (job.spentKas || 0) + job.sliceKas > Number(job.budgetKas || 0) + 1e-9) {
+    saveDcaJob({ ...job, on: false, last: 'budget complete' });
+    if (dcaTimer) { clearInterval(dcaTimer); dcaTimer = null; }
+    toast(job.tick + ' DCA finished');
+    paintDcaLive();
+    paintDcaHome();
+    return;
+  }
+  dcaBusy = true;
+  try {
+    hydrateNativeKey(wallet);
+    job.last = 'buying ' + job.sliceKas + ' KAS of ' + job.tick;
+    saveDcaJob(job);
+    paintDcaLive();
+    await executeKronTrade({
+      wallet,
+      tick: job.tick,
+      side: 'buy',
+      amount: String(job.sliceKas),
+      utxos: await fetchAddressUtxos(wallet.address).catch(() => []),
+      forceKasware: kaswareEnabled(),
+      onStatus: (m) => toast(m)
+    });
+    const next = loadDcaJob() || job;
+    next.buys = (next.buys || 0) + 1;
+    next.spentKas = (next.spentKas || 0) + next.sliceKas;
+    next.nextAt = Date.now() + Number(next.intervalMs || 3600000);
+    next.last = 'bought slice ' + next.buys + '/' + next.maxBuys;
+    if (next.buys >= next.maxBuys || next.spentKas + next.sliceKas > next.budgetKas + 1e-9) {
+      next.on = false;
+      next.last = 'budget complete';
+      if (dcaTimer) { clearInterval(dcaTimer); dcaTimer = null; }
+    }
+    saveDcaJob(next);
+    afterTx();
+    toast(next.tick + ' DCA ' + next.buys + '/' + next.maxBuys);
+  } catch (e) {
+    const j = loadDcaJob() || job;
+    j.last = errText(e);
+    j.nextAt = Date.now() + Math.max(60000, Number(j.intervalMs || 0) / 2);
+    saveDcaJob(j);
+    toast('DCA: ' + errText(e));
+  } finally {
+    dcaBusy = false;
+    paintDcaLive();
+    paintDcaHome();
+  }
+}
+
+function paintDcaHome() {
+  const job = loadDcaJob();
+  let bar = $('dca-home');
+  const host = $('holdings')?.parentElement;
+  if (!job?.on) {
+    bar?.remove();
+    return;
+  }
+  if (!bar && host) {
+    bar = document.createElement('button');
+    bar.id = 'dca-home';
+    bar.type = 'button';
+    bar.className = 'glass dca-home';
+    $('holdings')?.before(bar);
+    bar.addEventListener('click', () => openTrade({ tick: job.tick, side: 'dca' }));
+  }
+  if (!bar) return;
+  const left = Math.max(0, Number(job.nextAt || 0) - Date.now());
+  const wait = left > 60000 ? Math.ceil(left / 60000) + 'm' : Math.ceil(left / 1000) + 's';
+  bar.innerHTML = `<span class="w-kas" aria-hidden="true"></span><span><b>DCA ${esc(job.tick)}</b><span>${job.buys || 0}/${job.maxBuys} buys · next ${wait} · tap to open</span></span>`;
+}
+
 function hideTradeScreen() {
   $('trade-screen')?.classList.add('hidden');
   $('trade-screen')?.setAttribute('aria-hidden', 'true');
@@ -4437,7 +4660,7 @@ function openTrade(prefill = {}) {
   screen.classList.remove('hidden');
   screen.setAttribute('aria-hidden', 'false');
   const tick0 = String(prefill.tick || 'KRON').toUpperCase();
-  const side0 = prefill.side === 'sell' ? 'sell' : 'buy';
+  const side0 = prefill.side === 'sell' ? 'sell' : (prefill.side === 'dca' ? 'dca' : 'buy');
   if ($('trade-ticker')) $('trade-ticker').value = tick0;
   if ($('trade-amount')) $('trade-amount').value = prefill.amount || '';
   $('trade-side')?.querySelectorAll('button').forEach(b => b.classList.toggle('on', b.dataset.side === side0));
@@ -4447,6 +4670,7 @@ function openTrade(prefill = {}) {
   }
   syncTradeLabel();
   lookupTradeTicker();
+  paintDcaPlan();
   loadKaspaSdk().catch(() => {});
   pingPublicNode().catch(() => {});
 }
@@ -4479,9 +4703,18 @@ async function lookupTradeTicker() {
 function syncTradeLabel() {
   const side = $('trade-side')?.querySelector('.on')?.dataset.side || 'buy';
   const tick = ($('trade-ticker')?.value || 'TOKEN').toUpperCase();
+  const dca = side === 'dca';
+  $('trade-spot')?.classList.toggle('hidden', dca);
+  $('trade-dca')?.classList.toggle('hidden', !dca);
   const lab = $('trade-amt-label');
   if (lab) lab.textContent = side === 'sell' ? `Amount (${tick})` : 'Pay (KAS)';
-  if ($('trade-go')) $('trade-go').textContent = side === 'sell' ? 'Review sell' : 'Review buy';
+  const job = loadDcaJob();
+  if ($('trade-go')) {
+    if (dca && job?.on) $('trade-go').textContent = 'Stop DCA';
+    else if (dca) $('trade-go').textContent = 'Review DCA plan';
+    else $('trade-go').textContent = side === 'sell' ? 'Review sell' : 'Review buy';
+  }
+  if (dca) paintDcaPlan();
   const avail = $('trade-avail');
   const inp = $('trade-amount');
   if (side === 'sell') {
@@ -4536,6 +4769,28 @@ async function reviewTrade() {
   const amount = $('trade-amount')?.value.trim();
   const tick = ($('trade-ticker')?.value || 'KRON').toUpperCase();
   const side = $('trade-side')?.querySelector('.on')?.dataset.side || 'buy';
+  if (side === 'dca') {
+    const job = loadDcaJob();
+    if (job?.on) { stopDca(); return; }
+    const plan = dcaPlanBits();
+    if (!validTick(plan.tick)) { toast('Look up a ticker first'); return; }
+    if (!(plan.slice >= 0.5) || plan.buys < 1) { toast('Set budget and each buy'); return; }
+    const extra = (plan.slice + 1.5) * plan.buys;
+    openSheet('Review DCA ' + plan.tick, `
+      <div class="kv"><span class="k">Token</span><span class="v">${esc(plan.tick)}</span></div>
+      <div class="kv"><span class="k">Each buy</span><span class="v">${plan.slice} KAS into market</span></div>
+      <div class="kv"><span class="k">How often</span><span class="v">${esc(dcaEveryLabel(plan.every))}</span></div>
+      <div class="kv"><span class="k">Buys</span><span class="v">${plan.buys}</span></div>
+      <div class="kv"><span class="k">Market budget</span><span class="v">${plan.budget.toFixed(2)} KAS</span></div>
+      <div class="kv"><span class="k">Wallet should hold</span><span class="v">~${extra.toFixed(1)} KAS</span></div>
+      <p class="muted" style="text-align:left;padding-top:8px;">DCA splits your budget into equal buys over time. This app never holds the funds. Native PIN signs each slice (one PIN to start). KasWare pops each slice if that toggle is on. Keep this tab unlocked — if you lock or close it, the next buy waits; missed buys do not pile up.</p>
+    `, {
+      confirm: kaswareEnabled() ? 'Start DCA (KasWare)' : 'Start DCA with PIN',
+      gold: true,
+      onConfirm: async () => { closeSheet(); await startDcaFromForm(); }
+    });
+    return;
+  }
   if (!amount) { toast('Enter an amount'); return; }
   if (go) go.disabled = true;
   let q;
@@ -6493,10 +6748,15 @@ function bind() {
     const b = e.target.closest('[data-side]');
     if (!b) return;
     $('trade-side').querySelectorAll('button').forEach(x => x.classList.toggle('on', x === b));
-    if ($('trade-amount')) $('trade-amount').value = '';
+    if ($('trade-amount') && b.dataset.side !== 'dca') $('trade-amount').value = '';
     syncTradeLabel();
-    quoteTradePreview();
+    if (b.dataset.side === 'dca') paintDcaPlan();
+    else quoteTradePreview();
   });
+  const dcaSoon = () => { clearTimeout(paintDcaPlan._t); paintDcaPlan._t = setTimeout(paintDcaPlan, 200); };
+  $('dca-budget')?.addEventListener('input', dcaSoon);
+  $('dca-slice')?.addEventListener('input', dcaSoon);
+  $('dca-every')?.addEventListener('change', paintDcaPlan);
   $('pin-cancel')?.addEventListener('click', cancelPinGate);
   $('kron-markets')?.addEventListener('click', e => {
     const row = e.target.closest('[data-trade-tick]');
@@ -6802,6 +7062,7 @@ function bind() {
       tickLive(true);
       maybeAutoUnlock();
       resumeAgentIfAny();
+      resumeDcaIfAny();
     }
   });
 }

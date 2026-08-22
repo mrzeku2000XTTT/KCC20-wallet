@@ -12,7 +12,7 @@
   <link rel="icon" href="assets/icon.png">
   <title>KCC20 Wallet</title>
   <meta http-equiv="Cache-Control" content="no-store, no-cache, must-revalidate">
-  <link rel="stylesheet" href="css/app.css?v=101">
+  <link rel="stylesheet" href="css/app.css?v=102">
 </head>
 <body>
   <img class="bg-poster" src="assets/bg.jpg" alt="">
@@ -542,24 +542,58 @@
         </div>
         <div class="seg" id="trade-side">
           <button class="on" data-side="buy" type="button">Buy</button>
+          <button data-side="dca" type="button">DCA</button>
           <button data-side="sell" type="button">Sell</button>
         </div>
         <div class="field"><label>Ticker</label>
           <div class="dest-row">
-            <input id="trade-ticker" placeholder="KRON, KKDAG…" maxlength="12" spellcheck="false" autocomplete="off">
+            <input id="trade-ticker" placeholder="KRON, KROSHI, KKDAG…" maxlength="12" spellcheck="false" autocomplete="off">
             <button class="scan-btn" id="trade-lookup" type="button">Go</button>
           </div>
         </div>
         <div class="trade-meta glass hidden" id="trade-meta"></div>
-        <div class="field"><label id="trade-amt-label">Pay (KAS)</label>
-          <div class="dest-row">
-            <input id="trade-amount" type="text" inputmode="decimal" placeholder="5">
-            <button class="max-btn" id="trade-max" type="button">Max</button>
+        <div id="trade-spot">
+          <div class="field"><label id="trade-amt-label">Pay (KAS)</label>
+            <div class="dest-row">
+              <input id="trade-amount" type="text" inputmode="decimal" placeholder="5">
+              <button class="max-btn" id="trade-max" type="button">Max</button>
+            </div>
+          </div>
+          <p class="avail-line" id="trade-avail">Available — tap Max to fill.</p>
+          <div class="trade-quote" id="trade-quote">
+            <p class="muted" style="text-align:left;padding:0;">Type a KCC20 ticker, look it up, then buy with this wallet. Confirm with PIN or KasWare.</p>
           </div>
         </div>
-        <p class="avail-line" id="trade-avail">Available — tap Max to fill.</p>
-        <div class="trade-quote" id="trade-quote">
-          <p class="muted" style="text-align:left;padding:0;">Type a KRON ticker, look it up, then buy with this wallet. You’ll confirm with this wallet’s PIN.</p>
+        <div id="trade-dca" class="hidden">
+          <details class="at-help" open>
+            <summary>How DCA works (read this)</summary>
+            <ol class="dca-steps">
+              <li><b>Pick any KCC20</b> — KRON, KROSHI, KKDAG, or another ticker on KRON.</li>
+              <li><b>Set a budget</b> — total KAS you are willing to put into the token over time.</li>
+              <li><b>Set each buy</b> — how much KAS goes into the market every time (1 KAS is typical).</li>
+              <li><b>Set how often</b> — every 15 minutes, hour, 4 hours, or day.</li>
+              <li><b>Keep this wallet unlocked</b> — DCA runs on this device. We never hold your funds. Native PIN signs each slice; KasWare pops each slice if that toggle is on.</li>
+            </ol>
+            <p class="muted" style="text-align:left;padding-top:6px;">Each buy also needs ~1.5 KAS extra in the wallet for the token cell and network fee. If this tab is locked or closed, DCA waits — it will not catch up a pile of missed buys.</p>
+          </details>
+          <div class="at-row">
+            <label class="field grow"><span>Budget (KAS total)</span>
+              <input id="dca-budget" inputmode="decimal" value="12" placeholder="12">
+            </label>
+            <label class="field grow"><span>Each buy (KAS)</span>
+              <input id="dca-slice" inputmode="decimal" value="1" placeholder="1">
+            </label>
+          </div>
+          <label class="field"><span>How often</span>
+            <select id="dca-every">
+              <option value="900000">Every 15 minutes</option>
+              <option value="3600000" selected>Every 1 hour</option>
+              <option value="14400000">Every 4 hours</option>
+              <option value="86400000">Every day</option>
+            </select>
+          </label>
+          <div class="trade-quote" id="dca-plan">Set budget and each buy. Example: 12 KAS budget ÷ 1 KAS = 12 buys.</div>
+          <div class="glass dca-live hidden" id="dca-live"></div>
         </div>
         <button class="btn btn-gold" id="trade-go" type="button" style="margin-top:auto;">Review buy</button>
       </div>
@@ -626,7 +660,7 @@
     })();
   </script>
   <script type="module">
-    import('./js/app.js?v=101').catch(function (err) {
+    import('./js/app.js?v=102').catch(function (err) {
       console.error(err);
       var phone = document.getElementById('phone');
       var d = document.createElement('div');

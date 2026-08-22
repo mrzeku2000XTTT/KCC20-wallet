@@ -40,9 +40,9 @@ import {
   extractSigning, signAndBroadcastPskt, cookTokenId, isTestnetAddr,
   loadAgentJob, saveAgentJob, sompiToKas, kasToSompiNum,
   rememberLaunch, loadLaunched, cookOwnerBalances, cookDeployed
-} from './atrade.js?v=94';
+} from './atrade.js?v=95';
 
-export const BUILD = '94';
+export const BUILD = '95';
 
 function errText(e) {
   if (e == null) return 'Unknown error';

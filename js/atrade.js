@@ -4,18 +4,22 @@ import { loadKaspaSdk, connectPublicNode } from './tx.js?v=93';
 import { kaswareEnabled, kaswareSigning, ensureKaswareSigner, signPsktWithKasware } from './kasware.js?v=93';
 
 const COOK_DIRECT = 'https://dev-api-kcc20.kaspa.com';
+const COOK_HOSTED = 'https://kcc-20-wallet.vercel.app';
 const AGENT_KEY = 'kcc20_agent_v1';
 const LAUNCH_KEY = 'kcc20_launched_v1';
 
 export function cookUrls(path) {
   const p = path.startsWith('/') ? path : '/' + path;
+  const relay = '/api/relay?path=' + encodeURIComponent(p);
   const urls = [];
+  const seen = new Set();
+  const add = (u) => { if (u && !seen.has(u)) { seen.add(u); urls.push(u); } };
   try {
     if (typeof location !== 'undefined' && location.protocol !== 'file:' && location.origin) {
-      urls.push(location.origin + '/cook-api' + p);
-      urls.push(location.origin + '/api/relay?path=' + encodeURIComponent(p));
+      add(location.origin + relay);
     }
   } catch {}
+  add(COOK_HOSTED + relay);
   return urls;
 }
 
@@ -102,7 +106,7 @@ async function cookRequest(path, init) {
     try {
       const res = await fetch(url, { ...(init || {}), cache: 'no-store', credentials: 'omit', mode: 'cors' });
       const text = await res.text();
-      if (/^\s*</.test(text || '') || /NOT_FOUND/i.test(text || '')) {
+      if (res.status === 404 || /^\s*</.test(text || '')) {
         last = new Error('Cook proxy missed');
         continue;
       }

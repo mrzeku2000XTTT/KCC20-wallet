@@ -88,8 +88,54 @@ export function kaspaCashaddrDecode(addrStr) {
   return { prefix, versionByte: bytes8[0], payloadBytes: new Uint8Array(bytes8.slice(1)) };
 }
 
-export function kaspaAddressFromPubkey(pubkey32) {
-  return kaspaCashaddrEncode('kaspa', 0, pubkey32);
+const NET_KEY = 'kcc20_network_v1';
+
+export function networkId() {
+  try { return localStorage.getItem(NET_KEY) === 'testnet-10' ? 'testnet-10' : 'mainnet'; } catch { return 'mainnet'; }
+}
+
+export function isTestnet() {
+  return networkId() === 'testnet-10';
+}
+
+export function addressPrefix() {
+  return isTestnet() ? 'kaspatest' : 'kaspa';
+}
+
+export function kaspaRestBase() {
+  return isTestnet() ? 'https://api-tn10.kaspa.org' : 'https://api.kaspa.org';
+}
+
+export function setNetworkId(id) {
+  localStorage.setItem(NET_KEY, id === 'testnet-10' ? 'testnet-10' : 'mainnet');
+}
+
+export function kaspaAddressFromPubkey(pubkey32, prefix) {
+  return kaspaCashaddrEncode(prefix || addressPrefix(), 0, pubkey32);
+}
+
+export function pubkeyToAddress(pubHex, network) {
+  let h = String(pubHex || '').replace(/^0x/i, '');
+  if (h.length === 66) h = h.slice(2);
+  if (h.length !== 64) return '';
+  const prefix = (network || networkId()) === 'testnet-10' ? 'kaspatest' : 'kaspa';
+  return kaspaCashaddrEncode(prefix, 0, hexToBytes(h));
+}
+
+export function applyWalletNetwork(wallet, network) {
+  if (!wallet) return wallet;
+  const net = network || networkId();
+  if (wallet.pubKey) {
+    const next = pubkeyToAddress(wallet.pubKey, net);
+    if (next) wallet.address = next;
+  }
+  if (Array.isArray(wallet.receiveAddrs)) {
+    for (const a of wallet.receiveAddrs) {
+      if (!a) continue;
+      if (a.role === 'home' || a.id === 'home' || a.address === wallet.address) a.address = wallet.address;
+    }
+  }
+  return wallet;
 }
 
 export function kaspaAddressFromScriptHash(scriptHash32) {
@@ -104,7 +150,7 @@ const NETWORK_HRP = {
   devnet: 'kaspadev'
 };
 
-export function validateKaspaAddress(addrStr, network = 'mainnet') {
+export function validateKaspaAddress(addrStr, network = networkId()) {
   if (!addrStr || typeof addrStr !== 'string') return { isValid: false, error: 'Address is required' };
   const trimmed = addrStr.trim();
   const parts = trimmed.split(':');
@@ -128,7 +174,7 @@ export function validateKaspaAddress(addrStr, network = 'mainnet') {
   return { isValid: true, versionByte: decoded.versionByte, prefix: decoded.prefix, payloadBytes: decoded.payloadBytes };
 }
 
-export function isValidKaspaAddress(addrStr, network = 'mainnet') {
+export function isValidKaspaAddress(addrStr, network = networkId()) {
   return validateKaspaAddress(addrStr, network).isValid;
 }
 

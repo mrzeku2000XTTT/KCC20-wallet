@@ -1,11 +1,12 @@
 /* Official rusty-kaspa WASM: P2SH covenants + signed send/fund. */
 import {
   hexToBytes, kaspaAddressFromScriptHash, validateKaspaAddress,
-  validateAndCleanUtxo, deepCloneAndFreeze, kasToSompi
-} from './crypto.js?v=77';
+  validateAndCleanUtxo, deepCloneAndFreeze, kasToSompi,
+  kaspaRestBase, networkId
+} from './crypto.js?v=90';
 import { kaswareSigning, sendKaspaWithKasware, sendKrc20WithKasware } from './kasware.js?v=85';
 
-const API = 'https://api.kaspa.org';
+function API() { return kaspaRestBase(); }
 
 let _sdk = null;
 let _sdkLoading = null;
@@ -152,7 +153,7 @@ async function withTimeout(promise, ms, msg) {
 }
 
 export async function currentDaa() {
-  const res = await fetch(`${API}/info/blockdag`);
+  const res = await fetch(`${API()}/info/blockdag`);
   const info = await res.json();
   return Number(info.virtualDaaScore ?? info.virtual_daa_score ?? 0);
 }
@@ -497,53 +498,64 @@ export async function spendXmssVault({ wallet, vault, utxos, feeUtxos, witness, 
 }
 
 /* Same public nodes this repo uses in covenants/* deploy/spend scripts. */
-const PUBLIC_WRPC = [
-  'wss://ivy.kaspa.green/kaspa/mainnet/wrpc/borsh',
-  'wss://dina.kaspa.green/kaspa/mainnet/wrpc/borsh',
-  'wss://kaspa.aspectron.org:443/kaspa/mainnet/wrpc/borsh',
-  'wss://mainnet.kaspa.ws/kaspa/mainnet/wrpc/borsh'
-];
+const PUBLIC_WRPC = {
+  mainnet: [
+    'wss://ivy.kaspa.green/kaspa/mainnet/wrpc/borsh',
+    'wss://dina.kaspa.green/kaspa/mainnet/wrpc/borsh',
+    'wss://kaspa.aspectron.org:443/kaspa/mainnet/wrpc/borsh',
+    'wss://mainnet.kaspa.ws/kaspa/mainnet/wrpc/borsh'
+  ],
+  'testnet-10': [
+    'wss://kaspa.aspectron.org:443/kaspa/testnet-10/wrpc/borsh',
+    'wss://tn10.kaspa.ws/kaspa/testnet-10/wrpc/borsh'
+  ]
+};
 
 let _rpc = null;
 let _rpcUrl = null;
+let _rpcNet = null;
 
 export async function disconnectRpc() {
   if (!_rpc) return;
   try { await _rpc.disconnect(); } catch {}
   _rpc = null;
   _rpcUrl = null;
+  _rpcNet = null;
 }
 
 export async function connectPublicNode() {
   const k = await loadKaspaSdk();
-  if (_rpc && _rpc.isConnected) return { rpc: _rpc, url: _rpcUrl, reused: true };
+  const net = networkId();
+  if (_rpc && _rpc.isConnected && _rpcNet === net) return { rpc: _rpc, url: _rpcUrl, reused: true };
+  if (_rpc) await disconnectRpc();
 
   const encoding = k.Encoding.Borsh;
   const urls = [];
   try {
     const resolver = new k.Resolver();
-    const resolved = await withTimeout(resolver.getUrl(encoding, 'mainnet'), 6000, 'resolver timeout');
+    const resolved = await withTimeout(resolver.getUrl(encoding, net), 6000, 'resolver timeout');
     if (resolved) urls.push(String(resolved));
   } catch {}
-  for (const u of PUBLIC_WRPC) if (!urls.includes(u)) urls.push(u);
+  for (const u of (PUBLIC_WRPC[net] || PUBLIC_WRPC.mainnet)) if (!urls.includes(u)) urls.push(u);
 
   let last = 'no public node responded';
   for (const url of urls) {
     let rpc = null;
     try {
-      rpc = new k.RpcClient({ url, encoding, networkId: 'mainnet' });
+      rpc = new k.RpcClient({ url, encoding, networkId: net });
       await withTimeout(rpc.connect(), 10000, 'connect timeout');
       const info = await withTimeout(rpc.getServerInfo(), 8000, 'getServerInfo timeout');
       if (!info) throw new Error('empty server info');
       _rpc = rpc;
       _rpcUrl = url;
+      _rpcNet = net;
       return { rpc, url, info, reused: false };
     } catch (e) {
       last = `${url} → ${errText(e)}`;
       try { if (rpc) await rpc.disconnect(); } catch {}
     }
   }
-  throw new Error('Could not reach a public Kaspa node. Last: ' + last);
+  throw new Error('Could not reach a public Kaspa node (' + net + '). Last: ' + last);
 }
 
 export async function pingPublicNode() {
@@ -845,7 +857,7 @@ export async function sendKas({ wallet, dest, amountKas, utxos, exact = false })
     return sendKaspaWithKasware(dest, amountKas);
   }
   const k = await loadKaspaSdk();
-  const destCheck = validateKaspaAddress(String(dest || ''), 'mainnet');
+  const destCheck = validateKaspaAddress(String(dest || ''), networkId());
   if (!destCheck.isValid) throw new Error(destCheck.error || 'Invalid destination address');
   let requested;
   try {
@@ -1525,7 +1537,7 @@ export async function compoundUtxos({ wallet, utxos }) {
 export async function fetchAddressUtxos(address) {
   try {
     const data = await fetchJsonRetry(
-      `${API}/addresses/${encodeURIComponent(address)}/utxos`,
+      `${API()}/addresses/${encodeURIComponent(address)}/utxos`,
       { label: 'Kaspa UTXOs', tries: 2, timeout: 8000 }
     );
     return Array.isArray(data) ? data : [];
@@ -1541,7 +1553,7 @@ export async function fetchAddressUtxos(address) {
 
 export async function fetchAddressBalance(address) {
   const data = await fetchJsonRetry(
-    `${API}/addresses/${encodeURIComponent(address)}/balance`,
+    `${API()}/addresses/${encodeURIComponent(address)}/balance`,
     { label: 'Kaspa balance' }
   );
   return Number(data.balance ?? data ?? 0);
@@ -1880,7 +1892,7 @@ async function cellKasValue(txid, index, hint) {
   const hinted = indexerSompi(hint);
   if (hinted != null) return hinted;
   try {
-    const tx = await fetchJsonRetry(`${API}/transactions/${txid}`, { label: 'Kaspa tx', tries: 3 });
+    const tx = await fetchJsonRetry(`${API()}/transactions/${txid}`, { label: 'Kaspa tx', tries: 3 });
     const o = (tx.outputs || [])[index];
     if (o && o.amount != null) return BigInt(o.amount);
   } catch {}

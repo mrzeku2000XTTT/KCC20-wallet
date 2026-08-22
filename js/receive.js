@@ -1,5 +1,5 @@
 /* KaChing-style fresh receive addresses. Keys stay on-device. */
-import { generatePrivateKey, createKeypairFromHex } from './crypto.js?v=77';
+import { generatePrivateKey, createKeypairFromHex } from './crypto.js?v=90';
 import { buildPrivacyAddress } from './script.js?v=77';
 
 function rid() {

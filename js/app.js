@@ -2,8 +2,8 @@ import {
   loadCryptoLibs, generatePrivateKey, createKeypairFromHex,
   isValidKaspaAddress, validateKaspaAddress, shortAddr, hexToBytes, privKeyToHex,
   derivePublicKey, kaspaAddressFromPubkey, bytesToHex, kasToSompi, sompiToKasString,
-  validateAndCleanUtxo
-} from './crypto.js?v=89';
+  validateAndCleanUtxo, networkId, isTestnet, setNetworkId, applyWalletNetwork, kaspaRestBase
+} from './crypto.js?v=90';
 import {
   NATIVE_KAS, VAULT_PRODUCTS, loadWatchlist, addToken, removeToken,
   loadVaults, saveVault, updateVault, formatAmount, formatTokenUnits, tokenColor,
@@ -11,7 +11,7 @@ import {
   krc20Logo, toTokenRaw, setVaultOwner, kcc20Identicon, VAULT_GROUPS
 } from './kcc20.js?v=89';
 import { parseIntent, describeIntent, askFor, parseDurationField, interpretVaultChat, normalizeChat } from './intent.js?v=89';
-import { payloadFromAddress } from './script.js?v=89';
+import { payloadFromAddress } from './script.js?v=90';
 import { explainTransaction, scorpionAnswer } from './scorpion.js?v=89';
 import {
   sendKas, fetchAddressUtxos, fetchAddressBalance, loadKaspaSdk,
@@ -19,13 +19,14 @@ import {
   pingPublicNode, sweepVault, toRpcTransaction, p2shSpendScript, planKasPayment, storageMassOk,
   compoundUtxos, sendKrc20, sendKcc20, loadKrc20Pending, lockKcc20Timelock, sweepKcc20Capsule,
   fetchOwnedUtxos, buildSentinelChain, buildRecurringChain, buildHashlockCovenant,
-  newHashlockSecret, checkinHop, currentHop, parseXmssKit, p2shFromRedeemHex, spendXmssVault
-} from './tx.js?v=89';
+  newHashlockSecret, checkinHop, currentHop, parseXmssKit, p2shFromRedeemHex, spendXmssVault,
+  disconnectRpc
+} from './tx.js?v=90';
 import { kronMarkets, quoteKronTrade, executeKronTrade, formatKasSompi, lookupKronTick, tradeCostLines, attachKronLogos } from './kronTrade.js?v=89';
 import {
   migrateReceiveBook, ownedAddresses, markAddressUsed, currentReceive,
   deriveReceiveBatch, unusedReceiveCount, ensurePrivacyBook
-} from './receive.js?v=89';
+} from './receive.js?v=90';
 import { knsResolve, knsPrimary, knsDomainsFor, knsOwnerMatches, knsAppUrl, looksLikeKasDomain, normalizeKasDomain } from './kns.js?v=89';
 import { runPhoneStudio, runServerStudio } from './studio.js?v=89';
 import {
@@ -38,9 +39,9 @@ import {
   cookDeploy, cookBuildOrder, cookFillOrder, cookSweep, cookWrap, cookMint,
   extractSigning, signAndBroadcastPskt, cookTokenId, isTestnetAddr,
   loadAgentJob, saveAgentJob, sompiToKas, kasToSompiNum
-} from './atrade.js?v=89';
+} from './atrade.js?v=90';
 
-export const BUILD = '89';
+export const BUILD = '90';
 
 function errText(e) {
   if (e == null) return 'Unknown error';
@@ -129,7 +130,7 @@ function mirrorVaultTo(addr, vault) {
   setVaultOwner(here);
 }
 
-const API_BASE = 'https://api.kaspa.org';
+const API_BASE = () => kaspaRestBase();
 const BACKEND_URL = 'https://base44.app/api/apps/6a444b036408e68ec8d6f2a6/functions';
 const STORE_KEY = 'kcc20_wallet_v1';
 const LEGACY_KEY = 'scorpion_wallet';
@@ -146,8 +147,12 @@ const BOOST_PTS = 15;
 
 const $ = (id) => document.getElementById(id);
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
-const explorerTx = (id) => 'https://kaspa.stream/transactions/' + encodeURIComponent(id || '');
-const explorerAddr = (addr) => 'https://kaspa.stream/addresses/' + encodeURIComponent(addr || '');
+const explorerTx = (id) => isTestnet()
+  ? 'https://explorer-tn10.kaspa.org/txs/' + encodeURIComponent(id || '')
+  : 'https://kaspa.stream/transactions/' + encodeURIComponent(id || '');
+const explorerAddr = (addr) => isTestnet()
+  ? 'https://explorer-tn10.kaspa.org/addresses/' + encodeURIComponent(addr || '')
+  : 'https://kaspa.stream/addresses/' + encodeURIComponent(addr || '');
 
 function txidBlock(id, label = 'TX') {
   if (!id) return '';
@@ -159,7 +164,7 @@ function txidBlock(id, label = 'TX') {
         <button type="button" class="copy-chip" data-copy="${esc(id)}">Copy</button>
       </span>
     </div>
-    <p class="muted tx-links"><a href="${esc(explorerTx(id))}" target="_blank" rel="noopener">Open on kaspa.stream</a></p>`;
+    <p class="muted tx-links"><a href="${esc(explorerTx(id))}" target="_blank" rel="noopener">Open explorer</a></p>`;
 }
 
 async function copyText(text) {
@@ -473,7 +478,7 @@ function hydrateFromSnap(addr) {
 }
 
 async function fetchWalletTxs(addr) {
-  const res = await fetch(`${API_BASE}/addresses/${encodeURIComponent(addr)}/full-transactions?limit=20&resolve_previous_outpoints=light`);
+  const res = await fetch(`${API_BASE()}/addresses/${encodeURIComponent(addr)}/full-transactions?limit=20&resolve_previous_outpoints=light`);
   if (!res.ok) return [];
   const txs = await res.json();
   return Array.isArray(txs) ? txs : (txs.transactions || []);
@@ -994,6 +999,7 @@ function resetLiveState() {
 
 async function activateWallet(w, { toastMsg } = {}) {
   wallet = migrateReceiveBook(migratePinOnto(w));
+  applyWalletNetwork(wallet);
   saveWallet();
   setVaultOwner(w.address);
   resetLiveState();
@@ -1097,7 +1103,7 @@ function paintIfChanged(el, html) {
 function renderHome() {
   if (!wallet) return;
   if ($('live-pill')) {
-    $('live-pill').textContent = kaswareEnabled() ? 'KasWare · ' + BUILD : 'Live · ' + BUILD;
+    $('live-pill').textContent = (isTestnet() ? 'TN10 · ' : (kaswareEnabled() ? 'KasWare · ' : 'Live · ')) + BUILD;
   }
   const balHtml = `${formatAmount(balanceSompi)}<small>KAS</small>`;
   if ($('card-bal') && $('card-bal').innerHTML !== balHtml) $('card-bal').innerHTML = balHtml;
@@ -2475,7 +2481,7 @@ async function backfillRecentKcc20Activity() {
 }
 
 async function fetchKaspaTx(id) {
-  const res = await fetch(`${API_BASE}/transactions/${id}?resolve_previous_outpoints=light`);
+  const res = await fetch(`${API_BASE()}/transactions/${id}?resolve_previous_outpoints=light`);
   if (!res.ok) throw new Error('Tx not found');
   return res.json();
 }
@@ -2686,8 +2692,8 @@ async function tickLive(full) {
     if (full) {
       try {
         const [pRes, tRes] = await Promise.all([
-          fetch(`${API_BASE}/info/price?stringOnly=false`),
-          fetch(`${API_BASE}/addresses/${addr}/full-transactions?limit=20&resolve_previous_outpoints=light`)
+          fetch(`${API_BASE()}/info/price?stringOnly=false`),
+          fetch(`${API_BASE()}/addresses/${addr}/full-transactions?limit=20&resolve_previous_outpoints=light`)
         ]);
         if (!wallet || wallet.address !== addr) return;
         if (pRes.ok) {
@@ -2859,8 +2865,8 @@ function openTokenSheet(token) {
   `, { confirm: false, cancelLabel: 'Close' });
   $('tk-recv')?.addEventListener('click', () => { closeSheet(); openReceive({ token }); });
   $('tk-send')?.addEventListener('click', () => { closeSheet(); openSend({ token, assetKey }); });
-  $('tk-buy')?.addEventListener('click', () => { closeSheet(); jumpToAtTrade(token.ticker, 'buy'); });
-  $('tk-sell')?.addEventListener('click', () => { closeSheet(); jumpToAtTrade(token.ticker, 'sell'); });
+  $('tk-buy')?.addEventListener('click', () => { closeSheet(); openTrade({ tick: token.ticker, side: 'buy' }); });
+  $('tk-sell')?.addEventListener('click', () => { closeSheet(); openTrade({ tick: token.ticker, side: 'sell' }); });
   $('tk-freeze')?.addEventListener('click', () => { closeSheet(); openProduct('kcc20freeze', { tick: token.ticker }); });
 }
 
@@ -2917,13 +2923,22 @@ function syncAtKwBtn() {
 function syncAtNote() {
   const el = $('at-note');
   if (!el) return;
-  const kw = kaswareEnabled() ? 'KasWare signs.' : 'This wallet signs with PIN.';
-  if (atPane === 'launch' || atSrc === 'cook') {
-    el.textContent = 'Cook KCC20 V1 is public testnet (kaspatest). KRON Book is live mainnet. Covenants hold funds — we never custody. ' + kw;
+  const kw = kaswareEnabled() ? 'KasWare signs.' : 'PIN signs.';
+  if (atPane === 'launch') {
+    el.textContent = isTestnet()
+      ? 'Launch deploys a real KCC20 Token V1 on Cook TN10. Same key, kaspatest address. You sign. Cook never holds keys. Faucet: faucet-tn10.kaspanet.io. ' + kw
+      : 'Mainnet launch lives on KRON’s bonding curve. Switch Network to Testnet-10 to launch via Cook, or open KRON Launch. Book still trades live KRON. ' + kw;
   } else if (atPane === 'agent') {
-    el.textContent = 'Scorpion trades KRON on mainnet only while this tab stays unlocked. We never hold keys, so it cannot trade if the phone is killed. ' + kw;
+    el.textContent = 'Scorpion: buy below / sell above on KRON while this tab stays unlocked. We never hold keys, so it stops if you lock or kill the app. ' + kw;
+  } else if (atPane === 'tokens') {
+    el.textContent = 'Holdings on this address. Boost sends 0.15 KAS to yourself. ' + kw;
   } else {
-    el.textContent = 'Covenants hold the funds. This app never custodied them. Limit is a max/min price. Slippage is checked on review. ' + kw;
+    el.textContent = isTestnet()
+      ? 'Cook TN10 order book. Amount is tokens. Limit rests an order; empty limit takes the book. Slippage is checked on review. ' + kw
+      : 'KRON live AMM on mainnet. Buy amount is KAS. Limit is a max/min price. Slippage is checked on review. Home Trade is the simple buy. ' + kw;
+  }
+  if ($('at-src')) {
+    $('at-src').classList.toggle('hidden', true);
   }
 }
 
@@ -2950,7 +2965,16 @@ function setAtPane(pane) {
   $('at-tokens-btn')?.classList.toggle('on', hold);
   syncAtKwBtn();
   syncAtNote();
+  if ($('at-lnote')) {
+    $('at-lnote').textContent = isTestnet()
+      ? 'TN10: Cook deploys a real KCC20 V1 on-chain. You sign. Get TKAS at faucet-tn10.kaspanet.io'
+      : 'Mainnet: Open KRON Launch, or tap Launch to switch this wallet to Testnet-10 and deploy via Cook.';
+  }
   if (book) {
+    atSrc = isTestnet() ? 'cook' : 'kron';
+    document.querySelectorAll('#at-src button').forEach(b => b.classList.toggle('on', b.dataset.src === atSrc));
+    $('kron-markets')?.classList.toggle('hidden', atSrc !== 'kron');
+    $('at-cook-mkts')?.classList.toggle('hidden', atSrc !== 'cook');
     if (atSrc === 'cook') renderCookMarkets();
     else renderKronMarkets();
     atQuotePreview();
@@ -3260,10 +3284,74 @@ async function signCookBuild(build, label) {
   `, { confirm: 'Done', cancel: false, onConfirm: () => { closeSheet(); refreshAll(); } });
 }
 
+async function applyAppNetwork(id) {
+  const next = id === 'testnet-10' ? 'testnet-10' : 'mainnet';
+  setNetworkId(next);
+  try { await disconnectRpc(); } catch {}
+  if (wallet) {
+    applyWalletNetwork(wallet, next);
+    saveWallet();
+    const list = loadWalletList();
+    const row = list.find(w => w.id === wallet.id);
+    if (row) {
+      applyWalletNetwork(row, next);
+      saveWalletList(list);
+    }
+  }
+  toast(next === 'testnet-10' ? 'TN10 — same key, kaspatest address. Cook launch is on.' : 'Mainnet — kaspa: address. KRON Book is live.');
+  renderHome();
+  if (currentTab === 'you') renderProfile();
+  if (currentTab === 'tokens') setAtPane(atPane || 'book');
+  refreshAll();
+}
+
+function openNetworkSheet() {
+  haptic();
+  const tn = isTestnet();
+  openSheet('Network', `
+    <p class="muted" style="text-align:left;padding:0 0 10px;">Same key. Address prefix changes. Mainnet uses real KAS and KRON. Testnet-10 uses TKAS so you can launch a real KCC20 on Cook.</p>
+    <div class="kv"><span class="k">Now</span><span class="v">${tn ? 'Testnet-10' : 'Mainnet'}</span></div>
+    <div class="kv"><span class="k">Address</span><span class="v">${esc(shortAddr(wallet?.address || '', 10, 6) || '—')}</span></div>
+    <label class="kw-toggle">
+      <input type="checkbox" id="net-tn" ${tn ? 'checked' : ''}>
+      <span>Testnet-10 (Cook launch)</span>
+    </label>
+    ${tn ? `<p class="muted" style="text-align:left;padding:8px 0 0;">Get TKAS from <a href="https://faucet-tn10.kaspanet.io/" target="_blank" rel="noopener" style="color:var(--gold-2)">the TN10 faucet</a>, then Launch. KasWare is usually mainnet — use Native PIN on TN10.</p>` : `<p class="muted" style="text-align:left;padding:8px 0 0;">KRON does not publish a third-party genesis builder. Real mainnet tokens launch on <a href="https://kron.technology" target="_blank" rel="noopener" style="color:var(--gold-2)">kron.technology</a>, then trade here. Cook deploy is TN10.</p>`}
+  `, { confirm: 'Done', cancel: false });
+  $('net-tn')?.addEventListener('change', async (e) => {
+    const want = !!e.target.checked;
+    try {
+      await applyAppNetwork(want ? 'testnet-10' : 'mainnet');
+    } catch (err) {
+      e.target.checked = !want;
+      toast(errText(err));
+      return;
+    }
+    closeSheet();
+    openNetworkSheet();
+  });
+}
+
 async function runCookLaunch() {
   if (!wallet) { toast('Unlock a wallet'); return; }
-  if (!isTestnetAddr(wallet.address)) {
-    toast('Launch via Cook is TN10. Import a kaspatest wallet. KRON Book is live mainnet KCC20.');
+  if (!isTestnet()) {
+    openSheet('Launch a real token', `
+      <p class="muted" style="text-align:left;">Cook’s public deploy is TN10. Turn on Testnet-10 in Settings — this same key becomes a kaspatest address and Launch signs a real KCC20 V1 on Cook.</p>
+      <p class="muted" style="text-align:left;padding-top:8px;">Mainnet launches sit on KRON’s bonding curve. Their SDK does not build genesis txs, so that deploy is on kron.technology. After it lists, Home Trade and A-Trade Book buy it here. We never hold funds.</p>
+    `, {
+      confirm: 'Switch to Testnet-10',
+      gold: true,
+      cancelLabel: 'Open KRON',
+      onConfirm: async () => {
+        await applyAppNetwork('testnet-10');
+        closeSheet();
+        setAtPane('launch');
+        toast('TN10 on. Get TKAS from the faucet, then Launch.');
+      }
+    });
+    $('sheet-cancel')?.addEventListener('click', () => {
+      window.open('https://kron.technology', '_blank', 'noopener');
+    }, { once: true });
     return;
   }
   const ticker = ($('at-ltick')?.value || '').trim().toUpperCase();
@@ -3308,8 +3396,8 @@ async function runCookLaunch() {
 
 async function runCookGraduate() {
   if (!wallet) { toast('Unlock a wallet'); return; }
-  if (!isTestnetAddr(wallet.address)) {
-    toast('Wrap-to-book is Cook TN10. KRON tokens graduate on KRON itself.');
+  if (!isTestnet()) {
+    toast('Graduate/wrap is Cook TN10. Switch Network to Testnet-10. KRON tokens graduate on KRON itself.');
     return;
   }
   const tick = ($('at-ltick')?.value || atCook?.tick || lastCookToken?.tick || '').trim().toUpperCase();
@@ -3542,6 +3630,12 @@ function hideTradeScreen() {
 }
 
 function openTrade(prefill = {}) {
+  if (isTestnet()) {
+    toast('Home Trade is mainnet KRON. Use A-Trade Book on TN10.');
+    showPage('tokens');
+    setAtPane('book');
+    return;
+  }
   haptic();
   const screen = $('trade-screen');
   if (!screen) return;
@@ -4165,7 +4259,7 @@ async function prepareSend(prefill) {
       return;
     }
   }
-  const destOk = validateKaspaAddress(dest, 'mainnet');
+  const destOk = validateKaspaAddress(dest, networkId());
   if (!destOk.isValid) { toast(destOk.error || 'Invalid Kaspa address — use kaspa:q… or a .kas domain'); return; }
   if (!form.amount) { toast('Enter an amount'); return; }
   if (asset.native || asset.protocol === 'kas') {
@@ -4322,7 +4416,7 @@ async function paintReceiveQr(addr) {
 
 async function fetchTxCount(addr) {
   try {
-    const res = await fetch(`${API_BASE}/addresses/${encodeURIComponent(addr)}/transactions-count`);
+    const res = await fetch(`${API_BASE()}/addresses/${encodeURIComponent(addr)}/transactions-count`);
     if (res.ok) {
       const j = await res.json();
       const n = Number(j.total ?? j.totalTransactions ?? j.tx_count ?? j.count ?? j.limit ?? 0);
@@ -4330,7 +4424,7 @@ async function fetchTxCount(addr) {
     }
   } catch {}
   try {
-    const res = await fetch(`${API_BASE}/addresses/${encodeURIComponent(addr)}/full-transactions?limit=1&resolve_previous_outpoints=no`);
+    const res = await fetch(`${API_BASE()}/addresses/${encodeURIComponent(addr)}/full-transactions?limit=1&resolve_previous_outpoints=no`);
     if (!res.ok) return 0;
     const rows = await res.json();
     const list = Array.isArray(rows) ? rows : (rows.transactions || []);
@@ -5552,8 +5646,8 @@ function bind() {
   click('btn-import', importWallet);
   click('btn-send', openSend);
   click('btn-receive', openReceive);
-  click('btn-trade', () => { showPage('tokens'); setAtPane('book'); });
-  click('btn-trade-tokens', () => { showPage('tokens'); setAtPane('book'); });
+  click('btn-trade', () => openTrade({ tick: 'KRON', side: 'buy' }));
+  click('btn-trade-tokens', () => openTrade({ tick: 'KRON', side: 'buy' }));
   click('trade-close', hideTradeScreen);
   click('trade-lookup', lookupTradeTicker);
   click('trade-go', () => reviewTrade());
@@ -5751,6 +5845,7 @@ function bind() {
   click('profile-pin', openPinSettings);
   click('profile-keys', openSettings);
   click('profile-kasware', openKaswareSheet);
+  click('profile-net', openNetworkSheet);
   click('profile-look', openLookSheet);
   click('profile-name', openLookSheet);
   click('profile-scorpion', openScorpionSheet);

@@ -12,7 +12,7 @@
   <link rel="icon" href="assets/icon.png">
   <title>KCC20 Wallet</title>
   <meta http-equiv="Cache-Control" content="no-store, no-cache, must-revalidate">
-  <link rel="stylesheet" href="css/app.css?v=89">
+  <link rel="stylesheet" href="css/app.css?v=90">
 </head>
 <body>
   <img class="bg-poster" src="assets/bg.jpg" alt="">
@@ -163,7 +163,7 @@
             </label>
             <button class="btn btn-gold" id="at-launch-go" type="button">Launch KCC20</button>
             <button class="btn btn-glass" id="at-grad-go" type="button" style="margin-top:8px;">Graduate / wrap to book</button>
-            <p class="muted at-tiny">KCC20 V1 deploy via Cook public builders. You sign. Relay never holds keys. Cook is public testnet until the standard is on mainnet — KRON Book still trades live mainnet KCC20.</p>
+            <p class="muted at-tiny" id="at-lnote">Mainnet: open KRON Launch or switch Network to Testnet-10. TN10: Cook deploys a real KCC20 V1 — you sign, we never hold keys. Faucet: faucet-tn10.kaspanet.io</p>
           </div>
 
           <div id="at-agent" class="hidden">
@@ -320,6 +320,7 @@
               <button class="you-tile" id="profile-look" type="button"><span class="glyph look">◐</span>Look</button>
               <button class="you-tile" id="profile-scorpion" type="button"><span class="glyph sco">🦂</span>Scorpion</button>
               <button class="you-tile" id="profile-kasware" type="button"><span class="glyph kw">K</span>KasWare</button>
+              <button class="you-tile" id="profile-net" type="button"><span class="glyph net">N</span>Network</button>
               <button class="you-tile danger" id="profile-wipe" type="button"><span class="glyph wipe">✕</span>Remove</button>
             </div>
           </div>
@@ -566,7 +567,7 @@
     })();
   </script>
   <script type="module">
-    import('./js/app.js?v=89').catch(function (err) {
+    import('./js/app.js?v=90').catch(function (err) {
       console.error(err);
       var phone = document.getElementById('phone');
       var d = document.createElement('div');

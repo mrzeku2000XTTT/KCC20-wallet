@@ -12,7 +12,7 @@
   <link rel="icon" href="assets/icon.png">
   <title>KCC20 Wallet</title>
   <meta http-equiv="Cache-Control" content="no-store, no-cache, must-revalidate">
-  <link rel="stylesheet" href="css/app.css?v=85">
+  <link rel="stylesheet" href="css/app.css?v=86">
 </head>
 <body>
   <img class="bg-poster" src="assets/bg.jpg" alt="">
@@ -266,14 +266,21 @@
         </div>
       </div>
 
+      <div class="ttt-screen hidden" id="ttt-screen" aria-hidden="true">
+        <div class="ttt-head">
+          <button type="button" class="trade-x" id="ttt-close">Close</button>
+          <h2>TTT</h2>
+          <img class="ttt-mark" src="assets/ttt.png" alt="TTT">
+        </div>
+        <iframe id="ttt-frame" class="ttt-frame" title="tttz.xyz" referrerpolicy="no-referrer-when-downgrade" allow="clipboard-write; fullscreen"></iframe>
+      </div>
+
       <div class="build-screen hidden" id="build-screen" aria-hidden="true">
         <div class="build-head">
           <button type="button" class="trade-x hidden" id="build-back">Back</button>
           <button type="button" class="trade-x" id="build-close">Close</button>
           <h2 id="build-title">Apps</h2>
-          <span class="build-mark" aria-hidden="true">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"/></svg>
-          </span>
+          <img class="ttt-mark" src="assets/ttt.png" alt="">
         </div>
 
         <div id="app-home" class="app-home">
@@ -464,7 +471,7 @@
     })();
   </script>
   <script type="module">
-    import('./js/app.js?v=85').catch(function (err) {
+    import('./js/app.js?v=86').catch(function (err) {
       console.error(err);
       var phone = document.getElementById('phone');
       var d = document.createElement('div');

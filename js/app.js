@@ -3,16 +3,16 @@ import {
   isValidKaspaAddress, validateKaspaAddress, shortAddr, hexToBytes, privKeyToHex,
   derivePublicKey, kaspaAddressFromPubkey, bytesToHex, kasToSompi, sompiToKasString,
   validateAndCleanUtxo
-} from './crypto.js?v=85';
+} from './crypto.js?v=86';
 import {
   NATIVE_KAS, VAULT_PRODUCTS, loadWatchlist, addToken, removeToken,
   loadVaults, saveVault, updateVault, formatAmount, formatTokenUnits, tokenColor,
   fetchKcc20Portfolio, fetchKrc20Portfolio, fetchKcc20PortfolioMany, fetchKrc20PortfolioMany,
   krc20Logo, toTokenRaw, setVaultOwner, kcc20Identicon, VAULT_GROUPS
-} from './kcc20.js?v=85';
-import { parseIntent, describeIntent, askFor, parseDurationField, interpretVaultChat, normalizeChat } from './intent.js?v=85';
-import { payloadFromAddress } from './script.js?v=85';
-import { explainTransaction, scorpionAnswer } from './scorpion.js?v=85';
+} from './kcc20.js?v=86';
+import { parseIntent, describeIntent, askFor, parseDurationField, interpretVaultChat, normalizeChat } from './intent.js?v=86';
+import { payloadFromAddress } from './script.js?v=86';
+import { explainTransaction, scorpionAnswer } from './scorpion.js?v=86';
 import {
   sendKas, fetchAddressUtxos, fetchAddressBalance, loadKaspaSdk,
   buildTimelockCovenant, buildEscrowCovenant, buildMultisigCovenant, currentDaa,
@@ -20,21 +20,21 @@ import {
   compoundUtxos, sendKrc20, sendKcc20, loadKrc20Pending, lockKcc20Timelock, sweepKcc20Capsule,
   fetchOwnedUtxos, buildSentinelChain, buildRecurringChain, buildHashlockCovenant,
   newHashlockSecret, checkinHop, currentHop, parseXmssKit, p2shFromRedeemHex, spendXmssVault
-} from './tx.js?v=85';
-import { kronMarkets, quoteKronTrade, executeKronTrade, formatKasSompi, lookupKronTick, tradeCostLines, attachKronLogos } from './kronTrade.js?v=85';
+} from './tx.js?v=86';
+import { kronMarkets, quoteKronTrade, executeKronTrade, formatKasSompi, lookupKronTick, tradeCostLines, attachKronLogos } from './kronTrade.js?v=86';
 import {
   migrateReceiveBook, ownedAddresses, markAddressUsed, currentReceive,
   deriveReceiveBatch, unusedReceiveCount, ensurePrivacyBook
-} from './receive.js?v=85';
-import { knsResolve, knsPrimary, knsDomainsFor, knsOwnerMatches, knsAppUrl, looksLikeKasDomain, normalizeKasDomain } from './kns.js?v=85';
-import { runPhoneStudio, runServerStudio } from './studio.js?v=85';
+} from './receive.js?v=86';
+import { knsResolve, knsPrimary, knsDomainsFor, knsOwnerMatches, knsAppUrl, looksLikeKasDomain, normalizeKasDomain } from './kns.js?v=86';
+import { runPhoneStudio, runServerStudio } from './studio.js?v=86';
 import {
   isKaswareInstalled, isDesktopBrowser, kaswareEnabled, kaswareSigning, kaswareConnectedAddress,
   connectKasware, disconnectKasware, bindKaswareEvents, loadKaswarePref, compoundWithKasware,
   ensureKaswareSigner
-} from './kasware.js?v=85';
+} from './kasware.js?v=86';
 
-export const BUILD = '85';
+export const BUILD = '86';
 
 function errText(e) {
   if (e == null) return 'Unknown error';
@@ -282,10 +282,10 @@ function showPage(id) {
   }
   $('nav-left').innerHTML = '';
   if (id === 'you') {
-    $('nav-right').innerHTML = `<button class="icon-btn" id="nav-build" type="button" aria-label="Proof of Fact roadmap" title="Build">
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"/></svg>
+    $('nav-right').innerHTML = `<button class="icon-btn ttt" id="nav-ttt" type="button" aria-label="TTT" title="TTT">
+      <img src="assets/ttt.png" alt="TTT">
     </button>`;
-    $('nav-build')?.addEventListener('click', openBuildRoadmap);
+    $('nav-ttt')?.addEventListener('click', openTtt);
   } else if (id === 'home') {
     $('nav-right').innerHTML = `
       ${loadPin() ? `<button class="icon-btn" id="btn-lock-now" aria-label="Lock" title="Lock">
@@ -1703,11 +1703,22 @@ function showBuildApp(name) {
 }
 
 function openBuildRoadmap() {
+  openTtt();
+}
+
+function openTtt() {
   haptic();
-  showBuildApp('home');
-  $('build-screen')?.classList.remove('hidden');
-  $('build-screen')?.setAttribute('aria-hidden', 'false');
+  const frame = $('ttt-frame');
+  if (frame && !frame.getAttribute('src')) frame.src = 'https://tttz.xyz';
+  $('ttt-screen')?.classList.remove('hidden');
+  $('ttt-screen')?.setAttribute('aria-hidden', 'false');
   $('tabbar')?.classList.remove('show');
+}
+
+function closeTtt() {
+  $('ttt-screen')?.classList.add('hidden');
+  $('ttt-screen')?.setAttribute('aria-hidden', 'true');
+  if (wallet && sessionOpen()) $('tabbar')?.classList.add('show');
 }
 
 function closeBuildRoadmap() {
@@ -4853,7 +4864,8 @@ function bind() {
     }
     if (row?.dataset.tokenAct) openTokenActivity(row.dataset.tokenAct);
   });
-  click('profile-build', openBuildRoadmap);
+  click('profile-build', openTtt);
+  click('ttt-close', closeTtt);
   click('build-close', closeBuildRoadmap);
   click('build-back', () => showBuildApp('home'));
   click('studio-go', () => generateStudio().catch(err => toast(errText(err))));

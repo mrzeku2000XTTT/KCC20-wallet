@@ -134,6 +134,25 @@ img { display: block; max-width: 100%; }
   display: grid; place-items: center;
 }
 .icon-btn svg { width: 16px; height: 16px; }
+.icon-btn.ttt {
+  padding: 0; overflow: hidden; background: #fff; border: 0;
+}
+.icon-btn.ttt img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.ttt-screen {
+  position: absolute; inset: 0; z-index: 86;
+  background: #050506;
+  display: flex; flex-direction: column;
+  padding: calc(12px + var(--safe-t)) 0 0;
+  overflow: hidden;
+}
+.ttt-screen.hidden { display: none !important; }
+.ttt-head {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 0 16px 8px; flex-shrink: 0;
+}
+.ttt-head h2 { font-size: 17px; font-weight: 750; letter-spacing: -0.3px; }
+.ttt-mark { width: 28px; height: 28px; object-fit: contain; border-radius: 6px; background: #fff; }
+.ttt-frame { flex: 1; width: 100%; min-height: 0; border: 0; background: #fff; }
 
 .scroll {
   flex: 1; overflow-y: auto; overflow-x: hidden;

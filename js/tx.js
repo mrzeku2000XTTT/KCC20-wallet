@@ -2592,7 +2592,8 @@ export async function lockKcc20Timelock({ wallet, tick, amountHuman, decimals, m
         tick: ticker,
         duration: `${minutes} minutes`,
         lockMinutes: Number(minutes)
-      }
+      },
+      unlockAt: Date.now() + Math.max(1, Number(minutes) || 0) * 60 * 1000
     }
   };
 }

@@ -12,7 +12,7 @@
   <link rel="icon" href="assets/icon.png">
   <title>KCC20 Wallet</title>
   <meta http-equiv="Cache-Control" content="no-store, no-cache, must-revalidate">
-  <link rel="stylesheet" href="css/app.css?v=86">
+  <link rel="stylesheet" href="css/app.css?v=87">
 </head>
 <body>
   <img class="bg-poster" src="assets/bg.jpg" alt="">
@@ -100,6 +100,16 @@
 
         <!-- TOKENS -->
         <section class="page" id="page-tokens">
+          <div class="boost-card glass" id="boost-card">
+            <div class="boost-top">
+              <div>
+                <b>Boost a token</b>
+                <p>Send 0.15 KAS to yourself to feature it here for 24h. Points stack.</p>
+              </div>
+              <button class="boost-go" id="boost-open" type="button">Boost</button>
+            </div>
+            <div class="boost-rail" id="boost-rail"></div>
+          </div>
           <div class="section-label">KRON DEX</div>
           <button class="glass utxo-bar" id="btn-trade-tokens" type="button">
             <span>TRADE KCC20</span>
@@ -187,7 +197,7 @@
             <div class="you-ident">
               <button class="you-avatar" id="profile-avatar" type="button" aria-label="Change profile photo">K</button>
               <div class="you-id">
-                <div class="you-name" id="profile-name">Wallet</div>
+                <button class="you-name" id="profile-name" type="button">Wallet</button>
                 <div class="you-kns" id="profile-kns-name">Not linked</div>
               </div>
             </div>
@@ -471,7 +481,7 @@
     })();
   </script>
   <script type="module">
-    import('./js/app.js?v=86').catch(function (err) {
+    import('./js/app.js?v=87').catch(function (err) {
       console.error(err);
       var phone = document.getElementById('phone');
       var d = document.createElement('div');

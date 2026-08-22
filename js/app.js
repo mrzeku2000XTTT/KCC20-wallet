@@ -3,16 +3,16 @@ import {
   isValidKaspaAddress, validateKaspaAddress, shortAddr, hexToBytes, privKeyToHex,
   derivePublicKey, kaspaAddressFromPubkey, bytesToHex, kasToSompi, sompiToKasString,
   validateAndCleanUtxo
-} from './crypto.js?v=86';
+} from './crypto.js?v=87';
 import {
   NATIVE_KAS, VAULT_PRODUCTS, loadWatchlist, addToken, removeToken,
   loadVaults, saveVault, updateVault, formatAmount, formatTokenUnits, tokenColor,
   fetchKcc20Portfolio, fetchKrc20Portfolio, fetchKcc20PortfolioMany, fetchKrc20PortfolioMany,
   krc20Logo, toTokenRaw, setVaultOwner, kcc20Identicon, VAULT_GROUPS
-} from './kcc20.js?v=86';
-import { parseIntent, describeIntent, askFor, parseDurationField, interpretVaultChat, normalizeChat } from './intent.js?v=86';
-import { payloadFromAddress } from './script.js?v=86';
-import { explainTransaction, scorpionAnswer } from './scorpion.js?v=86';
+} from './kcc20.js?v=87';
+import { parseIntent, describeIntent, askFor, parseDurationField, interpretVaultChat, normalizeChat } from './intent.js?v=87';
+import { payloadFromAddress } from './script.js?v=87';
+import { explainTransaction, scorpionAnswer } from './scorpion.js?v=87';
 import {
   sendKas, fetchAddressUtxos, fetchAddressBalance, loadKaspaSdk,
   buildTimelockCovenant, buildEscrowCovenant, buildMultisigCovenant, currentDaa,
@@ -20,21 +20,21 @@ import {
   compoundUtxos, sendKrc20, sendKcc20, loadKrc20Pending, lockKcc20Timelock, sweepKcc20Capsule,
   fetchOwnedUtxos, buildSentinelChain, buildRecurringChain, buildHashlockCovenant,
   newHashlockSecret, checkinHop, currentHop, parseXmssKit, p2shFromRedeemHex, spendXmssVault
-} from './tx.js?v=86';
-import { kronMarkets, quoteKronTrade, executeKronTrade, formatKasSompi, lookupKronTick, tradeCostLines, attachKronLogos } from './kronTrade.js?v=86';
+} from './tx.js?v=87';
+import { kronMarkets, quoteKronTrade, executeKronTrade, formatKasSompi, lookupKronTick, tradeCostLines, attachKronLogos } from './kronTrade.js?v=87';
 import {
   migrateReceiveBook, ownedAddresses, markAddressUsed, currentReceive,
   deriveReceiveBatch, unusedReceiveCount, ensurePrivacyBook
-} from './receive.js?v=86';
-import { knsResolve, knsPrimary, knsDomainsFor, knsOwnerMatches, knsAppUrl, looksLikeKasDomain, normalizeKasDomain } from './kns.js?v=86';
-import { runPhoneStudio, runServerStudio } from './studio.js?v=86';
+} from './receive.js?v=87';
+import { knsResolve, knsPrimary, knsDomainsFor, knsOwnerMatches, knsAppUrl, looksLikeKasDomain, normalizeKasDomain } from './kns.js?v=87';
+import { runPhoneStudio, runServerStudio } from './studio.js?v=87';
 import {
   isKaswareInstalled, isDesktopBrowser, kaswareEnabled, kaswareSigning, kaswareConnectedAddress,
   connectKasware, disconnectKasware, bindKaswareEvents, loadKaswarePref, compoundWithKasware,
   ensureKaswareSigner
-} from './kasware.js?v=86';
+} from './kasware.js?v=87';
 
-export const BUILD = '86';
+export const BUILD = '87';
 
 function errText(e) {
   if (e == null) return 'Unknown error';
@@ -133,6 +133,10 @@ const PIN_KEY = 'kcc20_pin_v1';
 const SNAPS_KEY = 'kcc20_snaps_v1';
 const ACT_KEY = 'kcc20_activity_v1';
 const LOOK_KEY = 'kcc20_look_v1';
+const BOOST_KEY = 'kcc20_boosts_v1';
+const BOOST_KAS = 0.15;
+const BOOST_MS = 24 * 60 * 60 * 1000;
+const BOOST_PTS = 15;
 
 const $ = (id) => document.getElementById(id);
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
@@ -178,6 +182,8 @@ let lastDaaAt = 0;
 let lastAutoSweep = 0;
 let autoSweepBusy = false;
 const autoSweepTried = new Set();
+const autoSweepTriedAt = new Map();
+const freezeTimers = new Map();
 let kccHoldings = [];
 let krcHoldings = [];
 let tokenLoadErr = '';
@@ -218,7 +224,16 @@ function toast(msg) {
   setTimeout(() => el.remove(), ms);
 }
 
-function remainingLockSec(unlockDaa) {
+function formatUtc(ms) {
+  const d = new Date(Number(ms));
+  if (!Number.isFinite(d.getTime())) return '';
+  const p = (n) => String(n).padStart(2, '0');
+  return `${d.getUTCFullYear()}-${p(d.getUTCMonth() + 1)}-${p(d.getUTCDate())} ${p(d.getUTCHours())}:${p(d.getUTCMinutes())}:${p(d.getUTCSeconds())} UTC`;
+}
+
+function remainingLockSec(unlockDaa, unlockAt) {
+  const at = Number(unlockAt || 0);
+  if (at > 0) return Math.max(0, Math.ceil((at - Date.now()) / 1000));
   const u = Number(unlockDaa || 0);
   if (!u) return 0;
   if (!lastDaa) return null;
@@ -254,18 +269,27 @@ function setClock() {
 
 function tickLockLabels() {
   document.querySelectorAll('[data-unlock-daa]').forEach(el => {
-    el.textContent = formatLockClock(remainingLockSec(el.dataset.unlockDaa));
+    el.textContent = formatLockClock(remainingLockSec(el.dataset.unlockDaa, el.dataset.unlockAt));
   });
   const live = $('lock-timer-live');
-  if (!live) return;
-  const sec = remainingLockSec(live.dataset.unlockDaa);
-  live.textContent = formatLockClock(sec);
-  const at = $('lock-timer-utc');
-  if (at) at.textContent = unlockAtUtc(sec);
-  if (sec === 0 && live.dataset.addr && live.dataset.fired !== '1') {
-    live.dataset.fired = '1';
-    maybeAutoUnlock();
+  if (live) {
+    const sec = remainingLockSec(live.dataset.unlockDaa, live.dataset.unlockAt);
+    live.textContent = formatLockClock(sec);
+    const at = $('lock-timer-utc');
+    if (at) {
+      at.textContent = live.dataset.unlockAt
+        ? formatUtc(live.dataset.unlockAt)
+        : unlockAtUtc(sec);
+    }
+    if (sec === 0 && live.dataset.addr && live.dataset.fired !== '1') {
+      live.dataset.fired = '1';
+      maybeAutoUnlock();
+    }
   }
+  const due = loadVaults().some(v =>
+    v.address && v.status !== 'swept' && Number(v.unlockAt || 0) > 0 && Date.now() >= Number(v.unlockAt)
+  );
+  if (due && Date.now() - lastAutoSweep > 4000) maybeAutoUnlock();
 }
 
 function showPage(id) {
@@ -986,6 +1010,8 @@ async function unlockToHome() {
   renderHome();
   startLiveSync();
   loadKaspaSdk().catch(() => {});
+  scheduleAllFreezeWatches();
+  maybeAutoUnlock();
   const pend = wallet?.address ? loadKrc20Pending(wallet.address) : null;
   if (pend) toast('Unfinished KRC-20 reveal — open Send to finish it');
 }
@@ -1065,11 +1091,41 @@ function renderHome() {
   if ($('card-addr')) $('card-addr').textContent = wallet.knsDomain
     ? wallet.knsDomain + ' · ' + shortAddr(wallet.address, 12, 8)
     : shortAddr(wallet.address, 12, 8);
-  if ($('card-wallet')) $('card-wallet').textContent = `${wallet.name || 'Wallet'} ▾`;
+  if ($('card-wallet')) {
+    $('card-wallet').innerHTML = `${walletTitleHtml(wallet)} ▾`;
+  }
   const navW = $('nav-wallet')?.querySelector('b');
-  if (navW) navW.textContent = wallet.name || 'Wallet';
+  if (navW) navW.innerHTML = walletTitleHtml(wallet);
   renderHomeWallets();
   renderHoldings();
+}
+
+function knsCheck(title = 'KNS verified') {
+  return `<span class="kns-check" title="${esc(title)}" aria-label="Verified"><svg viewBox="0 0 12 12" aria-hidden="true"><path d="M2.2 6.2l2.4 2.4 5.2-5.2" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg></span>`;
+}
+
+function isGenericWalletName(name) {
+  return !name || /^wallet(\s+\d+)?$/i.test(String(name).trim());
+}
+
+function walletKns(w) {
+  if (!w) return '';
+  if (wallet && (w.id === wallet.id || w.address === wallet.address)) return String(wallet.knsDomain || w.knsDomain || '').trim();
+  return String(w.knsDomain || '').trim();
+}
+
+function walletPublicName(w) {
+  const kns = walletKns(w);
+  if (kns) return kns;
+  const name = String(w?.name || '').trim();
+  if (name && !isGenericWalletName(name)) return name;
+  if (w?.address) return shortAddr(w.address, 8, 4);
+  return name || 'Wallet';
+}
+
+function walletTitleHtml(w) {
+  const kns = walletKns(w);
+  return `${esc(walletPublicName(w))}${kns ? knsCheck() : ''}`;
 }
 
 function walletKasLabel(w, active) {
@@ -1093,7 +1149,7 @@ function renderHomeWallets() {
         <button class="w-chip-main" type="button" data-switch-wallet="${esc(w.id)}">
           <span class="w-kas" aria-hidden="true"></span>
           <span>
-            <b>${esc(w.name || 'Wallet')}</b>
+            <b>${walletTitleHtml(w)}</b>
             <em>${esc(kasTxt)} KAS</em>
           </span>
         </button>
@@ -1173,8 +1229,8 @@ function openWalletSwitcher() {
       <button class="row wallet-row" type="button" data-switch-wallet="${esc(w.id)}">
         <div class="glyph" style="background:${active ? 'rgba(48,209,88,.16)' : 'rgba(255,255,255,.08)'};color:${active ? 'var(--green)' : 'var(--label-2)'}">${active ? '●' : '○'}</div>
         <div style="min-width:0;flex:1">
-          <div class="title">${esc(w.name || 'Wallet')}</div>
-          <div class="sub">${esc(shortAddr(w.address, 12, 8))}</div>
+          <div class="title">${walletTitleHtml(w)}</div>
+          <div class="sub">${esc(walletKns(w) || shortAddr(w.address, 12, 8))}</div>
         </div>
         <div class="amt">
           <b>${esc(kasTxt)}</b>
@@ -1237,15 +1293,16 @@ function renderHoldings() {
   const krcRows = krcHoldings.map(t => tokenRow(t));
   const locked = loadVaults().filter(v => v.address && Number(v.fundedSompi) > 0 && !isVaultHistory(v));
   const lockRows = locked.map(v => {
-    const sec = remainingLockSec(v.unlockDaa);
+    const sec = remainingLockSec(v.unlockDaa, v.unlockAt);
     const lockedNow = sec == null || sec > 0;
     const tok = vaultTokenLabel(v);
+    const when = v.unlockAt ? formatUtc(v.unlockAt) : '';
     return `
     <button class="row token-row" data-lock-holding="${esc(v.address)}">
       <div class="dot" style="background:rgba(212,176,122,.18);color:var(--gold-2)">⏱</div>
       <div>
         <div class="title">${esc(v.name || 'Time Capsule')}</div>
-        <div class="sub">${lockedNow ? 'Unlocks in <span data-unlock-daa="' + esc(v.unlockDaa) + '">' + esc(formatLockClock(sec)) + '</span>' : 'Unlocked — returning to wallet'}</div>
+        <div class="sub">${lockedNow ? 'Unlocks <span data-unlock-daa="' + esc(v.unlockDaa || '') + '" data-unlock-at="' + esc(v.unlockAt || '') + '">' + esc(formatLockClock(sec)) + '</span>' + (when ? ' · ' + esc(when) : '') : 'Unlocked — returning to wallet'}</div>
       </div>
       <div class="amt">
         <b>${tok ? esc(tok) : formatAmount(v.fundedSompi || 0)}</b>
@@ -1316,17 +1373,18 @@ function vaultStatusLine(v) {
   const amt = tok || (v.fundedSompi ? formatAmount(v.fundedSompi) + ' KAS' : '0 KAS');
   if (isHopVault(v) && v.hops) {
     const i = Number(v.hopIndex || 0);
-    const sec = remainingLockSec(v.unlockDaa);
+    const sec = remainingLockSec(v.unlockDaa, v.unlockAt);
     const clock = sec > 0
-      ? ` · <span data-unlock-daa="${esc(v.unlockDaa)}">${esc(formatLockClock(sec))}</span>`
+      ? ` · <span data-unlock-daa="${esc(v.unlockDaa || '')}" data-unlock-at="${esc(v.unlockAt || '')}">${esc(formatLockClock(sec))}</span>`
       : (v.unlockDaa ? ' · timeout' : '');
     return `Hop ${i + 1}/${v.hops.length}${clock} · ${amt}`;
   }
   if (!v.fundedSompi && !tok) return `${v.status || 'unfunded'} · ${amt}`;
-  if (v.unlockDaa) {
-    const sec = remainingLockSec(v.unlockDaa);
+  if (v.unlockDaa || v.unlockAt) {
+    const sec = remainingLockSec(v.unlockDaa, v.unlockAt);
+    const when = v.unlockAt ? ' · ' + formatUtc(v.unlockAt) : '';
     if (sec == null) return `Locked · ${amt}`;
-    if (sec > 0) return `Unlocks in <span data-unlock-daa="${esc(v.unlockDaa)}">${esc(formatLockClock(sec))}</span> · ${amt}`;
+    if (sec > 0) return `Unlocks <span data-unlock-daa="${esc(v.unlockDaa || '')}" data-unlock-at="${esc(v.unlockAt || '')}">${esc(formatLockClock(sec))}</span>${esc(when)} · ${amt}`;
     return `Unlocked — returning · ${amt}`;
   }
   return `${v.status || 'funded'} · ${amt}`;
@@ -1443,6 +1501,8 @@ function pushTokenActivity(ev, addr) {
     decimals: Number(ev.decimals || 0),
     txId: ev.txId || '',
     label: ev.label || (ev.dir === 'out' ? 'Sent' : 'Received'),
+    note: ev.note || '',
+    until: ev.until || '',
     wallet: loadWalletList().find(w => w.address === use)?.name || ''
   };
   const dup = list.find(x => {
@@ -1470,7 +1530,7 @@ function isVaultActivityLabel(label) {
   return /^(Vault created|Locked|Unlocked|Checked in|Frozen|Unfrozen)$/i.test(String(label || ''));
 }
 
-function noteVaultActivity({ vault, label, dir = 'out', amount, txId = '', tick, protocol, decimals, addr } = {}) {
+function noteVaultActivity({ vault, label, dir = 'out', amount, txId = '', tick, protocol, decimals, addr, note, until } = {}) {
   const kcc = !!(vault && (vault.tick || vault.tokenAmount) && (protocol === 'kcc20' || tick));
   const useTick = String(tick || (kcc ? vault.tick : 'KAS') || 'KAS').toUpperCase();
   const useProto = protocol || (useTick !== 'KAS' ? 'kcc20' : 'kas');
@@ -1482,6 +1542,8 @@ function noteVaultActivity({ vault, label, dir = 'out', amount, txId = '', tick,
       amt = Number.isFinite(kas) ? String(Math.round(kas * 1e8)) : String(vault?.fundedSompi || 0);
     }
   }
+  const untilMs = Number(until || vault?.unlockAt || 0);
+  const stamp = untilMs ? ('Returns ' + formatUtc(untilMs)) : '';
   return pushTokenActivity({
     dir,
     tick: useTick,
@@ -1489,7 +1551,9 @@ function noteVaultActivity({ vault, label, dir = 'out', amount, txId = '', tick,
     amount: String(amt || '0'),
     decimals: Number(decimals != null ? decimals : (useProto === 'kas' ? 8 : (vault?.decimals || 0))),
     txId: txId || '',
-    label: label || 'Locked'
+    label: label || 'Locked',
+    note: note || stamp,
+    until: untilMs || ''
   }, addr);
 }
 
@@ -1600,9 +1664,9 @@ function rowsForWallet(addr, txs, walletName) {
       time: Number(tx.block_time || tx.blockTime || 0),
       dir: row.dir,
       title: tag + row.label,
-      sub: [tok ? (tok.protocol === 'krc20' ? 'KRC-20' : (tok.protocol === 'kas' ? 'KAS' : 'KCC20')) : expl.title, id ? id.slice(0, 10) + '…' : '', new Date(tx.block_time || Date.now()).toLocaleString()].filter(Boolean).join(' · '),
+      sub: [tok ? (tok.protocol === 'krc20' ? 'KRC-20' : (tok.protocol === 'kas' ? 'KAS' : 'KCC20')) : expl.title, tok?.note || '', id ? id.slice(0, 10) + '…' : '', new Date(tx.block_time || Date.now()).toLocaleString()].filter(Boolean).join(' · '),
       val: row.tokenLabel || ((row.dir === 'in' ? '+' : '−') + formatAmount(row.amount || 0)),
-      feeLine: row.fee > 0 ? `fee ${formatAmount(row.fee)} KAS` : (row.note || ''),
+      feeLine: row.fee > 0 ? `fee ${formatAmount(row.fee)} KAS` : (tok?.note || row.note || ''),
       tokId: tok?.id || ''
     });
   }
@@ -1621,9 +1685,9 @@ function rowsForWallet(addr, txs, walletName) {
       time: Number(a.time || 0),
       dir: a.dir,
       title: tag + titleCore,
-      sub: [proto, a.txId ? a.txId.slice(0, 10) + '…' : (vaultish ? 'this device' : 'live credit'), new Date(a.time || Date.now()).toLocaleString()].filter(Boolean).join(' · '),
+      sub: [proto, a.note || '', a.txId ? a.txId.slice(0, 10) + '…' : (vaultish ? 'this device' : 'live credit'), new Date(a.time || Date.now()).toLocaleString()].filter(Boolean).join(' · '),
       val: activityVal(a),
-      feeLine: a.txId ? '' : (vaultish ? 'Saved on this device' : 'Indexed to this wallet'),
+      feeLine: a.note || (a.txId ? '' : (vaultish ? 'Saved on this device' : 'Indexed to this wallet')),
       tokId: a.id
     });
   }
@@ -1923,7 +1987,7 @@ function renderProfile() {
   if ($('profile-addr')) $('profile-addr').textContent = addr;
   if ($('profile-bal')) $('profile-bal').textContent = formatAmount(balanceSompi);
   if ($('profile-script')) $('profile-script').textContent = String(addr).startsWith('kaspa:p') ? 'P2SH' : 'P2PK';
-  if ($('profile-name')) $('profile-name').textContent = wallet.name || 'Wallet';
+  if ($('profile-name')) $('profile-name').innerHTML = walletTitleHtml(wallet);
   paintYouLook();
   if ($('profile-utxos')) {
     const n = Array.isArray(utxos) ? utxos.length : 0;
@@ -1934,7 +1998,11 @@ function renderProfile() {
     ex.href = explorerAddr(addr);
     ex.textContent = 'Explorer';
   }
-  if ($('profile-kns-name')) $('profile-kns-name').textContent = wallet.knsDomain || 'Not linked';
+  if ($('profile-kns-name')) {
+    $('profile-kns-name').innerHTML = wallet.knsDomain
+      ? `${esc(wallet.knsDomain)}${knsCheck()}`
+      : 'Not linked';
+  }
   refreshKnsQuiet();
   const box = $('wallet-list');
   if (box) {
@@ -1951,8 +2019,8 @@ function renderProfile() {
       <button class="row wallet-row" type="button" data-switch-wallet="${esc(w.id)}">
         <div class="you-wava ${active ? 'on' : ''}">${face}</div>
         <div style="min-width:0;flex:1">
-          <div class="title">${esc(w.name || 'Wallet')}</div>
-          <div class="sub">${esc(shortAddr(w.address, 10, 6))}</div>
+          <div class="title">${walletTitleHtml(w)}</div>
+          <div class="sub">${esc(walletKns(w) || shortAddr(w.address, 10, 6))}</div>
         </div>
         <div class="amt"><b>${esc(kasTxt)}</b></div>
         <span class="chev">${active ? 'Now' : 'Use'}</span>
@@ -3075,30 +3143,64 @@ async function refreshVaultBalances() {
   if (currentTab === 'home') renderHome();
 }
 
+function vaultDue(v, daa) {
+  if (!v?.address || v.status === 'swept' || v.type === 'xmss') return false;
+  if (isHopVault(v) && v.params?.beneficiary && v.params.beneficiary !== wallet?.address) return false;
+  const at = Number(v.unlockAt || 0);
+  if (at && Date.now() + 800 < at) return false;
+  const unlock = Number((currentHop(v) || v).unlockDaa || v.unlockDaa || 0);
+  if (unlock && daa && daa < unlock) return at ? Date.now() >= at : false;
+  if (!unlock && !at) return false;
+  return true;
+}
+
+function scheduleFreezeWatch(v) {
+  if (!v?.address || v.status === 'swept') return;
+  const at = Number(v.unlockAt || 0);
+  const delay = at ? Math.max(250, at - Date.now()) : Math.max(250, (remainingLockSec(v.unlockDaa, v.unlockAt) || 0) * 1000);
+  try { clearTimeout(freezeTimers.get(v.address)); } catch {}
+  const id = setTimeout(() => { maybeAutoUnlock(); }, delay + 400);
+  freezeTimers.set(v.address, id);
+}
+
+function scheduleAllFreezeWatches() {
+  loadVaults().forEach(scheduleFreezeWatch);
+}
+
 async function maybeAutoUnlock() {
   if (!wallet || autoSweepBusy) return;
+  lastAutoSweep = Date.now();
   autoSweepBusy = true;
   try {
-    const daa = await currentDaa();
-    lastDaa = daa;
+    const daa = await currentDaa().catch(() => lastDaa || 0);
+    lastDaa = daa || lastDaa;
     lastDaaAt = Date.now();
-    const mine = loadVaults().filter(v => v.address && (Number(v.unlockDaa) > 0 || isHopVault(v)));
+    const mine = loadVaults().filter(v => v.address && (Number(v.unlockDaa) > 0 || Number(v.unlockAt) > 0 || isHopVault(v)));
     for (const v of mine) {
-      const unlock = Number((currentHop(v) || v).unlockDaa || v.unlockDaa || 0);
-      if (unlock && daa < unlock) continue;
-      if (v.type === 'xmss') continue;
-      if (isHopVault(v) && v.params?.beneficiary && v.params.beneficiary !== wallet.address) continue;
-      if (autoSweepTried.has(v.address)) continue;
+      if (!vaultDue(v, daa)) continue;
+      const lastTry = autoSweepTriedAt.get(v.address) || 0;
+      if (lastTry && Date.now() - lastTry < 12000) continue;
+      autoSweepTriedAt.set(v.address, Date.now());
       let utxosV = [];
-      try { utxosV = await fetchAddressUtxos(v.address); } catch { continue; }
-      if (!utxosV.length) continue;
-      autoSweepTried.add(v.address);
+      try { utxosV = await fetchAddressUtxos(v.address); } catch {}
+      if (!utxosV.length && !isKcc20Vault(v)) continue;
       toast(isKcc20Vault(v) ? ('Time lock ended — returning ' + (v.tick || 'KCC20') + '…') : 'Time lock ended — returning KAS…');
       try {
         const result = isKcc20Vault(v)
           ? await sweepKcc20Capsule({ wallet, vault: v, utxos: utxosV })
           : await sweepVault({ wallet, vault: v, utxos: utxosV });
         updateVault(v.address, { status: 'swept', unlockTxId: result.txId, fundedSompi: 0, tokenAmount: isKcc20Vault(v) ? '0' : v.tokenAmount });
+        noteVaultActivity({
+          vault: v,
+          label: isKcc20Vault(v) ? 'Unfrozen' : 'Unlocked',
+          dir: 'in',
+          tick: isKcc20Vault(v) ? v.tick : 'KAS',
+          protocol: isKcc20Vault(v) ? 'kcc20' : 'kas',
+          amount: isKcc20Vault(v) ? (result.tokenAmount || v.tokenAmount) : String(Math.round(Number(result.amountKas || 0) * 1e8)),
+          decimals: isKcc20Vault(v) ? v.decimals : 8,
+          txId: result.txId || '',
+          note: 'Returned ' + formatUtc(Date.now())
+        });
         if (isKcc20Vault(v) && result.tokenAmount) {
           applyLocalTokenDelta(v.tick, 'kcc20', result.tokenAmount);
           toast(`Returned ${formatTokenUnits(result.tokenAmount, v.decimals)} ${v.tick} from freeze`);
@@ -3107,9 +3209,12 @@ async function maybeAutoUnlock() {
         }
         afterTx();
         if (currentTab === 'vault') renderVault();
+        if (currentTab === 'home') renderHome();
+        if (currentTab === 'activity') renderActivity(window.__txs || []);
       } catch (e) {
-        autoSweepTried.delete(v.address);
         console.warn('auto-unlock', e);
+        autoSweepTriedAt.set(v.address, Date.now());
+        scheduleFreezeWatch({ ...v, unlockAt: Date.now() + 12000 });
       }
     }
   } catch (e) {
@@ -4083,18 +4188,22 @@ async function executeKcc20Freeze(params) {
       protocol: 'kcc20',
       amount: result.tokenAmount,
       decimals: result.decimals,
-      txId: result.txId || result.revealId || ''
+      txId: result.txId || result.revealId || '',
+      until: result.vault.unlockAt,
+      note: 'Returns ' + formatUtc(result.vault.unlockAt)
     });
     afterTx();
     renderVault();
+    scheduleFreezeWatch(result.vault);
     openSheet(tick + ' frozen', `
       <div class="kv"><span class="k">Locked</span><span class="v">${esc(formatTokenUnits(result.tokenAmount, result.decimals))} ${esc(tick)}</span></div>
       <div class="kv"><span class="k">Witness in capsule</span><span class="v">${esc(result.witnessKas)} KAS</span></div>
       <div class="kv"><span class="k">Network fee</span><span class="v">${Number(result.feeKas || 0).toFixed(6)} KAS</span></div>
+      <div class="kv"><span class="k">Returns</span><span class="v">${esc(formatUtc(result.vault.unlockAt))}</span></div>
       <div class="kv"><span class="k">Unlock DAA</span><span class="v">${esc(result.vault.unlockDaa)}</span></div>
       <div class="kv"><span class="k">Capsule</span><span class="v">${esc(result.vault.address)}</span></div>
       ${txidBlock(result.txId)}
-      <p class="muted" style="text-align:left;">${esc(tick)} cannot move until that DAA. Sweep returns the tokens to this wallet automatically.</p>
+      <p class="muted" style="text-align:left;">${esc(tick)} returns to this wallet at that UTC time. Auto-return fires then (and as soon as you reopen the app). Leave the wallet open if you can.</p>
     `, { confirm: 'Done', cancel: false, onConfirm: () => { closeSheet(); refreshAll(); } });
   } catch (e) {
     if (errText(e) === 'cancelled') { closeSheet(); return; }
@@ -4318,21 +4427,27 @@ async function fundVault(vault) {
     result = await sendKas({ wallet, dest: vault.address, amountKas: amt, utxos: availableUtxos, exact: true });
   }
   const lockedSompi = Math.round((Number(result.amountKas) || amt) * 1e8);
+  const mins = Number(vault.params?.lockMinutes || vault.params?.minutes || 0);
+  const unlockAt = vault.unlockAt || (mins ? Date.now() + mins * 60 * 1000 : 0);
   updateVault(vault.address, {
     status: 'funding',
     fundTxId: result.txId,
     covenantId: result.covenantId || null,
     fundedSompi: lockedSompi,
     fundFeeKas: result.feeKas || 0,
+    unlockAt: unlockAt || vault.unlockAt,
     params: { ...(vault.params || {}), amountKas: result.amountKas || amt }
   });
   noteVaultActivity({
-    vault,
+    vault: { ...vault, unlockAt },
     label: 'Locked',
     dir: 'out',
     amount: String(lockedSompi),
-    txId: result.txId || ''
+    txId: result.txId || '',
+    until: unlockAt,
+    note: unlockAt ? ('Returns ' + formatUtc(unlockAt)) : ''
   });
+  if (unlockAt) scheduleFreezeWatch({ ...vault, unlockAt, status: 'funding' });
   afterTx();
   const lockedKas = Number(result.amountKas || amt);
   const feeKas = Number(result.feeKas || 0);
@@ -4350,8 +4465,8 @@ async function fundVault(vault) {
 function openLockTimer(vault) {
   if (!vault) return;
   haptic();
-  const sec = remainingLockSec(vault.unlockDaa);
-  const locked = (vault.unlockDaa && (sec == null || sec > 0));
+  const sec = remainingLockSec(vault.unlockDaa, vault.unlockAt);
+  const locked = ((vault.unlockDaa || vault.unlockAt) && (sec == null || sec > 0));
   const tok = vaultTokenLabel(vault);
   const kcc = isKcc20Vault(vault);
   const isEscrow = vault.type === 'escrow';
@@ -4383,9 +4498,9 @@ function openLockTimer(vault) {
     <div class="kv"><span class="k">Locked</span><span class="v">${tok ? esc(tok) : formatAmount(vault.fundedSompi || 0) + ' KAS'}</span></div>
     ${kcc ? `<div class="kv"><span class="k">Witness dust</span><span class="v">${formatAmount(vault.fundedSompi || 0)} KAS</span></div>` : ''}
     ${vault.fundFeeKas ? `<div class="kv"><span class="k">Lock fee paid</span><span class="v">${Number(vault.fundFeeKas).toFixed(6)} KAS</span></div>` : ''}
-    ${vault.unlockDaa ? `<div class="kv"><span class="k">Time left</span><span class="v" id="lock-timer-live" data-unlock-daa="${esc(vault.unlockDaa || '')}" data-addr="${esc(vault.address || '')}">${esc(formatLockClock(sec))}</span></div>
-    <div class="kv"><span class="k">Unlocks (UTC)</span><span class="v" id="lock-timer-utc">${esc(unlockAtUtc(sec))}</span></div>
-    <div class="kv"><span class="k">Unlock DAA</span><span class="v">${esc(vault.unlockDaa)} (now ${esc(lastDaa || '—')})</span></div>` : ''}
+    ${vault.unlockDaa || vault.unlockAt ? `<div class="kv"><span class="k">Time left</span><span class="v" id="lock-timer-live" data-unlock-daa="${esc(vault.unlockDaa || '')}" data-unlock-at="${esc(vault.unlockAt || '')}" data-addr="${esc(vault.address || '')}">${esc(formatLockClock(sec))}</span></div>
+    <div class="kv"><span class="k">Returns</span><span class="v" id="lock-timer-utc">${esc(vault.unlockAt ? formatUtc(vault.unlockAt) : unlockAtUtc(sec))}</span></div>
+    ${vault.unlockDaa ? `<div class="kv"><span class="k">Unlock DAA</span><span class="v">${esc(vault.unlockDaa)} (now ${esc(lastDaa || '—')})</span></div>` : ''}` : ''}
     ${isEscrow ? `<div class="kv"><span class="k">Buyer</span><span class="v">${esc(shortAddr(vault.params?.buyerAddress || '', 10, 6))}</span></div>` : ''}
     ${isMsig ? `<div class="kv"><span class="k">Counterparty</span><span class="v">${esc(shortAddr(vault.params?.counterparty || '', 10, 6))}</span></div>` : ''}
     ${hop ? `<div class="kv"><span class="k">Hop</span><span class="v">${hopI + 1} / ${hopN}</span></div>` : ''}
@@ -4996,7 +5111,10 @@ function bind() {
     if (row?.dataset.vault) openVaultDetail(row.dataset.vault);
   });
   document.addEventListener('visibilitychange', () => {
-    if (document.visibilityState === 'visible' && wallet) tickLive(true);
+    if (document.visibilityState === 'visible' && wallet) {
+      tickLive(true);
+      maybeAutoUnlock();
+    }
   });
 }
 

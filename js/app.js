@@ -14,7 +14,7 @@ import {
 } from './kcc20.js?v=109';
 import { parseIntent, describeIntent, askFor, parseDurationField, interpretVaultChat, normalizeChat } from './intent.js?v=89';
 import { payloadFromAddress } from './script.js?v=90';
-import { explainTransaction, scorpionAnswer } from './scorpion.js?v=110';
+import { explainTransaction, scorpionAnswer } from './scorpion.js?v=114';
 import {
   sendKas, fetchAddressUtxos, fetchAddressBalance, loadKaspaSdk,
   buildTimelockCovenant, buildEscrowCovenant, buildMultisigCovenant, currentDaa,
@@ -46,7 +46,7 @@ import {
 } from './atrade.js?v=100';
 import { SCORPION_MEMORY } from './scorpionMemory.js?v=100';
 
-export const BUILD = '113';
+export const BUILD = '114';
 
 const TOKEN_FALLBACK_LOGO = 'assets/ttt.png';
 
@@ -180,7 +180,7 @@ const explorerAddr = (addr) => isTestnet()
 function txidBlock(id, label = 'TX') {
   if (!id) return '';
   return `
-    <div class="kv">
+    <div class="kv kv-stack">
       <span class="k">${esc(label)}</span>
       <span class="v txid-v">
         <code class="txid-text">${esc(id)}</code>
@@ -2771,17 +2771,22 @@ function openImportAnother() {
 }
 
 function explHtml(expl) {
-  const factors = (expl.factors || []).map(f =>
-    `<div class="kv"><span class="k">${esc(f.k)}</span><span class="v">${esc(f.v)}</span></div>`
-  ).join('');
+  const stack = /^(from|to|txid|address)$/i;
+  const factors = (expl.factors || []).map(f => {
+    const long = stack.test(f.k) || String(f.v || '').length > 36;
+    const val = esc(f.v).replace(/\n/g, '<br>');
+    return `<div class="kv${long ? ' kv-stack' : ''}"><span class="k">${esc(f.k)}</span><span class="v">${val}</span></div>`;
+  }).join('');
   const bullets = (expl.bullets || []).map(b => `<li>${esc(b)}</li>`).join('');
   return `
-    <span class="kind-pill">${esc(expl.title || expl.kind || 'Scorpion')}</span>
-    <p style="text-align:left;font-size:15px;line-height:1.45;margin:0 0 8px;">${esc(expl.headline)}</p>
-    ${bullets ? `<ul style="text-align:left;padding-left:18px;color:var(--label-2);font-size:13px;line-height:1.45;margin:0 0 8px;">${bullets}</ul>` : ''}
-    <div class="scorpion-factors">${factors}</div>
-    ${expl.next ? `<p class="muted" style="text-align:left;padding:10px 0 0;">${esc(expl.next)}</p>` : ''}
-    ${expl.id ? txidBlock(expl.id) : ''}
+    <div class="scorpion-card">
+      <span class="kind-pill">${esc(expl.title || expl.kind || 'Scorpion')}</span>
+      <p class="scorpion-lede">${esc(expl.headline)}</p>
+      ${bullets ? `<ul class="scorpion-bullets">${bullets}</ul>` : ''}
+      <div class="scorpion-factors">${factors}</div>
+      ${expl.next ? `<p class="muted scorpion-next">${esc(expl.next)}</p>` : ''}
+      ${expl.id ? txidBlock(expl.id) : ''}
+    </div>
   `;
 }
 

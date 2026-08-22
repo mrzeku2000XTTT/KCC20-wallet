@@ -92,6 +92,16 @@ function uniqAddrs(list) {
   return out;
 }
 
+function prettyAddr(a) {
+  const s = String(a || '');
+  if (!s || s.length < 24) return s;
+  if (/^kaspa(test)?:/i.test(s)) {
+    const i = s.indexOf(':');
+    return s.slice(0, i + 9) + '…' + s.slice(-6);
+  }
+  return s.slice(0, 10) + '…' + s.slice(-8);
+}
+
 function fmtKas(sompi) {
   const x = n(sompi) / 1e8;
   if (!x) return '0 KAS';
@@ -190,26 +200,26 @@ export function explainTransaction(tx, ctx = {}) {
       ? (product.name || product.type || 'vault')
       : (p2shOuts.length || p2shIns.length ? 'unknown P2SH covenant' : 'none');
 
-  let fromShow = fromAddrs.slice(0, 3);
-  let toShow = (counterparties.length ? counterparties : (allOutSelf ? [my] : [])).slice(0, 3);
+  let fromShow = fromAddrs.slice(0, 3).map(prettyAddr);
+  let toShow = (counterparties.length ? counterparties : (allOutSelf ? [my] : [])).slice(0, 3).map(prettyAddr);
   if (kind === 'kcc20in') {
-    fromShow = senderKey ? [senderKey] : p2pkFrom.slice(0, 1);
-    toShow = my ? [my] : [];
+    fromShow = senderKey ? [prettyAddr(senderKey)] : p2pkFrom.slice(0, 1).map(prettyAddr);
+    toShow = my ? [prettyAddr(my)] : [];
   } else if (kind === 'kcc20out') {
-    fromShow = my ? [my] : p2pkFrom.slice(0, 1);
+    fromShow = my ? [prettyAddr(my)] : p2pkFrom.slice(0, 1).map(prettyAddr);
     const dest = p2pkTo.find(a => a !== my);
-    toShow = dest ? [dest] : (p2shOuts[0] ? [outputAddr(p2shOuts[0])] : []);
+    toShow = dest ? [prettyAddr(dest)] : (p2shOuts[0] ? [prettyAddr(outputAddr(p2shOuts[0]))] : []);
   } else if (kind === 'kcc20') {
-    fromShow = senderKey ? [senderKey] : p2pkFrom.slice(0, 1);
-    toShow = p2pkTo.filter(a => a !== senderKey).slice(0, 2);
-    if (!toShow.length) toShow = ['Token covenant cell (recipient key — not a q-address)'];
+    fromShow = senderKey ? [prettyAddr(senderKey)] : p2pkFrom.slice(0, 1).map(prettyAddr);
+    toShow = p2pkTo.filter(a => a !== senderKey).slice(0, 2).map(prettyAddr);
+    if (!toShow.length) toShow = ['Token cell (not a q-address)'];
   }
 
   let headline = 'This is a Kaspa transaction.';
   if (kind === 'kcc20in') {
-    headline = `${senderKey || 'Another wallet'} sent ${tokenDisp || 'KCC20'} to ${walletName}. The token cell is a P2SH covenant, so your kaspa:q… address does not appear as an output — sender change still goes back to them.`;
+    headline = `${tokenDisp || 'KCC20'} received by ${walletName}. Token cells are P2SH, so the payment address is not an output.`;
   } else if (kind === 'kcc20out') {
-    headline = `You sent ${tokenDisp || 'KCC20'} from ${walletName}. Recipient gets a covenant cell, not a payment to their q-address.`;
+    headline = `You sent ${tokenDisp || 'KCC20'} from ${walletName}. Recipient gets a covenant cell, not a q-address payment.`;
   } else if (kind === 'receive') headline = `Someone sent you ${fmtKas(amount)}. This is a normal incoming payment to your key — not a vault.`;
   else if (kind === 'send') headline = `You sent ${fmtKas(amount)} to another Kaspa address. Change came back to you; the network kept a small Toccata fee.`;
   else if (kind === 'compound') headline = `You merged ${inCount} coins into one UTXO. Balance stayed in this wallet minus the fee. Nothing left the account.`;
@@ -245,7 +255,6 @@ export function explainTransaction(tx, ctx = {}) {
   const senderChangeOut = senderKey && p2pkTo.includes(senderKey);
   const factors = [
     { k: 'Kind', v: kindLabel(kind) },
-    { k: 'Plain meaning', v: headline },
     { k: 'Amount', v: (kind === 'kcc20in' || kind === 'kcc20out') && tokenDisp ? tokenDisp : fmtKas(amount) },
     { k: 'Network fee', v: kind === 'kcc20in'
       ? 'Paid by the sender'
@@ -273,9 +282,9 @@ export function explainTransaction(tx, ctx = {}) {
 
   const bullets = kind === 'kcc20in' || kind === 'kcc20out' || kind === 'kcc20'
     ? [
-        'KCC20 is a covenant cell. It is not sent to the recipient’s kaspa:q… payment address.',
-        senderChangeOut ? 'A q-address in both From and To is the sender’s KAS change, not a payment to themselves.' : 'Token ownership moved with the P2SH cell.',
-        tokenDisp ? `Recorded here as ${tokenDisp}.` : 'Token amount is the cell, not the KAS on the outputs.'
+        'KCC20 lives in a covenant cell, not on the q-address.',
+        senderChangeOut ? 'Sender change can look like ews→ews. The token still moved.' : 'Token ownership moved with the P2SH cell.',
+        tokenDisp ? `Recorded as ${tokenDisp}.` : 'Amount is the cell, not the KAS on the outputs.'
       ]
     : [
         kind === 'lock' || kind === 'timelock' || kind === 'escrow' || kind === 'multisig'

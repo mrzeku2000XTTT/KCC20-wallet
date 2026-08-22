@@ -23,7 +23,7 @@ import {
   newHashlockSecret, checkinHop, currentHop, parseXmssKit, p2shFromRedeemHex, spendXmssVault,
   disconnectRpc, buildDcaDrips, sendKasMany, releaseDcaDrip
 } from './tx.js?v=105';
-import { kronMarkets, quoteKronTrade, executeKronTrade, formatKasSompi, lookupKronTick, tradeCostLines, attachKronLogos, kronCandles } from './kronTrade.js?v=101';
+import { kronMarkets, quoteKronTrade, executeKronTrade, formatKasSompi, lookupKronTick, tradeCostLines, attachKronLogos, kronCandles } from './kronTrade.js?v=106';
 import {
   migrateReceiveBook, ownedAddresses, markAddressUsed, currentReceive,
   deriveReceiveBatch, unusedReceiveCount, ensurePrivacyBook
@@ -45,7 +45,7 @@ import {
 } from './atrade.js?v=100';
 import { SCORPION_MEMORY } from './scorpionMemory.js?v=100';
 
-export const BUILD = '105';
+export const BUILD = '106';
 
 const TOKEN_FALLBACK_LOGO = 'assets/ttt.png';
 
@@ -4468,11 +4468,12 @@ function paintDcaPlan() {
   quoteKronTrade({ tick, side: 'buy', amount: String(slice) }).then(q => {
     if (paintDcaPlan._g !== gen || !box.isConnected) return;
     paintDcaPlan._q = q;
-    const leave = Number(q.nativeLeave || 0) / 1e8;
-    const lockKas = later * (leave + 0.01);
-    box.innerHTML = `<b>${esc(tick)}</b> · buy ${slice} KAS now, then ${later} locked slice${later === 1 ? '' : 's'} ${esc(dcaEveryLabel(every))}.
-      Each KRON buy: ${esc(formatKasSompi(q.kasIn))} into market · protocol ${esc(formatKasSompi(q.fee))} · cell 0.50 · network ~0.40 · ~${leave.toFixed(2)} KAS leaves the card.
-      You prefund ~${(leave + lockKas).toFixed(2)} KAS (${leave.toFixed(2)} now + ${lockKas.toFixed(2)} in capsules). Capsules only drip into another ${esc(tick)} buy.`;
+    const first = Number(q.nativeLeave || 0) / 1e8;
+    const next = Number(q.netGone || q.nativeLeave || 0) / 1e8;
+    const lockKas = later * (next + 0.01);
+    box.innerHTML = `<b>${esc(tick)}</b> · buy ${slice} KAS now, then ${later} capsule${later === 1 ? '' : 's'} ${esc(dcaEveryLabel(every))}.
+      KRON protocol fee is <b>every buy</b> (${esc(formatKasSompi(q.fee))} KAS — covenant, cannot prepay once). The 0.50 KAS cell is <b>once</b> on the first buy; later slices merge into it.
+      First buy leaves ~${first.toFixed(2)} KAS. Each later capsule holds ~${next.toFixed(2)} KAS (market + protocol + network). Prefund ~${(first + lockKas).toFixed(2)} KAS.`;
   }).catch(e => {
     if (paintDcaPlan._g !== gen) return;
     box.innerHTML = `<b>${esc(tick)}</b> · first buy now, then ${later} capsules. Could not quote fees: ${esc(errText(e))}`;
@@ -4563,7 +4564,7 @@ async function startDcaFromForm() {
   });
   afterTx();
   const later = Math.max(0, n - 1);
-  const leave = BigInt(q.nativeLeave || kasToSompi(slice + 1.5));
+  const leave = BigInt(q.netGone || q.nativeLeave || kasToSompi(String(slice + 1)));
   let fund = { txId: '', feeKas: 0 };
   let drips = [];
   if (later > 0) {
@@ -4903,18 +4904,19 @@ async function reviewTrade() {
     if (!(plan.slice >= 0.5) || plan.buys < 1) { toast('Set budget and each buy'); return; }
     const n = Math.min(8, plan.buys);
     const q = paintDcaPlan._q;
-    const leave = q ? Number(q.nativeLeave || 0) / 1e8 : plan.slice + 1.5;
+    const first = q ? Number(q.nativeLeave || 0) / 1e8 : plan.slice + 1.5;
+    const next = q ? Number(q.netGone || q.nativeLeave || 0) / 1e8 : plan.slice + 1;
     const later = Math.max(0, n - 1);
     openSheet('Review DCA ' + plan.tick, `
       <div class="kv"><span class="k">Token</span><span class="v">${esc(plan.tick)}</span></div>
-      <div class="kv"><span class="k">First buy</span><span class="v">${plan.slice} KAS now, when you sign</span></div>
+      <div class="kv"><span class="k">First buy</span><span class="v">${plan.slice} KAS now (includes 0.50 cell)</span></div>
       <div class="kv"><span class="k">Then</span><span class="v">${later} capsule${later === 1 ? '' : 's'} ${esc(dcaEveryLabel(plan.every))}</span></div>
-      ${q ? `<div class="kv"><span class="k">Into market</span><span class="v">${esc(formatKasSompi(q.kasIn))} KAS</span></div>
-      <div class="kv"><span class="k">Protocol</span><span class="v">${esc(formatKasSompi(q.fee))} KAS</span></div>
-      <div class="kv"><span class="k">Cell + network</span><span class="v">0.50 + ~0.40 KAS</span></div>
-      <div class="kv"><span class="k">Per buy leaves</span><span class="v">~${leave.toFixed(2)} KAS</span></div>` : ''}
-      <div class="kv"><span class="k">Prefund capsules</span><span class="v">~${(later * (leave + 0.01)).toFixed(2)} KAS on-chain</span></div>
-      <p class="muted" style="text-align:left;padding-top:8px;">First slice buys ${esc(plan.tick)} immediately. The rest is locked in CLTV vaults sized for a real KRON buy (fees included). Capsules drip only into later ${esc(plan.tick)} buys. This app never holds the coins.</p>
+      ${q ? `<div class="kv"><span class="k">Into market</span><span class="v">${esc(formatKasSompi(q.kasIn))} KAS each</span></div>
+      <div class="kv"><span class="k">KRON protocol</span><span class="v">${esc(formatKasSompi(q.fee))} KAS <b>each buy</b></span></div>
+      <div class="kv"><span class="k">Token cell</span><span class="v">0.50 KAS once, then reused</span></div>
+      <div class="kv"><span class="k">Later capsule</span><span class="v">~${next.toFixed(2)} KAS (no new cell)</span></div>` : ''}
+      <div class="kv"><span class="k">Prefund capsules</span><span class="v">~${(later * (next + 0.01)).toFixed(2)} KAS on-chain</span></div>
+      <p class="muted" style="text-align:left;padding-top:8px;">KRON protocol fees are covenant-required on every swap — they cannot be paid once for the plan. The 0.50 KAS cell is paid on the first buy; later slices merge into that cell. Capsules only drip into ${esc(plan.tick)} buys.</p>
     `, {
       confirm: kaswareEnabled() ? 'Buy now + lock (KasWare)' : 'Buy now + lock with PIN',
       gold: true,

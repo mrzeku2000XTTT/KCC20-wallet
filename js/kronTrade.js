@@ -680,12 +680,17 @@ export async function executeKronTrade({ wallet, tick, side, amount, utxos, onSt
   const quoted = await quoteKronTrade({ tick, side, amount });
 
   let spend;
+  let merge = [];
+  if (quoted.side === 'buy') {
+    try { merge = (await loadUserTokens(tick, wallet.address, { limit: 2, withKas: true })).slice(0, 2); } catch { merge = []; }
+  }
+  const presence = merge.length ? 2 + merge.length : 0;
   if (quoted.side === 'buy' && quoted.graduated) {
     onStatus?.('Loading pool…');
     const live = await poolHead(tick, entry.covenantId, entry.extensions.poolCovenantId);
     const poolTpl = templateFromPart(desc.pool);
     spend = kron.poolCpV3.buildPoolV3SwapKasForToken(
-      k, poolTpl, tokenTpl, poolParams(entry), live.utxo, live.poolCovid, buyer, quoted.raw, [], 0
+      k, poolTpl, tokenTpl, poolParams(entry), live.utxo, live.poolCovid, buyer, quoted.raw, merge, presence
     );
   } else if (quoted.side === 'sell' && quoted.graduated) {
     onStatus?.('Loading pool…');
@@ -703,7 +708,7 @@ export async function executeKronTrade({ wallet, tick, side, amount, utxos, onSt
     onStatus?.('Loading curve…');
     const head = await curveHead(tick, token, entry);
     spend = kron.curveCp.buildCpBuy(
-      k, head.tpl, tokenTpl, head.utxo, head.inventory, head.curveCovid, buyer, quoted.kasIn, quoted.tokenOut, [], 0
+      k, head.tpl, tokenTpl, head.utxo, head.inventory, head.curveCovid, buyer, quoted.kasIn, quoted.tokenOut, merge, presence
     );
   } else {
     onStatus?.('Loading curve…');
@@ -728,7 +733,7 @@ export async function executeKronTrade({ wallet, tick, side, amount, utxos, onSt
   }
   if (!rest.length) rest = await fetchAddressUtxos(wallet.address);
   const fundingAll = restFunding(rest, wallet.address);
-  const needGuess = (quoted.total || quoted.fee || 0n) + DUST + 80_000_000n;
+  const needGuess = (quoted.total || quoted.fee || 0n) + (merge.length ? 0n : DUST) + 80_000_000n;
   const funding = [];
   let sum = 0n;
   for (const e of fundingAll) {

@@ -46,7 +46,7 @@ import {
 } from './atrade.js?v=100';
 import { SCORPION_MEMORY } from './scorpionMemory.js?v=100';
 
-export const BUILD = '115';
+export const BUILD = '116';
 
 const TOKEN_FALLBACK_LOGO = 'assets/ttt.png';
 
@@ -6875,11 +6875,13 @@ function openLockTimer(vault) {
   $('v-fund')?.addEventListener('click', () => fundVault(vault).catch(e => toast(errText(e))));
   $('v-deldca')?.addEventListener('click', () => { closeSheet(); deleteDcaVault(vault.address); });
   $('v-delalldca')?.addEventListener('click', () => { closeSheet(); stopDca(); });
-  $('v-unlock')?.addEventListener('click', () => unlockVault(vault, {
-    escrowRelease: isEscrow && iAmBuyer,
-    secretHex: $('v-secret')?.value.trim() || vault.params?.secretHex || '',
-    witness: $('v-witness')?.value || ''
-  }).catch(e => { setSheetStatus(errText(e), true); toast(errText(e)); });
+  $('v-unlock')?.addEventListener('click', () => {
+    unlockVault(vault, {
+      escrowRelease: isEscrow && iAmBuyer,
+      secretHex: $('v-secret')?.value.trim() || vault.params?.secretHex || '',
+      witness: $('v-witness')?.value || ''
+    }).catch(e => { setSheetStatus(errText(e), true); toast(errText(e)); });
+  });
   $('v-checkin')?.addEventListener('click', () => runCheckin(vault).catch(e => { setSheetStatus(errText(e), true); toast(errText(e)); }));
 }
 

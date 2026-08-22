@@ -8,6 +8,27 @@ import { kaswareSigning, sendKaspaWithKasware, sendKrc20WithKasware, signPsktWit
 
 function API() { return kaspaRestBase(); }
 
+function cleanPrivHex(raw) {
+  const s = String(raw || '').replace(/^0x/i, '').replace(/\s/g, '');
+  return /^[0-9a-fA-F]{64}$/.test(s) ? s.toLowerCase() : '';
+}
+
+function privKeyFromWallet(k, wallet) {
+  const hex = cleanPrivHex(wallet?.privKey);
+  if (!hex) {
+    throw new Error('This wallet has no native signing key on this device. Import the 64-character hex key, or turn on KasWare for this address.');
+  }
+  try {
+    return new k.PrivateKey(hex);
+  } catch {
+    try {
+      return new k.PrivateKey(hexToBytes(hex));
+    } catch {
+      throw new Error('Native key is not a valid secp256k1 secret. Re-import the hex key, or sign with KasWare.');
+    }
+  }
+}
+
 let _sdk = null;
 let _sdkLoading = null;
 
@@ -1094,7 +1115,7 @@ export async function sendKas({ wallet, dest, amountKas, utxos, exact = false })
     pendingList = [{ transaction: tx }];
   }
 
-  const priv = new k.PrivateKey(wallet.privKey);
+  const priv = privKeyFromWallet(k, wallet);
   let txId = null;
   let covenantId = null;
   let paidFee = 0n;
@@ -2661,7 +2682,7 @@ export async function lockKcc20Timelock({ wallet, tick, amountHuman, decimals, m
   const walletNeed = (nTok > 1 ? CHANGE_CELL_KAS : 0n) + feeGuess + 200_000n;
 
   onStatus?.('Waiting for capsule fund to land on the node…');
-  const priv = new k.PrivateKey(wallet.privKey);
+  const priv = privKeyFromWallet(k, wallet);
   let feeEntries = [];
   try {
     feeEntries = await waitFreshNodeUtxos(rpc, wallet.address, spentKeys, walletNeed, onStatus);

@@ -12,7 +12,7 @@ import {
   fetchKronAddrTrades, fetchKronTokenUtxos, KRON_IDX,
   krc20Logo, toTokenRaw, setVaultOwner, kcc20Identicon, VAULT_GROUPS, LIFE_KINDS, lifeKindMeta
 } from './kcc20.js?v=117';
-import { parseIntent, describeIntent, askFor, parseDurationField, interpretVaultChat, normalizeChat } from './intent.js?v=117';
+import { parseIntent, describeIntent, askFor, parseDurationField, interpretVaultChat, normalizeChat } from './intent.js?v=118';
 import { payloadFromAddress } from './script.js?v=90';
 import { explainTransaction, scorpionAnswer } from './scorpion.js?v=114';
 import {
@@ -23,7 +23,7 @@ import {
   fetchOwnedUtxos, collectSpendableUtxos, buildSentinelChain, buildRecurringChain, buildHashlockCovenant,
   newHashlockSecret, checkinHop, currentHop, parseXmssKit, p2shFromRedeemHex, spendXmssVault,
   disconnectRpc, buildDcaDrips, sendKasMany, releaseDcaDrip, cancelDcaDrip
-} from './tx.js?v=117';
+} from './tx.js?v=118';
 import { kronMarkets, quoteKronTrade, executeKronTrade, formatKasSompi, lookupKronTick, tradeCostLines, attachKronLogos, kronCandles } from './kronTrade.js?v=106';
 import {
   migrateReceiveBook, ownedAddresses, markAddressUsed, currentReceive,
@@ -46,7 +46,7 @@ import {
 } from './atrade.js?v=100';
 import { SCORPION_MEMORY } from './scorpionMemory.js?v=100';
 
-export const BUILD = '117';
+export const BUILD = '118';
 
 const TOKEN_FALLBACK_LOGO = 'assets/ttt.png';
 
@@ -68,7 +68,7 @@ function productForIntent(intent) {
 }
 
 function isKcc20Vault(v) {
-  return v?.type === 'kcc20lock' || v?.asset === 'kcc20';
+  return v?.type === 'kcc20lock' || v?.asset === 'kcc20' || !!(v?.type === 'life' && (v.tick || v.params?.tick) && v.params?.amountToken);
 }
 
 function isVaultHistory(v) {
@@ -80,8 +80,12 @@ function isVaultHistory(v) {
 }
 
 function vaultTokenLabel(v) {
-  if (!isKcc20Vault(v) || !v.tick) return '';
-  return formatTokenUnits(v.tokenAmount || 0, v.decimals) + ' ' + v.tick;
+  const tick = v?.tick || v?.params?.tick;
+  if (!tick || tick === 'KAS') return '';
+  if (!isKcc20Vault(v) && v?.type !== 'life') return '';
+  const raw = v.tokenAmount || v.params?.amountToken;
+  if (raw == null) return '';
+  return formatTokenUnits(raw, v.decimals || v.params?.decimals || 0) + ' ' + String(tick).toUpperCase();
 }
 
 function vaultLockedSompi(v) {
@@ -1868,6 +1872,7 @@ function openLifeComposer(prefill = {}) {
       return buildCovenant({ id: 'life', type: 'life', name: lifeKindMeta(pick).label }, {
         amountKas: amt,
         lifeKind: pick,
+        rentKind: pick === 'rent' ? 'house' : undefined,
         lifeLabel: lifeKindMeta(pick).label,
         unlockAnytime: anytime,
         dueAt: anytime ? 0 : dueAt,
@@ -6621,12 +6626,17 @@ function openProduct(id, prefill) {
 }
 
 async function executeKcc20Freeze(params) {
+  hydrateNativeKey(wallet);
   const tick = String(params.tick || '').toUpperCase().trim();
   const amountToken = Number(params.amountToken);
   const minutes = Number(params.lockMinutes) || Math.round((Number(params.lockDays) || 0) * 1440);
   if (!tick) { toast('Enter a KCC20 ticker'); return; }
   if (!Number.isFinite(amountToken) || amountToken <= 0) { toast('Enter a token amount like 20'); return; }
   if (!minutes) { toast('Enter a duration like 3 minutes'); return; }
+  if (!kaswareSigning(wallet) && !hexKey(wallet?.privKey)) {
+    toast('This wallet has no native key. Import the 64-hex key or turn on KasWare.');
+    return;
+  }
   const token = (kccHoldings || []).find(t => String(t.ticker || '').toUpperCase() === tick);
   openSheet('Freeze ' + tick, `
     <div class="kv"><span class="k">Lock</span><span class="v">${esc(amountToken)} ${esc(tick)}</span></div>
@@ -6657,10 +6667,21 @@ async function executeKcc20Freeze(params) {
       utxos: availableUtxos,
       onStatus: (m) => setSheetStatus(m)
     });
-    saveVault(result.vault);
+    const life = !!params.lifeKind;
+    const vault = {
+      ...result.vault,
+      type: life ? 'life' : result.vault.type,
+      name: life ? (params.lifeLabel || result.vault.name) : result.vault.name,
+      lifeKind: params.lifeKind || '',
+      unlockAnytime: false,
+      unlockAt: params.dueAt || result.vault.unlockAt,
+      params: { ...(result.vault.params || {}), ...params }
+    };
+    saveVault(vault);
+    if (life) setVaultTab('life');
     applyLocalTokenDelta(tick, 'kcc20', '-' + result.tokenAmount);
     noteVaultActivity({
-      vault: result.vault,
+      vault,
       label: 'Frozen',
       dir: 'out',
       tick,
@@ -6668,19 +6689,20 @@ async function executeKcc20Freeze(params) {
       amount: result.tokenAmount,
       decimals: result.decimals,
       txId: result.txId || result.revealId || '',
-      until: result.vault.unlockAt,
+      until: vault.unlockAt,
       note: 'Returns ' + formatUtc(result.vault.unlockAt)
     });
     afterTx();
     renderVault();
-    scheduleFreezeWatch(result.vault);
-    openSheet(tick + ' frozen', `
+    scheduleFreezeWatch(vault);
+    openSheet((life ? (params.lifeLabel + ' · ') : '') + tick + ' frozen', `
       <div class="kv"><span class="k">Locked</span><span class="v">${esc(formatTokenUnits(result.tokenAmount, result.decimals))} ${esc(tick)}</span></div>
+      ${life ? `<div class="kv"><span class="k">Case</span><span class="v">${esc(params.lifeLabel || params.lifeKind)}</span></div>` : ''}
       <div class="kv"><span class="k">Witness in capsule</span><span class="v">${esc(result.witnessKas)} KAS</span></div>
       <div class="kv"><span class="k">Network fee</span><span class="v">${Number(result.feeKas || 0).toFixed(6)} KAS</span></div>
-      <div class="kv"><span class="k">Returns</span><span class="v">${esc(formatUtc(result.vault.unlockAt))}</span></div>
-      <div class="kv"><span class="k">Unlock DAA</span><span class="v">${esc(result.vault.unlockDaa)}</span></div>
-      <div class="kv"><span class="k">Capsule</span><span class="v">${esc(result.vault.address)}</span></div>
+      <div class="kv"><span class="k">Returns</span><span class="v">${esc(formatUtc(vault.unlockAt))}</span></div>
+      <div class="kv"><span class="k">Unlock DAA</span><span class="v">${esc(vault.unlockDaa)}</span></div>
+      <div class="kv"><span class="k">Capsule</span><span class="v">${esc(vault.address)}</span></div>
       ${txidBlock(result.txId)}
       <p class="muted" style="text-align:left;">${esc(tick)} returns to this wallet at that UTC time. Auto-return fires then (and as soon as you reopen the app). Leave the wallet open if you can.</p>
     `, { confirm: 'Done', cancel: false, onConfirm: () => { closeSheet(); refreshAll(); } });
@@ -6711,8 +6733,13 @@ function backendParams(type, params) {
 
 async function buildCovenant(p, explicit) {
   const params = explicit && Object.keys(explicit).length ? { ...explicit } : readProductForm(p.type);
+  hydrateNativeKey(wallet);
   if (p.type === 'kcc20lock') {
     await executeKcc20Freeze(params);
+    return;
+  }
+  if ((p.type === 'life' || params.lifeKind) && params.tick && params.amountToken) {
+    await executeKcc20Freeze({ ...params, lifeKind: params.lifeKind, lifeLabel: params.lifeLabel });
     return;
   }
   if (!params.amountKas || !Number.isFinite(Number(params.amountKas))) {
@@ -6907,6 +6934,13 @@ async function fundVault(vault) {
   const amt = vault.params?.amountKas;
   if (amt == null || amt === '') throw new Error('Missing amount');
   if (!wallet?.address) throw new Error('No wallet');
+  hydrateNativeKey(wallet);
+  if (!kaswareSigning(wallet) && !hexKey(wallet.privKey) && kaswareEnabled() && isKaswareInstalled()) {
+    try { await ensureKaswareSigner(wallet); } catch {}
+  }
+  if (!kaswareSigning(wallet) && !hexKey(wallet.privKey)) {
+    throw new Error('This wallet has no native signing key. Import the 64-character hex key, or turn on KasWare for this address.');
+  }
   try {
     await requirePin('Confirm vault fund');
   } catch (e) {

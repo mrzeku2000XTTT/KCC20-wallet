@@ -17,6 +17,26 @@ const LIFE_LABEL = {
   save: 'Savings'
 };
 
+const RENT_LABEL = {
+  house: 'House rent',
+  apartment: 'Apartment rent',
+  room: 'Room rent',
+  office: 'Office rent',
+  storage: 'Storage rent',
+  parking: 'Parking rent'
+};
+
+export function parseRentKind(text) {
+  const t = String(text || '').toLowerCase();
+  if (/\b(apartment|apt|flat|condo)\b/.test(t)) return 'apartment';
+  if (/\b(room|studio)\b/.test(t)) return 'room';
+  if (/\b(office|shop|storefront|retail)\b/.test(t)) return 'office';
+  if (/\b(storage|unit|garage)\b/.test(t)) return 'storage';
+  if (/\b(parking|car\s*park)\b/.test(t)) return 'parking';
+  if (/\b(house|home|housing)\b/.test(t)) return 'house';
+  return null;
+}
+
 const MONTHS = {
   january: 0, jan: 0, february: 1, feb: 1, march: 2, mar: 2, april: 3, apr: 3, may: 4,
   june: 5, jun: 5, july: 6, jul: 6, august: 7, aug: 7, september: 8, sep: 8, sept: 8,
@@ -237,9 +257,18 @@ export function parseIntent(text, prev = null) {
     params.durationLabel = duration.label;
   }
   if (type === 'life') {
-    params.lifeKind = lifeKind || (unlockAnytime ? 'control' : 'spend');
-    params.lifeLabel = LIFE_LABEL[params.lifeKind] || 'Real life';
+    params.lifeKind = lifeKind || (unlockAnytime ? 'control' : (tokenAmt ? 'spend' : null)) || prev?.params?.lifeKind || null;
+    const rentKind = parseRentKind(raw) || prev?.params?.rentKind || null;
+    if (rentKind) params.rentKind = rentKind;
+    if (params.lifeKind === 'rent' && rentKind) params.lifeLabel = RENT_LABEL[rentKind] || 'House rent';
+    else if (params.lifeKind) params.lifeLabel = LIFE_LABEL[params.lifeKind] || 'Real life';
     params.unlockAnytime = !!(unlockAnytime || (params.lifeKind === 'control' && !due && !duration));
+    if (tokenAmt) {
+      params.amountToken = tokenAmt.amount;
+      params.tick = tokenAmt.tick;
+      delete params.amountKas;
+      if (params.unlockAnytime) params.unlockAnytime = false;
+    }
     if (due && !params.unlockAnytime) {
       params.dueAt = due.at;
       params.dueLabel = due.label;
@@ -260,8 +289,14 @@ export function parseIntent(text, prev = null) {
     if (!params.tick) missing.push('KCC20 ticker');
     if (!params.lockMinutes && !params.lockDays) missing.push('how long (e.g. 3 minutes)');
   } else if (type === 'life') {
-    if (!params.amountKas) missing.push('amount in KAS');
-    if (!params.unlockAnytime && !params.lockMinutes && !params.dueAt) {
+    if (!params.lifeKind) missing.push('which real-life case (house rent, car note, spending, savings, or control)');
+    if (params.lifeKind === 'rent' && !params.rentKind) missing.push('what kind of rent (house, apartment, room, office, storage, parking)');
+    if (!(params.amountToken && params.tick) && !params.amountKas) {
+      missing.push('amount in KAS or a KCC20 amount like 50 KKDAG');
+    }
+    if (params.tick && params.amountToken && !params.unlockAnytime && !params.lockMinutes && !params.dueAt) {
+      missing.push('when it is due (KCC20 locks until a date)');
+    } else if (!params.tick && !params.unlockAnytime && !params.lockMinutes && !params.dueAt) {
       missing.push('when it is due (a date/time, or say unlock anytime)');
     }
     if (params.dueAt && params.dueAt < Date.now() - 60000 && !params.unlockAnytime) {
@@ -287,7 +322,9 @@ export function parseIntent(text, prev = null) {
 export function describeIntent(intent) {
   if (!intent) return '';
   const p = intent.params || {};
-  const amt = p.amountKas != null ? `${p.amountKas} KAS` : 'an amount';
+  const amt = (p.amountToken && p.tick)
+    ? `${p.amountToken} ${p.tick}`
+    : (p.amountKas != null ? `${p.amountKas} KAS` : 'an amount');
   const tokenAmt = p.amountToken != null ? `${p.amountToken} ${p.tick || 'KCC20'}` : null;
   const dur = p.durationLabel || (p.lockMinutes ? `${p.lockMinutes} minutes` : (p.lockDays ? `${p.lockDays} days` : 'a duration'));
   if (intent.type === 'life') {
@@ -309,8 +346,11 @@ export function describeIntent(intent) {
 export function askFor(missing) {
   if (!missing?.length) return '';
   const first = missing[0];
+  if (first.includes('what kind of rent')) return 'What kind of rent — house, apartment, room, office, storage, or parking?';
+  if (first.includes('which real-life case')) return 'Which case — house rent, car note, spending, savings, or control?';
   if (first.includes('token amount')) return 'How many tokens? Example: “20 KKDAG”.';
   if (first.includes('KCC20 ticker')) return 'Which KCC20 ticker? Example: KKDAG.';
+  if (first.includes('KAS or a KCC20')) return 'How much? Example: “1000 kas” or “50 KKDAG”.';
   if (first.includes('amount')) return 'How much KAS? You can say “.15 kas”.';
   if (first.includes('when it is due') || first.includes('future due')) return 'When is it due? Example: “September 1 2026 9:00 UTC”, or say “unlock anytime”.';
   if (first.includes('how long')) return 'How long should it stay locked? Example: “3 minutes” or “30 days”.';

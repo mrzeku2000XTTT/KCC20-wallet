@@ -764,7 +764,11 @@ export async function executeKronTrade({ wallet, tick, side, amount, utxos, onSt
     }
     mergeFundingSignatures(asm.transaction, signedTx, asm.fundingInputIndexes);
   } else {
-    if (!wallet.privKey) throw new Error('Turn on KasWare in Settings to sign this trade');
+    const hex = String(wallet.privKey || '').replace(/^0x/i, '').trim();
+    if (!/^[0-9a-fA-F]{64}$/.test(hex)) {
+      throw new Error('No in-app key on this wallet. Import the 64-hex key to sign natively, or turn KasWare on in Settings.');
+    }
+    wallet.privKey = hex;
     const priv = new k.PrivateKey(wallet.privKey);
     signFundingP2pk(k, asm.transaction, priv, asm.fundingInputIndexes);
   }

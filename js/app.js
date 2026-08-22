@@ -23,7 +23,7 @@ import {
   newHashlockSecret, checkinHop, currentHop, parseXmssKit, p2shFromRedeemHex, spendXmssVault,
   disconnectRpc
 } from './tx.js?v=100';
-import { kronMarkets, quoteKronTrade, executeKronTrade, formatKasSompi, lookupKronTick, tradeCostLines, attachKronLogos, kronCandles } from './kronTrade.js?v=99';
+import { kronMarkets, quoteKronTrade, executeKronTrade, formatKasSompi, lookupKronTick, tradeCostLines, attachKronLogos, kronCandles } from './kronTrade.js?v=101';
 import {
   migrateReceiveBook, ownedAddresses, markAddressUsed, currentReceive,
   deriveReceiveBatch, unusedReceiveCount, ensurePrivacyBook
@@ -45,7 +45,7 @@ import {
 } from './atrade.js?v=100';
 import { SCORPION_MEMORY } from './scorpionMemory.js?v=100';
 
-export const BUILD = '100';
+export const BUILD = '101';
 
 const TOKEN_FALLBACK_LOGO = 'assets/ttt.png';
 
@@ -442,32 +442,70 @@ function loadStoredWallet() {
   return list.find(w => w.id === id) || list[0];
 }
 
+function hexKey(v) {
+  const s = String(v || '').replace(/^0x/i, '').trim();
+  return /^[0-9a-fA-F]{64}$/.test(s) ? s.toLowerCase() : '';
+}
+
+function hydrateNativeKey(w) {
+  if (!w) return w;
+  let hex = hexKey(w.privKey);
+  if (!hex) {
+    for (const a of w.receiveAddrs || []) {
+      hex = hexKey(a.privateKey || a.privKey);
+      if (hex) break;
+    }
+  }
+  if (!hex) {
+    const hit = loadWalletList().find(x => hexKey(x.privKey) && (
+      x.id === w.id
+      || sameAddrPayload(x.address, w.address)
+      || (w.pubKey && x.pubKey && String(w.pubKey).replace(/^0x/i, '').toLowerCase() === String(x.pubKey).replace(/^0x/i, '').toLowerCase())
+    ));
+    if (hit) hex = hexKey(hit.privKey);
+  }
+  if (!hex) {
+    const raw = loadStoredWalletRaw();
+    if (hexKey(raw?.privKey) && (!raw.address || sameAddrPayload(raw.address, w.address))) {
+      hex = hexKey(raw.privKey);
+    }
+  }
+  if (hex) w.privKey = hex;
+  return w;
+}
+
 function saveWallet() {
   if (!wallet) return;
   if (!wallet.id) wallet.id = uid();
   if (!wallet.name) wallet.name = 'Wallet ' + (loadWalletList().length || 1);
+  hydrateNativeKey(wallet);
+  const list = loadWalletList();
+  const i = list.findIndex(w => w.id === wallet.id || sameAddrPayload(w.address, wallet.address) || w.address === wallet.address);
+  const prev = i >= 0 ? list[i] : null;
+  const priv = hexKey(wallet.privKey) || hexKey(prev?.privKey) || '';
+  if (priv) wallet.privKey = priv;
+  const prevStore = loadStoredWalletRaw();
+  const storePriv = priv || (sameAddrPayload(prevStore?.address, wallet.address) ? hexKey(prevStore?.privKey) : '') || '';
   localStorage.setItem(STORE_KEY, JSON.stringify({
-    address: wallet.address, privKey: wallet.privKey, pubKey: wallet.pubKey
+    address: wallet.address, privKey: storePriv || wallet.privKey || '', pubKey: wallet.pubKey
   }));
   localStorage.setItem(ACTIVE_KEY, wallet.id);
-  const list = loadWalletList();
-  const i = list.findIndex(w => w.id === wallet.id || w.address === wallet.address);
   migrateReceiveBook(wallet);
   const row = {
     id: wallet.id,
     name: wallet.name,
     address: wallet.address,
-    privKey: wallet.privKey,
-    pubKey: wallet.pubKey || '',
-    createdAt: wallet.createdAt || Date.now(),
-    pin: wallet.pin || list[i]?.pin || undefined,
-    receiveAddrs: wallet.receiveAddrs || [],
-    knsDomain: wallet.knsDomain || '',
-    avatar: wallet.avatar || '',
-    cover: wallet.cover || '',
+    privKey: priv || wallet.privKey || prev?.privKey || '',
+    pubKey: wallet.pubKey || prev?.pubKey || '',
+    createdAt: wallet.createdAt || prev?.createdAt || Date.now(),
+    pin: wallet.pin || prev?.pin || undefined,
+    receiveAddrs: wallet.receiveAddrs || prev?.receiveAddrs || [],
+    knsDomain: wallet.knsDomain || prev?.knsDomain || '',
+    avatar: wallet.avatar || prev?.avatar || '',
+    cover: wallet.cover || prev?.cover || '',
     kasware: !!wallet.kasware
   };
-  if (i >= 0) list[i] = { ...list[i], ...row };
+  if (i >= 0) list[i] = { ...prev, ...row, privKey: hexKey(row.privKey) || hexKey(prev.privKey) || '' };
   else list.push(row);
   saveWalletList(list);
 }
@@ -1041,6 +1079,7 @@ function resetLiveState() {
 
 async function activateWallet(w, { toastMsg } = {}) {
   wallet = migrateReceiveBook(migratePinOnto(w));
+  hydrateNativeKey(wallet);
   applyWalletNetwork(wallet);
   saveWallet();
   setVaultOwner(w.address);
@@ -3769,6 +3808,10 @@ async function confirmAtSign(title, body, run) {
           setSheetStatus('Opening KasWare…');
           await ensureKaswareSigner(wallet);
         } else {
+          hydrateNativeKey(wallet);
+          if (!hexKey(wallet?.privKey)) {
+            throw new Error('No in-app key on this wallet. Import the 64-hex key to sign natively, or turn KasWare on.');
+          }
           await requirePin(title);
         }
         await run();
@@ -4520,6 +4563,10 @@ async function reviewTrade() {
           setSheetStatus('Opening KasWare…');
           await ensureKaswareSigner(wallet);
         } else {
+          hydrateNativeKey(wallet);
+          if (!hexKey(wallet?.privKey)) {
+            throw new Error('No in-app key on this wallet. Import the 64-hex key to sign natively, or turn KasWare on.');
+          }
           await requirePin(q.side === 'buy' ? 'Confirm buy ' + tick : 'Confirm sell ' + tick);
         }
         await runTrade({ tick, side, amount, quote: q, forceKasware: kw });
@@ -4533,8 +4580,10 @@ async function reviewTrade() {
 }
 
 async function runTrade({ tick, side, amount, quote, forceKasware = false }) {
-  toast(forceKasware || kaswareEnabled() ? 'Building KCC20 swap for KasWare…' : 'Building KRON swap…');
+  const kw = !!(forceKasware && kaswareEnabled());
+  toast(kw ? 'Building KCC20 swap for KasWare…' : 'Building KRON swap…');
   try {
+    if (!kw) hydrateNativeKey(wallet);
     await loadKaspaSdk();
     const utxosNow = await fetchAddressUtxos(wallet.address).catch(() => []);
     const result = await executeKronTrade({
@@ -4543,7 +4592,7 @@ async function runTrade({ tick, side, amount, quote, forceKasware = false }) {
       side,
       amount,
       utxos: utxosNow,
-      forceKasware: !!(forceKasware || kaswareEnabled()),
+      forceKasware: kw,
       onStatus: (m) => { toast(m); setSheetStatus(m); }
     });
     hideTradeScreen();
@@ -5382,8 +5431,9 @@ function openKaswareSheet() {
       } else {
         await disconnectKasware();
         if (wallet) wallet.kasware = false;
+        hydrateNativeKey(wallet);
         saveWallet();
-        toast('Signing with in-app key');
+        toast(hexKey(wallet?.privKey) ? 'Signing with in-app key' : 'KasWare off — import the hex key to sign natively');
       }
     } catch (err) {
       e.target.checked = !want;
@@ -6819,10 +6869,12 @@ async function init() {
     }
   });
   const saved = loadStoredWallet();
-  const hasLocalKey = !!(saved?.address && saved?.privKey);
-  const kaswareOnly = !!(saved?.address && saved?.kasware && !saved.privKey);
+  if (saved) hydrateNativeKey(saved);
+  const hasLocalKey = !!(saved?.address && hexKey(saved.privKey));
+  const kaswareOnly = !!(saved?.address && saved?.kasware && !hexKey(saved.privKey));
   if (hasLocalKey || kaswareOnly) {
     wallet = migratePinOnto(saved);
+    hydrateNativeKey(wallet);
     applyWalletNetwork(wallet);
     hydrateFromSnap(wallet.address);
     if (kaswareOnly || (saved.kasware && kaswareSigning(wallet))) {
@@ -6834,6 +6886,7 @@ async function init() {
   try { await loadCryptoLibs(); } catch { toast('Signing library delayed — check network'); }
   if (hasLocalKey || kaswareOnly) {
     wallet = migratePinOnto(saved);
+    hydrateNativeKey(wallet);
     if (wallet.privKey && !wallet.pubKey) {
       try {
         const pub = await derivePublicKey(hexToBytes(wallet.privKey));

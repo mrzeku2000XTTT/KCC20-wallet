@@ -370,6 +370,28 @@ export async function releaseDcaDrip({ wallet, vault, utxos }) {
   return timeoutHop({ wallet, vault, utxos });
 }
 
+/** Owner IF-branch: return a DCA capsule to the wallet without waiting for CLTV. */
+export async function cancelDcaDrip({ wallet, vault, utxos }) {
+  const hop = currentHop(vault) || vault;
+  const dest = vault.params?.beneficiary || wallet.address;
+  const amount = BigInt(hop.destAmt || hop.nextAmt || 0);
+  if (amount <= 0n) throw new Error('Cancel amount missing from hop');
+  return spendExactP2sh({
+    wallet,
+    vault: {
+      ...vault,
+      scriptHex: hop.redeemHex || vault.scriptHex || vault.redeemHex,
+      address: hop.address || vault.address
+    },
+    utxos,
+    dest,
+    amountSompi: amount,
+    flag: 'true',
+    lockTime: 0,
+    computeBudget: 80
+  });
+}
+
 export async function sendKasMany({ wallet, outputs, utxos, signWithKasware = false }) {
   const k = await loadKaspaSdk();
   const external = !!(signWithKasware || (kaswareSigning(wallet) && !wallet.privKey));
@@ -1494,7 +1516,14 @@ export async function timeoutHop({ wallet, vault, utxos }) {
 
 export async function sweepVault({ wallet, vault, utxos, extraPrivKey, escrowRelease = false, secretHex = '' }) {
   const type = vault?.type || '';
-  if (type === 'sentinel' || type === 'recurring' || type === 'dca') {
+  if (type === 'dca') {
+    const hop = currentHop(vault) || vault;
+    const daaNow = await currentDaa().catch(() => 0);
+    const unlock = Number(hop.unlockDaa || vault.unlockDaa || 0);
+    if (unlock && daaNow && daaNow >= unlock) return timeoutHop({ wallet, vault, utxos });
+    return cancelDcaDrip({ wallet, vault, utxos });
+  }
+  if (type === 'sentinel' || type === 'recurring') {
     return timeoutHop({ wallet, vault, utxos });
   }
   const k = await loadKaspaSdk();

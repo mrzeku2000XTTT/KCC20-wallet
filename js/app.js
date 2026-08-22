@@ -22,8 +22,8 @@ import {
   compoundUtxos, sendKrc20, sendKcc20, loadKrc20Pending, lockKcc20Timelock, sweepKcc20Capsule,
   fetchOwnedUtxos, collectSpendableUtxos, buildSentinelChain, buildRecurringChain, buildHashlockCovenant,
   newHashlockSecret, checkinHop, currentHop, parseXmssKit, p2shFromRedeemHex, spendXmssVault,
-  disconnectRpc, buildDcaDrips, sendKasMany, releaseDcaDrip
-} from './tx.js?v=112';
+  disconnectRpc, buildDcaDrips, sendKasMany, releaseDcaDrip, cancelDcaDrip
+} from './tx.js?v=113';
 import { kronMarkets, quoteKronTrade, executeKronTrade, formatKasSompi, lookupKronTick, tradeCostLines, attachKronLogos, kronCandles } from './kronTrade.js?v=106';
 import {
   migrateReceiveBook, ownedAddresses, markAddressUsed, currentReceive,
@@ -46,7 +46,7 @@ import {
 } from './atrade.js?v=100';
 import { SCORPION_MEMORY } from './scorpionMemory.js?v=100';
 
-export const BUILD = '112';
+export const BUILD = '113';
 
 const TOKEN_FALLBACK_LOGO = 'assets/ttt.png';
 
@@ -72,7 +72,7 @@ function isKcc20Vault(v) {
 
 function isVaultHistory(v) {
   if (!v) return false;
-  if (v.status === 'swept') return true;
+  if (v.status === 'swept' || v.status === 'cancelled') return true;
   const tok = isKcc20Vault(v) ? Number(v.tokenAmount || 0) : 0;
   if (v.status === 'unfunded' || v.status === 'funding' || v.status === 'locked') return false;
   return Number(v.fundedSompi || 0) <= 0 && tok <= 0;
@@ -122,6 +122,7 @@ function canCheckinVault(v) {
 function canSweepVault(v, daa) {
   if (!v?.address || v.status === 'swept' || v.status === 'unfunded') return false;
   const now = daa || lastDaa;
+  if (v.type === 'dca') return Number(v.fundedSompi || 0) > 0 || vaultLockedSompi(v) > 0;
   if (isHopVault(v)) {
     const hop = currentHop(v) || v;
     if (now && hop.unlockDaa && Number(now) < Number(hop.unlockDaa)) return false;
@@ -1522,7 +1523,7 @@ function renderHoldings() {
   const kasRow = tokenRow({ ...NATIVE_KAS, sompi: balanceSompi, usd: usd(kas()), protocol: 'native' }, 'data-ticker="KAS"');
   const kccRows = kccHoldings.map(t => tokenRow(t));
   const krcRows = krcHoldings.map(t => tokenRow(t));
-  const locked = loadVaults().filter(v => v.address && vaultLockedSompi(v) > 0 && !isVaultHistory(v));
+  const locked = loadVaults().filter(v => v.address && vaultLockedSompi(v) > 0 && !isVaultHistory(v) && v.status !== 'cancelled');
   const lockRows = locked.map(v => {
     const sec = remainingLockSec(v.unlockDaa, v.unlockAt);
     const lockedNow = sec == null || sec > 0;
@@ -4692,18 +4693,92 @@ function paintDcaLive() {
     <b>${running ? 'DCA locked' : 'DCA paused'} · ${esc(job.tick)}</b>
     <p>${job.buys || 0} / ${job.maxBuys} buys · ${(job.vaults || []).filter(v => v.swept).length} capsules opened
       · ${running ? ('next in ' + wait) : (job.last || 'stopped')}</p>
-    <button class="btn btn-glass" id="dca-stop" type="button" style="margin-top:8px;height:40px;">Stop DCA</button>`;
-  $('dca-stop')?.addEventListener('click', stopDca);
+    <button class="btn btn-glass" id="dca-stop" type="button" style="margin-top:8px;height:40px;">Stop & return KAS</button>`;
+  $('dca-stop')?.addEventListener('click', () => stopDca().catch(e => toast(errText(e))));
 }
 
-function stopDca() {
+function dcaVaultRecord(row, job) {
+  if (row?.scriptHex || row?.redeemHex || row?.hops) return row;
+  return {
+    type: 'dca',
+    address: row.address,
+    scriptHex: row.scriptHex || row.redeemHex,
+    redeemHex: row.redeemHex || row.scriptHex,
+    hops: [{ ...row, redeemHex: row.redeemHex || row.scriptHex, address: row.address, destAmt: row.destAmt, nextAmt: row.destAmt || row.nextAmt, unlockDaa: row.unlockDaa }],
+    hopIndex: 0,
+    unlockDaa: row.unlockDaa,
+    destAmt: row.destAmt,
+    params: { beneficiary: job?.address || wallet?.address, dcaTick: job?.tick }
+  };
+}
+
+async function reclaimDcaCapsules() {
+  const job = loadDcaJob();
+  const fromStore = loadVaults().filter(v => v.type === 'dca' && v.status !== 'swept' && v.status !== 'cancelled');
+  const fromJob = (job?.vaults || []).filter(d => d?.address && !d.swept);
+  const seen = new Set();
+  const list = [];
+  for (const v of [...fromStore, ...fromJob]) {
+    if (!v?.address || seen.has(v.address)) continue;
+    seen.add(v.address);
+    list.push(dcaVaultRecord(v, job));
+  }
+  if (!list.length) return { ok: 0, miss: 0 };
+  hydrateNativeKey(wallet);
+  if (!hexKey(wallet?.privKey) && !kaswareSigning(wallet)) {
+    throw new Error('Need the native key or KasWare to return capsule KAS');
+  }
+  await pingPublicNode();
+  let ok = 0;
+  let miss = 0;
+  for (const vault of list) {
+    try {
+      let utxosV = await fetchAddressUtxos(vault.address).catch(() => []);
+      if (!utxosV.length) {
+        await new Promise(r => setTimeout(r, 1500));
+        utxosV = await fetchAddressUtxos(vault.address).catch(() => []);
+      }
+      if (!utxosV.length) { miss++; continue; }
+      const rel = await cancelDcaDrip({ wallet, vault, utxos: utxosV });
+      updateVault(vault.address, { status: 'swept', unlockTxId: rel.txId || '', fundedSompi: 0, cancelled: true });
+      if (job?.vaults) {
+        const drip = job.vaults.find(d => d.address === vault.address);
+        if (drip) drip.swept = true;
+      }
+      ok++;
+    } catch (e) {
+      console.warn(e);
+      toast(errText(e));
+    }
+  }
+  if (job) {
+    const left = (job.vaults || []).filter(d => !d.swept).length;
+    saveDcaJob(left ? { ...job, on: false, last: 'stopped · ' + ok + ' returned' } : null);
+  }
+  afterTx();
+  renderHome();
+  renderVault();
+  return { ok, miss };
+}
+
+async function stopDca() {
   const job = loadDcaJob();
   if (job) saveDcaJob({ ...job, on: false, last: 'stopped' });
   if (dcaTimer) { clearInterval(dcaTimer); dcaTimer = null; }
   paintDcaLive();
   paintDcaHome();
-  toast('DCA stopped');
   syncTradeLabel();
+  toast('Returning DCA capsule KAS to this wallet…');
+  try {
+    const { ok, miss } = await reclaimDcaCapsules();
+    if (ok) toast(ok + ' capsule' + (ok === 1 ? '' : 's') + ' returned to this wallet');
+    else if (miss) toast('Capsules not indexed yet — tap Stop again in a few seconds');
+    else toast('DCA stopped');
+  } catch (e) {
+    toast(errText(e));
+  }
+  paintDcaLive();
+  paintDcaHome();
 }
 
 function resumeDcaIfAny() {
@@ -4959,7 +5034,8 @@ function paintDcaHome() {
   const job = loadDcaJob();
   let bar = $('dca-home');
   const host = $('holdings')?.parentElement;
-  if (!job?.on) {
+  const leftover = loadVaults().filter(v => v.type === 'dca' && v.status !== 'swept' && v.status !== 'cancelled');
+  if (!job?.on && !leftover.length) {
     bar?.remove();
     return;
   }
@@ -4969,12 +5045,19 @@ function paintDcaHome() {
     bar.type = 'button';
     bar.className = 'glass dca-home';
     $('holdings')?.before(bar);
-    bar.addEventListener('click', () => openTrade({ tick: job.tick, side: 'dca' }));
   }
   if (!bar) return;
+  bar.onclick = () => {
+    if (job?.on || leftover.length) stopDca().catch(e => toast(errText(e)));
+    else openTrade({ tick: job?.tick, side: 'dca' });
+  };
+  if (!job?.on && leftover.length) {
+    bar.innerHTML = `<span class="w-kas" aria-hidden="true"></span><span><b>Return DCA KAS</b><span>${leftover.length} test capsule${leftover.length === 1 ? '' : 's'} still locked · tap to send back to this wallet</span></span>`;
+    return;
+  }
   const left = Math.max(0, Number(job.nextAt || 0) - Date.now());
   const wait = left > 60000 ? Math.ceil(left / 60000) + 'm' : Math.ceil(left / 1000) + 's';
-  bar.innerHTML = `<span class="w-kas" aria-hidden="true"></span><span><b>DCA ${esc(job.tick)}</b><span>${job.buys || 0}/${job.maxBuys} on-chain · next ${wait} · tap</span></span>`;
+  bar.innerHTML = `<span class="w-kas" aria-hidden="true"></span><span><b>DCA ${esc(job.tick)}</b><span>${job.buys || 0}/${job.maxBuys} on-chain · next ${wait} · tap to stop & return</span></span>`;
 }
 
 function hideTradeScreen() {
@@ -5106,7 +5189,10 @@ async function reviewTrade() {
   const side = $('trade-side')?.querySelector('.on')?.dataset.side || 'buy';
   if (side === 'dca') {
     const job = loadDcaJob();
-    if (job?.on) { stopDca(); return; }
+    if (job?.on || (job?.vaults || []).some(d => !d.swept)) {
+      stopDca().catch(e => toast(errText(e)));
+      return;
+    }
     const plan = dcaPlanBits();
     if (!validTick(plan.tick)) { toast('Look up a ticker first'); return; }
     if (!(plan.slice >= 0.5) || plan.buys < 1) { toast('Set budget and each buy'); return; }
@@ -6689,6 +6775,8 @@ function openLockTimer(vault) {
   let help = 'Sweep returns KAS to this wallet.';
   if (kcc && locked) help = 'Still frozen. When the timer hits zero, Sweep returns the tokens plus leftover witness KAS.';
   else if (kcc) help = 'Lock has expired. Sweep now, or wait — auto-return is on.';
+  else if (vault.type === 'dca' && locked) help = 'This is a DCA test capsule. Return KAS now — you do not wait for the timer. Stop DCA also returns every leftover capsule.';
+  else if (vault.type === 'dca') help = 'Lock expired. Sweep returns the KAS here (it will not buy the token).';
   else if (hop && locked) help = 'Check-in now to move the coins to the next hop. If this window ends, the beneficiary can claim.';
   else if (hop) help = 'Check-in window ended. Sweep / timeout releases to the beneficiary.';
   else if (isXmss) help = 'Paste the witness JSON from xmss_sign.py (offline). Spend uses ~0.32 KAS from this wallet as the fee input.';
@@ -6701,7 +6789,7 @@ function openLockTimer(vault) {
   else if (isMsig && !msigReady) help = '2-of-2: import the counterparty wallet on You, switch back here, then Sweep.';
   else if (isMsig) help = 'Both keys are on this device. Sweep signs 2-of-2 and returns KAS here.';
   const sweepLabel = isEscrow ? (iAmBuyer ? 'Release to me' : 'Refund to me')
-    : (isXmss ? 'Spend with witness' : (hop ? 'Timeout release' : (isHash && locked ? 'Claim with secret' : 'Sweep to wallet')));
+    : (vault.type === 'dca' ? 'Return KAS now' : (isXmss ? 'Spend with witness' : (hop ? 'Timeout release' : (isHash && locked ? 'Claim with secret' : 'Sweep to wallet'))));
   openSheet(vault.name || 'Time Capsule', `
     <div class="kv"><span class="k">Locked</span><span class="v">${tok ? esc(tok) : formatAmount(vaultLockedSompi(vault)) + ' KAS'}</span></div>
     ${kcc ? `<div class="kv"><span class="k">Witness dust</span><span class="v">${formatAmount(vault.fundedSompi || 0)} KAS</span></div>` : ''}

@@ -159,8 +159,18 @@ export async function cookWrappers(tokenId) {
 
 export function pickWrappedMarketId(wrappers) {
   const list = Array.isArray(wrappers) ? wrappers : (wrappers?.items || wrappers?.wrappers || []);
-  const on = list.find(w => w.enabled !== false && (w.covenantId || w.wrappedMarketId || w.id));
-  return on?.covenantId || on?.wrappedMarketId || on?.id || wrappers?.wrappedMarketId || '';
+  const on = list.find(w => w && w.enabled !== false && (
+    w.marketId || w.wrapperId || w.activeCovenantId || w.covenantId || w.wrappedMarketId || w.id
+  ));
+  return on?.marketId
+    || on?.wrapperId
+    || on?.activeCovenantId
+    || on?.covenantId
+    || on?.wrappedMarketId
+    || on?.id
+    || wrappers?.wrappedMarketId
+    || wrappers?.marketId
+    || '';
 }
 
 export async function cookDeploy({ walletAddress, ticker, tokenName, maxSupply, premintSupply, mintPricePerTokenSompi }) {

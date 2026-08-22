@@ -12,7 +12,7 @@
   <link rel="icon" href="assets/icon.png">
   <title>KCC20 Wallet</title>
   <meta http-equiv="Cache-Control" content="no-store, no-cache, must-revalidate">
-  <link rel="stylesheet" href="css/app.css?v=95">
+  <link rel="stylesheet" href="css/app.css?v=96">
 </head>
 <body>
   <img class="bg-poster" src="assets/bg.jpg" alt="">
@@ -148,7 +148,7 @@
                 <li><b>Ticker</b> — 2–8 letters/numbers. The symbol on the book. Example: TEST, KAHA.</li>
                 <li><b>Name</b> — Display name. Example: Test Coin. 2–24 characters.</li>
                 <li><b>Max supply</b> — Total tokens that can ever exist. Typical 1,000,000–1,000,000,000. Cook uses 8 decimals internally.</li>
-                <li><b>Premint</b> — Tokens you receive at deploy. 0 is fair launch. Typical 0–10% of max. Rest is minted by anyone at the mint price.</li>
+                <li><b>Premint</b> — Tokens you receive at deploy. Use 1000+ so KasWare can see a holder UTXO. 0 = fair launch (you hold none until you mint).</li>
                 <li><b>Mint price</b> — KAS someone pays per token after launch. 0 = free mint. Typical 0.01–1 KAS. Need ~1.2 TKAS on this address to deploy.</li>
               </ul>
             </details>
@@ -165,7 +165,7 @@
                 <input id="at-lmax" inputmode="numeric" value="1000000">
               </label>
               <label class="field grow"><span>Premint <em>0 = fair launch</em></span>
-                <input id="at-lpre" inputmode="numeric" value="0">
+                <input id="at-lpre" inputmode="numeric" value="1000">
               </label>
             </div>
             <label class="field"><span>Mint price (KAS / token) <em>0 = free · typical 0.01–1</em></span>
@@ -592,7 +592,7 @@
     })();
   </script>
   <script type="module">
-    import('./js/app.js?v=95').catch(function (err) {
+    import('./js/app.js?v=96').catch(function (err) {
       console.error(err);
       var phone = document.getElementById('phone');
       var d = document.createElement('div');

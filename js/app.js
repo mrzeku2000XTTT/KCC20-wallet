@@ -40,9 +40,9 @@ import {
   extractSigning, signAndBroadcastPskt, cookTokenId, isTestnetAddr,
   loadAgentJob, saveAgentJob, sompiToKas, kasToSompiNum,
   rememberLaunch, loadLaunched, cookOwnerBalances, cookDeployed
-} from './atrade.js?v=95';
+} from './atrade.js?v=96';
 
-export const BUILD = '95';
+export const BUILD = '96';
 
 function errText(e) {
   if (e == null) return 'Unknown error';
@@ -1409,7 +1409,7 @@ function renderTokens() {
     launched.innerHTML = mine.length
       ? mine.map(t => `
         <button class="row token-row" type="button" data-launched="${esc(t.tokenId || t.tick)}">
-          <div class="dot" style="background:rgba(212,176,122,.16);color:var(--gold-2)">${esc((t.tick || '?').slice(0, 3))}</div>
+          ${tokenDot({ ticker: t.tick, protocol: 'kcc20' })}
           <div>
             <div class="title">${esc(t.tick || 'TOKEN')}</div>
             <div class="sub">${esc(t.name || 'Launched here')} · ${esc(t.network === 'testnet-10' ? 'TN10' : 'mainnet')}</div>
@@ -1433,7 +1433,7 @@ async function renderTokKcom() {
   const launched = loadLaunched().filter(t => !t.network || t.network === 'testnet-10');
   const row = (tick, name, sub, extra = '') => `
     <button class="row token-row" type="button" data-cook-tick="${esc(tick)}" ${extra}>
-      <div class="dot" style="background:rgba(212,176,122,.16);color:var(--gold-2)">${esc(String(tick || '?').slice(0, 3))}</div>
+      ${tokenDot({ ticker: tick, protocol: 'kcc20' })}
       <div>
         <div class="title">${esc(String(tick || '?').toUpperCase())}</div>
         <div class="sub">${esc(name || 'Cook')}</div>
@@ -3105,12 +3105,55 @@ function assertLimitSlip(q, { limit, slip, side }) {
   return px;
 }
 
+function openLaunchedToken(t) {
+  if (!t) return;
+  haptic();
+  openSheet(t.tick || 'Token', `
+    <div style="display:flex;align-items:center;gap:12px;margin-bottom:12px;">
+      ${tokenDot({ ticker: t.tick, protocol: 'kcc20' })}
+      <div>
+        <div class="title">${esc(t.tick)}</div>
+        <div class="sub">${esc(t.name || 'Cook TN10')}</div>
+      </div>
+    </div>
+    <div class="kv"><span class="k">Network</span><span class="v">TN10</span></div>
+    ${t.tokenId ? `<div class="kv"><span class="k">ID</span><span class="v">${esc(String(t.tokenId).slice(0, 14))}…</span></div>` : ''}
+    ${txidBlock(t.txId)}
+    <p class="muted" style="text-align:left;padding-top:8px;">This app lists it under TOKENS → Scorpion and K.COM, and on the Cook book list. KasWare’s KCC20 tab uses KasWare’s indexer — mint so a holder UTXO sits on this address, then KasWare can pick it up.</p>
+  `, {
+    confirm: t.tokenId ? 'Mint 100' : 'Close',
+    gold: true,
+    cancelLabel: 'Trade',
+    onConfirm: async () => {
+      if (!t.tokenId) { closeSheet(); return; }
+      setSheetStatus('Building mint…');
+      const build = await cookMint({
+        walletAddress: wallet.address,
+        tokenId: t.tokenId,
+        tokenAmount: '100'
+      });
+      await signCookBuild(build, 'Mint ' + t.tick);
+    }
+  });
+  $('sheet-cancel')?.addEventListener('click', () => {
+    if (t.tokenId) pickCookRow(t.tokenId, t.tick);
+    setAtPane('book');
+  }, { once: true });
+}
+
 async function renderCookMarkets() {
   const box = $('at-cook-mkts');
   if (!box) return;
   if (!box.dataset.loaded) box.innerHTML = `<div class="empty">Loading Cook book…</div>`;
   try {
-    const rows = (await cookMarkets(16)).slice(0, 16);
+    const live = (await cookMarkets(24)).slice(0, 24);
+    const mine = loadLaunched().filter(t => t.tokenId && (!t.network || t.network === 'testnet-10'));
+    const seen = new Set(live.map(m => String(m.metadata?.ticker || m.ticker || '').toUpperCase()));
+    const extra = mine.filter(t => t.tick && !seen.has(String(t.tick).toUpperCase())).map(t => ({
+      tokenIdHex: t.tokenId,
+      metadata: { ticker: t.tick, name: t.name || t.tick, tokenIdHex: t.tokenId }
+    }));
+    const rows = extra.concat(live);
     box.dataset.loaded = '1';
     box.innerHTML = rows.map(m => {
       const tick = String(m.metadata?.ticker || m.ticker || '?').toUpperCase();
@@ -3120,7 +3163,7 @@ async function renderCookMarkets() {
       const id = m.tokenIdHex || m.metadata?.tokenIdHex || '';
       return `
         <button class="row token-row" type="button" data-cook-id="${esc(id)}" data-cook-tick="${esc(tick)}">
-          <div class="dot" style="background:rgba(212,176,122,.16);color:var(--gold-2)">${esc(tick.slice(0, 3))}</div>
+          ${tokenDot({ ticker: tick, protocol: 'kcc20' })}
           <div>
             <div class="title">${esc(tick)}</div>
             <div class="sub">TN10 book · ${esc(name)}</div>
@@ -3267,11 +3310,20 @@ async function reviewCookTrade(side) {
   const tick = ($('at-tick')?.value || '').trim().toUpperCase();
   const limit = atLimitKas();
   const slip = atSlipPct();
-  const id = atCook?.tokenId;
-  if (!id) { toast('Tap a Cook market'); return; }
+  let id = atCook?.tokenId;
+  if (!id) {
+    const rows = await cookMarkets(40);
+    const hit = rows.find(m => String(m.metadata?.ticker || '').toUpperCase() === tick);
+    id = hit?.tokenIdHex || loadLaunched().find(t => t.tick === tick)?.tokenId || '';
+    if (id) atCook = { tokenId: id, tick };
+  }
+  if (!id) { toast('Tap a Cook market in the list'); return; }
   const wrappers = await cookWrappers(id);
   const wrapped = pickWrappedMarketId(wrappers);
-  if (!wrapped) { toast('No wrapper market for this token yet'); return; }
+  if (!wrapped) {
+    toast('This ticker is not on the DEX book yet (no wrapper). Buy WBLF or KARBON, or Graduate after Cook lists a wrapper.');
+    return;
+  }
   const limSompi = limit > 0 ? String(kasToSompiNum(limit)) : '';
   let q = null;
   try {
@@ -5829,6 +5881,12 @@ function bind() {
   $('tok-seg')?.addEventListener('click', e => {
     const b = e.target.closest('[data-tok]');
     if (b?.dataset.tok) { haptic(); setTokPane(b.dataset.tok); }
+  });
+  $('token-launched')?.addEventListener('click', e => {
+    const row = e.target.closest('[data-launched]');
+    if (!row) return;
+    const t = loadLaunched().find(x => (x.tokenId || x.tick) === row.dataset.launched);
+    if (t) openLaunchedToken(t);
   });
   click('at-kw-btn', () => openKaswareSheet());
   $('at-src')?.addEventListener('click', e => {

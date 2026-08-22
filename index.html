@@ -12,7 +12,7 @@
   <link rel="icon" href="assets/icon.png">
   <title>KCC20 Wallet</title>
   <meta http-equiv="Cache-Control" content="no-store, no-cache, must-revalidate">
-  <link rel="stylesheet" href="css/app.css?v=97">
+  <link rel="stylesheet" href="css/app.css?v=98">
 </head>
 <body>
   <img class="bg-poster" src="assets/bg.jpg" alt="">
@@ -142,7 +142,7 @@
           </div>
 
           <div id="at-launch" class="hidden">
-            <details class="at-help" open>
+            <details class="at-help">
               <summary>How launch works</summary>
               <ul>
                 <li><b>Ticker</b> — 2–8 letters/numbers. The symbol on the book. Example: TEST, KAHA.</li>
@@ -171,6 +171,22 @@
             <label class="field"><span>Mint price (KAS / token) <em>0 = free · typical 0.01–1</em></span>
               <input id="at-lprice" inputmode="decimal" value="0" placeholder="0">
             </label>
+            <div class="at-id">
+              <div class="at-logo-up">
+                <img id="at-logo-prev" src="assets/ttt.png" alt="logo">
+                <button type="button" class="btn btn-glass" id="at-logo-btn">Upload image</button>
+                <input id="at-logo-file" type="file" accept="image/*" hidden>
+              </div>
+              <label class="field"><span>X / project <em>verify with a tweet</em></span>
+                <div class="dest-row">
+                  <input id="at-x" placeholder="@handle" spellcheck="false" autocomplete="off">
+                  <button class="scan-btn" id="at-x-go" type="button">Connect X</button>
+                </div>
+              </label>
+              <label class="field"><span>KNS <em>mainnet .kas</em></span>
+                <select id="at-kns"><option value="">None</option></select>
+              </label>
+            </div>
             <button class="btn btn-gold" id="at-launch-go" type="button">Launch KCC20</button>
             <button class="btn btn-glass" id="at-grad-go" type="button" style="margin-top:8px;">Graduate / wrap to book</button>
             <p class="muted at-tiny" id="at-lnote">TN10: Cook deploys a real KCC20 V1. You sign. Need ~1.2 TKAS here. Faucet: faucet-tn10.kaspanet.io</p>
@@ -227,10 +243,6 @@
               </div>
               <div class="section-label">Launched here</div>
               <div class="glass list" id="token-launched"></div>
-              <div class="section-label">Native</div>
-              <div class="glass list" id="token-native"></div>
-              <div class="section-label">KRC-20 · KasWare / Kasplex</div>
-              <div class="glass list" id="token-krc20"></div>
               <div class="section-label">Watchlist</div>
               <div class="glass list" id="token-watch"></div>
               <button class="btn btn-gold" id="btn-add-token" style="margin-top:8px;">Watch a token</button>
@@ -592,7 +604,7 @@
     })();
   </script>
   <script type="module">
-    import('./js/app.js?v=97').catch(function (err) {
+    import('./js/app.js?v=98').catch(function (err) {
       console.error(err);
       var phone = document.getElementById('phone');
       var d = document.createElement('div');

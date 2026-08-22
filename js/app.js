@@ -2,7 +2,7 @@ import {
   loadCryptoLibs, generatePrivateKey, createKeypairFromHex,
   isValidKaspaAddress, validateKaspaAddress, shortAddr, hexToBytes, privKeyToHex,
   derivePublicKey, kaspaAddressFromPubkey, bytesToHex, kasToSompi, sompiToKasString,
-  validateAndCleanUtxo, networkId, isTestnet, setNetworkId, applyWalletNetwork, kaspaRestBase
+  validateAndCleanUtxo, networkId, isTestnet, setNetworkId, applyWalletNetwork, kaspaRestBase, pubkeyToAddress
 } from './crypto.js?v=90';
 import {
   NATIVE_KAS, VAULT_PRODUCTS, loadWatchlist, addToken, removeToken,
@@ -42,7 +42,9 @@ import {
   rememberLaunch, loadLaunched, cookOwnerBalances, cookDeployed
 } from './atrade.js?v=96';
 
-export const BUILD = '97';
+export const BUILD = '98';
+
+const TOKEN_FALLBACK_LOGO = 'assets/ttt.png';
 
 function errText(e) {
   if (e == null) return 'Unknown error';
@@ -1294,15 +1296,86 @@ function openWalletSwitcher() {
   $('switch-import').onclick = () => { closeSheet(); openImportAnother(); };
 }
 
+function tokenLogoSrc(t) {
+  return t?.image || t?.logoUrl || t?.metadata?.logoUrl
+    || (t?.protocol === 'krc20' ? krc20Logo(t.ticker) : '')
+    || TOKEN_FALLBACK_LOGO;
+}
+
 function tokenDot(t) {
   const color = t.color || tokenColor(t.ticker);
   const fb = esc(String(t.ticker || '?').slice(0, 3));
   if (t.native || t.ticker === 'KAS') {
     return `<div class="dot kas-dot" aria-hidden="true"></div>`;
   }
-  const src = t.image
-    || (t.protocol === 'krc20' ? krc20Logo(t.ticker) : kcc20Identicon(t.ticker));
-  return `<div class="dot" style="background:${esc(color)}22;color:${esc(color)}"><img alt="" src="${esc(src)}" data-tick="${esc(t.ticker || '')}" data-proto="${esc(t.protocol || '')}" data-fb="${fb}" referrerpolicy="no-referrer" decoding="async"></div>`;
+  const src = tokenLogoSrc(t);
+  const fallback = src === TOKEN_FALLBACK_LOGO ? 'ttt' : '';
+  return `<div class="dot${fallback ? ' ttt-dot' : ''}"><img alt="" src="${esc(src)}" data-tick="${esc(t.ticker || '')}" data-proto="${esc(t.protocol || 'kcc20')}" data-fb="${fb}" referrerpolicy="no-referrer" decoding="async"></div>`;
+}
+
+function launchLogoData() {
+  const src = $('at-logo-prev')?.src || '';
+  if (!src || /ttt\.png/i.test(src)) return TOKEN_FALLBACK_LOGO;
+  return src;
+}
+
+function launchXHandle() {
+  return String($('at-x')?.dataset.linked || $('at-x')?.value || '').replace(/^@/, '').trim();
+}
+
+async function fillLaunchKns() {
+  const sel = $('at-kns');
+  if (!sel) return;
+  let main = '';
+  try { if (wallet?.pubKey) main = pubkeyToAddress(wallet.pubKey, 'mainnet'); } catch {}
+  if (!main) {
+    sel.innerHTML = '<option value="">None</option>';
+    return;
+  }
+  try {
+    const list = await knsDomainsFor(main);
+    const primary = await knsPrimary(main);
+    sel.innerHTML = '<option value="">None</option>' + list.map(d =>
+      `<option value="${esc(d.domain)}"${d.domain === primary ? ' selected' : ''}>${esc(d.domain)}</option>`
+    ).join('');
+    if (primary && ![...sel.options].some(o => o.value === primary)) {
+      sel.insertAdjacentHTML('beforeend', `<option value="${esc(primary)}" selected>${esc(primary)}</option>`);
+    }
+  } catch {
+    sel.innerHTML = '<option value="">None</option>';
+  }
+}
+
+async function connectLaunchX() {
+  if (!wallet) { toast('Unlock a wallet'); return; }
+  const handle = ($('at-x')?.value || '').replace(/^@/, '').trim();
+  if (!/^[A-Za-z0-9_]{1,15}$/.test(handle)) { toast('Enter a valid X handle'); return; }
+  const tick = ($('at-ltick')?.value || 'TOKEN').trim().toUpperCase() || 'TOKEN';
+  const proof = `I verify I launch ${tick} KCC20 from ${wallet.address}`;
+  if ($('at-x')) $('at-x').dataset.linked = handle;
+  window.open('https://twitter.com/intent/tweet?text=' + encodeURIComponent(proof), '_blank', 'noopener');
+  toast('@' + handle + ' attached. Post the tweet, then Launch.');
+}
+
+function pickLaunchLogo(file) {
+  if (!file) return;
+  const img = new Image();
+  const url = URL.createObjectURL(file);
+  img.onload = () => {
+    const c = document.createElement('canvas');
+    c.width = 256;
+    c.height = 256;
+    const g = c.getContext('2d');
+    const s = Math.max(256 / img.width, 256 / img.height);
+    const w = img.width * s, h = img.height * s;
+    g.fillStyle = '#f4f4f6';
+    g.fillRect(0, 0, 256, 256);
+    g.drawImage(img, (256 - w) / 2, (256 - h) / 2, w, h);
+    if ($('at-logo-prev')) $('at-logo-prev').src = c.toDataURL('image/jpeg', 0.86);
+    URL.revokeObjectURL(url);
+  };
+  img.onerror = () => URL.revokeObjectURL(url);
+  img.src = url;
 }
 
 function tokenRow(t, extra = '') {
@@ -1376,7 +1449,9 @@ function paintUtxoCount() {
 
 function renderTokens() {
   const watched = loadWatchlist();
-  $('token-native').innerHTML = tokenRow({ ...NATIVE_KAS, sompi: balanceSompi, usd: usd(kas()), protocol: 'native' }, 'data-ticker="KAS"');
+  if ($('token-native')) {
+    $('token-native').innerHTML = tokenRow({ ...NATIVE_KAS, sompi: balanceSompi, usd: usd(kas()), protocol: 'native' }, 'data-ticker="KAS"');
+  }
   const kcc = $('token-list');
   if (kcc) {
     kcc.innerHTML = kccHoldings.length
@@ -1409,7 +1484,7 @@ function renderTokens() {
     launched.innerHTML = mine.length
       ? mine.map(t => `
         <button class="row token-row" type="button" data-launched="${esc(t.tokenId || t.tick)}">
-          ${tokenDot({ ticker: t.tick, protocol: 'kcc20' })}
+          ${tokenDot({ ticker: t.tick, protocol: 'kcc20', image: t.image })}
           <div>
             <div class="title">${esc(t.tick || 'TOKEN')}</div>
             <div class="sub">${esc(t.name || 'Launched here')} · ${esc(t.network === 'testnet-10' ? 'TN10' : 'mainnet')}</div>
@@ -1431,9 +1506,9 @@ async function renderTokKcom() {
   try { deployed = addr ? await cookDeployed(addr) : []; } catch {}
   try { mkts = await cookMarkets(24); } catch {}
   const launched = loadLaunched().filter(t => !t.network || t.network === 'testnet-10');
-  const row = (tick, name, sub, extra = '') => `
+  const row = (tick, name, sub, extra = '', image = '') => `
     <button class="row token-row" type="button" data-cook-tick="${esc(tick)}" ${extra}>
-      ${tokenDot({ ticker: tick, protocol: 'kcc20' })}
+      ${tokenDot({ ticker: tick, protocol: 'kcc20', image })}
       <div>
         <div class="title">${esc(String(tick || '?').toUpperCase())}</div>
         <div class="sub">${esc(name || 'Cook')}</div>
@@ -1443,7 +1518,7 @@ async function renderTokKcom() {
   const chunks = [];
   if (launched.length) {
     chunks.push('<div class="section-label">Launched here</div>');
-    chunks.push(launched.map(t => row(t.tick, t.name, t.network === 'testnet-10' ? 'TN10' : '', `data-cook-id="${esc(t.tokenId || '')}"`)).join(''));
+    chunks.push(launched.map(t => row(t.tick, t.name, t.network === 'testnet-10' ? 'TN10' : '', `data-cook-id="${esc(t.tokenId || '')}"`, t.image)).join(''));
   }
   if (held.length) {
     chunks.push('<div class="section-label">Your Cook balances</div>');
@@ -1465,7 +1540,7 @@ async function renderTokKcom() {
     chunks.push(mkts.map(m => {
       const tick = String(m.metadata?.ticker || m.ticker || '?').toUpperCase();
       const ask = sompiToKas(m.bestAskUnitPriceSompi);
-      return row(tick, m.metadata?.name || 'Cook', ask ? ask.toPrecision(4) + ' KAS' : 'book', `data-cook-id="${esc(m.tokenIdHex || '')}"`);
+      return row(tick, m.metadata?.name || 'Cook', ask ? ask.toPrecision(4) + ' KAS' : 'book', `data-cook-id="${esc(m.tokenIdHex || '')}"`, m.metadata?.logoUrl || '');
     }).join(''));
   }
   box.innerHTML = chunks.join('') || `<div class="empty">No Cook tokens yet. Launch one, or wait for the TN10 book to index.</div>`;
@@ -3044,6 +3119,7 @@ function setAtPane(pane) {
       ? 'TN10: Cook deploys a real KCC20 V1 on-chain. You sign. Get TKAS at faucet-tn10.kaspanet.io'
       : 'Mainnet: Open KRON Launch, or tap Launch to switch this wallet to Testnet-10 and deploy via Cook.';
   }
+  if (launch) fillLaunchKns();
   if (book) {
     atSrc = isTestnet() ? 'cook' : 'kron';
     document.querySelectorAll('#at-src button').forEach(b => b.classList.toggle('on', b.dataset.src === atSrc));
@@ -3110,7 +3186,7 @@ function openLaunchedToken(t) {
   haptic();
   openSheet(t.tick || 'Token', `
     <div style="display:flex;align-items:center;gap:12px;margin-bottom:12px;">
-      ${tokenDot({ ticker: t.tick, protocol: 'kcc20' })}
+      ${tokenDot({ ticker: t.tick, protocol: 'kcc20', image: t.image })}
       <div>
         <div class="title">${esc(t.tick)}</div>
         <div class="sub">${esc(t.name || 'Cook TN10')}</div>
@@ -3118,6 +3194,8 @@ function openLaunchedToken(t) {
     </div>
     <div class="kv"><span class="k">Network</span><span class="v">TN10</span></div>
     ${t.tokenId ? `<div class="kv"><span class="k">ID</span><span class="v">${esc(String(t.tokenId).slice(0, 14))}…</span></div>` : ''}
+    ${t.xHandle ? `<div class="kv"><span class="k">X</span><span class="v">@${esc(t.xHandle)}</span></div>` : ''}
+    ${t.kns ? `<div class="kv"><span class="k">KNS</span><span class="v">${esc(t.kns)}</span></div>` : ''}
     ${txidBlock(t.txId)}
     <p class="muted" style="text-align:left;padding-top:8px;">This app lists it under TOKENS → Scorpion and K.COM, and on the Cook book list. KasWare’s KCC20 tab uses KasWare’s indexer — mint so a holder UTXO sits on this address, then KasWare can pick it up.</p>
   `, {
@@ -3151,7 +3229,7 @@ async function renderCookMarkets() {
     const seen = new Set(live.map(m => String(m.metadata?.ticker || m.ticker || '').toUpperCase()));
     const extra = mine.filter(t => t.tick && !seen.has(String(t.tick).toUpperCase())).map(t => ({
       tokenIdHex: t.tokenId,
-      metadata: { ticker: t.tick, name: t.name || t.tick, tokenIdHex: t.tokenId }
+      metadata: { ticker: t.tick, name: t.name || t.tick, tokenIdHex: t.tokenId, logoUrl: t.image || '' }
     }));
     const rows = extra.concat(live);
     box.dataset.loaded = '1';
@@ -3163,7 +3241,7 @@ async function renderCookMarkets() {
       const id = m.tokenIdHex || m.metadata?.tokenIdHex || '';
       return `
         <button class="row token-row" type="button" data-cook-id="${esc(id)}" data-cook-tick="${esc(tick)}">
-          ${tokenDot({ ticker: tick, protocol: 'kcc20' })}
+          ${tokenDot({ ticker: tick, protocol: 'kcc20', image: m.metadata?.logoUrl })}
           <div>
             <div class="title">${esc(tick)}</div>
             <div class="sub">TN10 book · ${esc(name)}</div>
@@ -3422,7 +3500,10 @@ async function signCookBuild(build, label) {
     tokenId: cid,
     network: networkId(),
     txId,
-    address: wallet.address
+    address: wallet.address,
+    image: launchLogoData(),
+    xHandle: launchXHandle(),
+    kns: ($('at-kns')?.value || '').trim()
   });
   afterTx();
   openSheet(label + ' sent', `
@@ -5899,6 +5980,9 @@ function bind() {
   click('at-buy', () => reviewAtTrade('buy'));
   click('at-sell', () => { syncAtLabels('sell'); reviewAtTrade('sell'); });
   click('at-launch-go', () => runCookLaunch().catch(err => toast(errText(err))));
+  click('at-logo-btn', () => $('at-logo-file')?.click());
+  $('at-logo-file')?.addEventListener('change', e => pickLaunchLogo(e.target.files?.[0]));
+  click('at-x-go', () => connectLaunchX().catch(err => toast(errText(err))));
   click('at-grad-go', () => runCookGraduate().catch(err => toast(errText(err))));
   click('ag-toggle', () => toggleAgent().catch(err => toast(errText(err))));
   click('boost-open', openBoost);
@@ -6154,7 +6238,7 @@ async function init() {
     const step = Number(img.dataset.step || 0);
     const t = tick.toLowerCase();
     const next = proto === 'kcc20'
-      ? [kcc20Identicon(tick)]
+      ? [TOKEN_FALLBACK_LOGO]
       : [
           `https://krc20data.s3.amazonaws.com/verified/${t}.png`,
           `https://krc20data.s3.amazonaws.com/verified/${tick}-logo.png`,

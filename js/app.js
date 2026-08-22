@@ -2,8 +2,9 @@ import {
   loadCryptoLibs, generatePrivateKey, createKeypairFromHex,
   isValidKaspaAddress, validateKaspaAddress, shortAddr, hexToBytes, privKeyToHex,
   derivePublicKey, kaspaAddressFromPubkey, bytesToHex, kasToSompi, sompiToKasString,
-  validateAndCleanUtxo, networkId, isTestnet, setNetworkId, applyWalletNetwork, kaspaRestBase, pubkeyToAddress
-} from './crypto.js?v=90';
+  validateAndCleanUtxo, networkId, isTestnet, setNetworkId, applyWalletNetwork, kaspaRestBase, pubkeyToAddress,
+  addrPayload, sameAddrPayload
+} from './crypto.js?v=100';
 import {
   NATIVE_KAS, VAULT_PRODUCTS, loadWatchlist, addToken, removeToken,
   loadVaults, saveVault, updateVault, formatAmount, formatTokenUnits, tokenColor,
@@ -21,7 +22,7 @@ import {
   fetchOwnedUtxos, buildSentinelChain, buildRecurringChain, buildHashlockCovenant,
   newHashlockSecret, checkinHop, currentHop, parseXmssKit, p2shFromRedeemHex, spendXmssVault,
   disconnectRpc
-} from './tx.js?v=97';
+} from './tx.js?v=100';
 import { kronMarkets, quoteKronTrade, executeKronTrade, formatKasSompi, lookupKronTick, tradeCostLines, attachKronLogos, kronCandles } from './kronTrade.js?v=99';
 import {
   migrateReceiveBook, ownedAddresses, markAddressUsed, currentReceive,
@@ -33,7 +34,7 @@ import {
   isKaswareInstalled, isDesktopBrowser, kaswareEnabled, kaswareSigning, kaswareConnectedAddress,
   connectKasware, disconnectKasware, bindKaswareEvents, loadKaswarePref, compoundWithKasware,
   ensureKaswareSigner, syncKaswareNetwork
-} from './kasware.js?v=97';
+} from './kasware.js?v=100';
 import {
   cookMarkets, cookQuote, cookWrappers, pickWrappedMarketId, cookOrderbook, cookCandles,
   cookDeploy, cookBuildOrder, cookFillOrder, cookSweep, cookWrap, cookMint,
@@ -41,9 +42,10 @@ import {
   loadAgentJob, saveAgentJob, sompiToKas, kasToSompiNum,
   rememberLaunch, loadLaunched, cookOwnerBalances, cookDeployed,
   cookTickOf, cookBookLevels
-} from './atrade.js?v=99';
+} from './atrade.js?v=100';
+import { SCORPION_MEMORY } from './scorpionMemory.js?v=100';
 
-export const BUILD = '99';
+export const BUILD = '100';
 
 const TOKEN_FALLBACK_LOGO = 'assets/ttt.png';
 
@@ -355,7 +357,7 @@ function showPage(id) {
     refreshAllWalletSnaps({ tokens: true }).catch(() => {});
   }
   if (id === 'tokens') {
-    try { setAtPane(atPane || 'book'); } catch (e) { console.error(e); }
+    try { syncAtVenues(); setAtPane(atPane || 'book'); } catch (e) { console.error(e); }
   }
   if (id === 'activity') {
     try { renderActivity(window.__txs || []); } catch (e) { console.error(e); }
@@ -367,10 +369,43 @@ function uid() {
   try { return crypto.randomUUID(); } catch { return String(Date.now()) + Math.random().toString(16).slice(2); }
 }
 
+function walletIdentity(w) {
+  const pk = String(w?.pubKey || '').replace(/^0x/i, '').toLowerCase();
+  if (pk.length >= 64) return 'pk:' + pk.slice(-64);
+  const p = addrPayload(w?.address);
+  return p ? 'ad:' + p : 'id:' + String(w?.id || '');
+}
+
+function dedupeWalletList(list) {
+  const seen = new Map();
+  const out = [];
+  for (const w of list || []) {
+    if (!w) continue;
+    const key = walletIdentity(w);
+    const prev = seen.get(key);
+    if (!prev) {
+      seen.set(key, w);
+      out.push(w);
+      continue;
+    }
+    if (!prev.privKey && w.privKey) prev.privKey = w.privKey;
+    if (!prev.pubKey && w.pubKey) prev.pubKey = w.pubKey;
+    if (w.kasware) prev.kasware = true;
+    if (w.receiveAddrs && !prev.receiveAddrs) prev.receiveAddrs = w.receiveAddrs;
+    const wantTest = isTestnet();
+    const a = String(w.address || '');
+    if (wantTest && a.startsWith('kaspatest:')) prev.address = a;
+    else if (!wantTest && a.startsWith('kaspa:') && !a.startsWith('kaspatest:')) prev.address = a;
+    if (w.name && prev.name === 'KasWare' && w.name !== 'KasWare') prev.name = w.name;
+    if (prev.name === w.name && w.kasware) prev.name = 'KasWare';
+  }
+  return out;
+}
+
 function loadWalletList() {
   try {
     const raw = JSON.parse(localStorage.getItem(WALLETS_KEY) || '[]');
-    if (Array.isArray(raw) && raw.length) return raw;
+    if (Array.isArray(raw) && raw.length) return dedupeWalletList(raw);
   } catch {}
   const one = loadStoredWalletRaw();
   if (one?.address && one?.privKey) {
@@ -390,7 +425,8 @@ function loadWalletList() {
 }
 
 function saveWalletList(list) {
-  localStorage.setItem(WALLETS_KEY, JSON.stringify(list));
+  const next = dedupeWalletList(list || []);
+  localStorage.setItem(WALLETS_KEY, JSON.stringify(next));
 }
 
 function loadStoredWalletRaw() {
@@ -1063,20 +1099,41 @@ async function createWallet() {
   }
 }
 
+function paintLockNet() {
+  const btn = $('lock-net');
+  const sub = $('import-sub');
+  const tn = isTestnet();
+  if (btn) btn.textContent = tn ? 'Network: Testnet-10 (native kaspatest:)' : 'Network: Mainnet (native kaspa:)';
+  if (sub) sub.textContent = tn
+    ? 'Paste the 64-hex key — address becomes kaspatest: for Cook / Scorpion'
+    : 'Paste a 64-character hex key';
+}
+
 async function importWallet() {
   haptic();
   const hex = $('import-key').value.trim().replace(/^0x/, '');
   if (!/^[0-9a-fA-F]{64}$/.test(hex)) { toast('Need a 64-character hex key'); return; }
   try {
     const kp = await createKeypairFromHex(hex);
+    applyWalletNetwork(kp);
     const list = loadWalletList();
-    const existing = list.find(w => w.address === kp.address);
+    const existing = list.find(w =>
+      (w.pubKey && kp.pubKey && String(w.pubKey).replace(/^0x/i, '') === String(kp.pubKey).replace(/^0x/i, ''))
+      || sameAddrPayload(w.address, kp.address)
+      || w.address === kp.address
+    );
     if (existing) {
-      await activateWallet({ ...existing, ...kp }, { toastMsg: 'Switched to imported wallet' });
+      await activateWallet({ ...existing, ...kp, kasware: false }, { toastMsg: 'Native key on ' + (isTestnet() ? 'TN10' : 'mainnet') });
       return;
     }
-    const w = { ...kp, id: uid(), name: 'Wallet ' + (list.length + 1), createdAt: Date.now() };
-    await activateWallet(w, { toastMsg: 'Wallet imported' });
+    const w = {
+      ...kp,
+      id: uid(),
+      name: isTestnet() ? 'TN10 native' : ('Wallet ' + (list.length + 1)),
+      createdAt: Date.now(),
+      kasware: false
+    };
+    await activateWallet(w, { toastMsg: isTestnet() ? 'Imported native TN10 wallet' : 'Wallet imported' });
   } catch (e) {
     toast(e.message);
   }
@@ -1178,7 +1235,7 @@ function renderHomeWallets() {
     const bb = (b.id === wallet.id || b.address === wallet.address) ? 0 : 1;
     return aa - bb;
   });
-  paintIfChanged(box, list.map(w => {
+  paintIfChanged(box, dedupeWalletList(list).map(w => {
     const active = w.id === wallet.id;
     const kasTxt = walletKasLabel(w, active);
     const sendBtn = !active
@@ -3159,6 +3216,7 @@ function setAtPane(pane) {
       : 'Mainnet: Open KRON Launch, or tap Launch to switch this wallet to Testnet-10 and deploy via Cook.';
   }
   if (launch) fillLaunchKns();
+  syncAtVenues();
   if (book) {
     if (!setAtSrc._inited) {
       setAtSrc._inited = true;
@@ -3277,18 +3335,32 @@ async function renderScorpionMarkets() {
   if (!box) return;
   const mine = loadLaunched().filter(t => validTick(t.tick));
   const boosts = loadBoosts();
+  let mkts = [];
+  try { mkts = await cookMarkets(40); } catch {}
+  const byId = new Map(mkts.map(m => [String(m.tokenIdHex || m.metadata?.tokenIdHex || ''), m]));
+  const byTick = new Map(mkts.map(m => [cookTickOf(m), m]));
   const chunks = [];
   if (mine.length) {
     chunks.push('<div class="section-label">Launched here</div>');
-    chunks.push(mine.map(t => `
-      <button class="row token-row" type="button" data-sco-id="${esc(t.tokenId || '')}" data-sco-tick="${esc(t.tick)}" data-sco-name="${esc(t.name || t.tick)}" data-sco-logo="${esc(t.image || '')}">
+    chunks.push(mine.map(t => {
+      const hit = (t.tokenId && byId.get(t.tokenId)) || byTick.get(String(t.tick).toUpperCase());
+      const ask = hit ? sompiToKas(hit.bestAskUnitPriceSompi) : 0;
+      const bid = hit ? sompiToKas(hit.bestBidUnitPriceSompi) : 0;
+      const id = t.tokenId || hit?.tokenIdHex || '';
+      const mid = ask && bid ? (ask + bid) / 2 : (ask || bid);
+      return `
+      <button class="row token-row" type="button" data-sco-id="${esc(id)}" data-sco-tick="${esc(t.tick)}" data-sco-name="${esc(t.name || t.tick)}" data-sco-logo="${esc(t.image || '')}" data-cook-ask="${ask || ''}" data-cook-bid="${bid || ''}">
         ${tokenDot({ ticker: t.tick, protocol: 'kcc20', image: t.image })}
         <div>
           <div class="title">${esc(t.tick)}</div>
           <div class="sub">${esc(t.name || 'Scorpion')} · ${esc(t.network === 'testnet-10' ? 'TN10' : (t.network || 'on-chain'))}</div>
         </div>
-        <div class="amt"><b>${t.tokenId ? 'Trade' : 'Launch'}</b><em>${t.txId ? esc(String(t.txId).slice(0, 8)) : 'local'}</em></div>
-      </button>`).join(''));
+        <div class="amt">
+          <b>${mid ? fmtPx(mid) + ' KAS' : (id ? 'Trade' : 'Launch')}</b>
+          <em>${bid || ask ? ('bid ' + (bid ? fmtPx(bid) : '—') + ' · ask ' + (ask ? fmtPx(ask) : '—')) : (t.txId ? esc(String(t.txId).slice(0, 8)) : 'local')}</em>
+        </div>
+      </button>`;
+    }).join(''));
   }
   if (boosts.length) {
     chunks.push('<div class="section-label">Boosted</div>');
@@ -3359,10 +3431,22 @@ function openAtDesk(row) {
   atQuotePreview();
 }
 
+function syncAtVenues() {
+  const tn = isTestnet();
+  document.querySelectorAll('#at-src [data-src="kron"], #tok-seg [data-tok="kron"]').forEach(b => {
+    b?.classList.toggle('hidden', tn);
+  });
+  $('kron-markets')?.classList.toggle('hidden', tn || atSrc !== 'kron');
+  if (tn && atSrc === 'kron') atSrc = 'cook';
+  if (tn && tokPane === 'kron') tokPane = 'kcom';
+}
+
 function setAtSrc(src) {
-  const next = src === 'cook' ? 'cook' : (src === 'scorpion' ? 'scorpion' : 'kron');
+  let next = src === 'cook' ? 'cook' : (src === 'scorpion' ? 'scorpion' : 'kron');
+  if (isTestnet() && next === 'kron') next = 'cook';
   if (next !== atSrc) closeAtDesk();
   atSrc = next;
+  syncAtVenues();
   document.querySelectorAll('#at-src button').forEach(b => b.classList.toggle('on', b.dataset.src === atSrc));
   $('kron-markets')?.classList.toggle('hidden', atSrc !== 'kron');
   $('at-cook-mkts')?.classList.toggle('hidden', atSrc !== 'cook');
@@ -3894,7 +3978,8 @@ async function applyAppNetwork(id) {
       saveWalletList(list);
     }
   }
-  toast(next === 'testnet-10' ? 'TN10 — KasWare stays on testnet-10. Cook launch is on.' : 'Mainnet — kaspa: address. KRON COOK is live.');
+  toast(next === 'testnet-10' ? 'TN10 — native import is kaspatest:. COOK shows K.COM + Scorpion only.' : 'Mainnet — kaspa: address. KRON COOK is live.');
+  syncAtVenues();
   renderHome();
   if (currentTab === 'you') renderProfile();
   if (currentTab === 'tokens') setAtPane(atPane || 'book');
@@ -4063,6 +4148,11 @@ async function runCookGraduate() {
 }
 
 function paintAgentStatus() {
+  const mem = $('ag-memory');
+  if (mem && !mem.dataset.ok) {
+    mem.textContent = SCORPION_MEMORY;
+    mem.dataset.ok = '1';
+  }
   const el = $('ag-status');
   const btn = $('ag-toggle');
   const job = loadAgentJob();
@@ -4107,12 +4197,13 @@ async function toggleAgent() {
     return;
   }
   if (!wallet) { toast('Unlock a wallet'); return; }
-  const tick = ($('ag-tick')?.value || 'KRON').trim().toUpperCase();
+  const tick = ($('ag-tick')?.value || (isTestnet() ? '' : 'KRON')).trim().toUpperCase();
   const sizeKas = Number($('ag-size')?.value || 0.15);
   const buyBelow = Number($('ag-buy')?.value || 0);
   const sellAbove = Number($('ag-sell')?.value || 0);
   const maxKas = Number($('ag-max')?.value || 1);
-  if (!tick) { toast('Set a token'); return; }
+  if (!tick) { toast(isTestnet() ? 'Pick a K.COM or Scorpion token first' : 'Set a token'); return; }
+  if (isTestnet() && tick === 'KRON') { toast('KRON is mainnet-only. Arm a K.COM / Scorpion token on TN10.'); return; }
   if (!(sizeKas > 0)) { toast('Set a size'); return; }
   if (!(buyBelow > 0) && !(sellAbove > 0)) { toast('Set a buy-below and/or sell-above'); return; }
   if (kaswareEnabled()) {
@@ -4517,7 +4608,7 @@ function openCompound() {
     <div class="kv"><span class="k">UTXOs now</span><span class="v">${n}</span></div>
     <div class="kv"><span class="k">Balance</span><span class="v">${formatAmount(balanceSompi)} KAS</span></div>
     <div class="kv"><span class="k">Network fee</span><span class="v">~${feeEst.toFixed(4)} KAS</span></div>
-    <p class="muted" style="text-align:left;">Merges your coins into one UTXO on ${isTestnet() ? 'testnet-10' : 'mainnet'}. Change stays in this wallet. KasWare must be on the same network.</p>
+    <p class="muted" style="text-align:left;">Merges your coins into <b>one</b> UTXO on ${isTestnet() ? 'testnet-10' : 'mainnet'} (no dust leftover — that is what blew storage mass). KasWare signs a PSKT, or Native PIN signs. Same network.</p>
   `, { confirm: kaswareEnabled() ? 'Pay with KasWare' : 'Compound now', gold: true, onConfirm: () => runCompound() });
 }
 
@@ -4527,11 +4618,23 @@ async function runCompound() {
     if (kaswareEnabled()) {
       setSheetStatus('Matching KasWare to ' + (isTestnet() ? 'TN10' : 'mainnet') + '…');
       await ensureKaswareSigner(wallet);
-      setSheetStatus('Approve compound in KasWare…');
-      const result = await compoundWithKasware(wallet.address);
+      setSheetStatus('Building a one-output merge…');
+      const kw = await compoundWithKasware(wallet.address);
+      let available = Array.isArray(kw?.utxos) ? kw.utxos : [];
+      if (available.length < 2) {
+        try { available = await fetchAddressUtxos(wallet.address); } catch {}
+      }
+      if (!Array.isArray(available) || available.length < 2) {
+        if (Array.isArray(utxos) && utxos.length >= 2) available = utxos;
+      }
+      if (!available.length) throw new Error('No UTXOs — receive KAS first');
+      if (available.length < 2) throw new Error('Already one UTXO — nothing to compound');
+      setSheetStatus('Approve compound in KasWare (one output, no dust)…');
+      const result = await compoundUtxos({ wallet, utxos: available, signWithKasware: true });
       afterTx();
       openSheet('Compounded', `
-        <div class="kv"><span class="k">Signed</span><span class="v">KasWare</span></div>
+        <div class="kv"><span class="k">Signed</span><span class="v">KasWare PSKT</span></div>
+        <div class="kv"><span class="k">Merged</span><span class="v">${esc(result.inputs)} → 1 UTXO</span></div>
         <div class="kv"><span class="k">Held</span><span class="v">${esc(formatKas(result.amountKas))} KAS</span></div>
         ${txidBlock(result.txId)}
       `, { confirm: 'Done', cancel: false, onConfirm: () => { closeSheet(); refreshAll(); } });
@@ -5299,16 +5402,23 @@ async function adoptKaswareAccount(linked) {
   const addr = String(linked?.address || '');
   if (!addr) return;
   const list = loadWalletList();
-  const existing = list.find(w => w.address === addr);
+  const pk = String(linked.pubKey || '').replace(/^0x/i, '');
+  const existing = list.find(w =>
+    sameAddrPayload(w.address, addr)
+    || (pk && w.pubKey && String(w.pubKey).replace(/^0x/i, '') === pk)
+  );
   if (existing) {
     existing.kasware = true;
+    existing.address = addr;
     if (linked.pubKey && !existing.pubKey) existing.pubKey = linked.pubKey;
+    if (!existing.name || existing.name.startsWith('Wallet ')) existing.name = 'KasWare';
     saveWalletList(list);
-    if (wallet?.address !== addr) {
+    if (!wallet || wallet.id !== existing.id) {
       await activateWallet(existing, { toastMsg: 'Using KasWare account' });
       return;
     }
     wallet.kasware = true;
+    wallet.address = addr;
     if (linked.pubKey) wallet.pubKey = wallet.pubKey || linked.pubKey;
     saveWallet();
     pinUnlockedFor = wallet.id;
@@ -6308,6 +6418,13 @@ function bind() {
   click('btn-create', createWallet);
   click('btn-show-import', () => $('import-box')?.classList.toggle('hidden'));
   click('btn-import', importWallet);
+  click('lock-net', async () => {
+    haptic();
+    try {
+      await applyAppNetwork(isTestnet() ? 'mainnet' : 'testnet-10');
+    } catch (e) { toast(errText(e)); }
+    paintLockNet();
+  });
   click('btn-send', openSend);
   click('btn-receive', openReceive);
   click('btn-trade', () => openTrade({ tick: 'KRON', side: 'buy' }));
@@ -6354,7 +6471,9 @@ function bind() {
     pickCookRow(row.dataset.scoId || '', row.dataset.scoTick, {
       venue: 'scorpion',
       name: row.dataset.scoName,
-      logo: row.dataset.scoLogo
+      logo: row.dataset.scoLogo,
+      ask: row.dataset.cookAsk,
+      bid: row.dataset.cookBid
     });
   });
   $('at-seg')?.addEventListener('click', e => {
@@ -6688,6 +6807,8 @@ async function init() {
     video?.addEventListener('playing', () => document.querySelector('.bg-poster')?.classList.add('hidden'));
   }
   try { applyLook(); } catch {}
+  try { saveWalletList(loadWalletList()); } catch {}
+  try { paintLockNet(); syncAtVenues(); } catch {}
   try { bindKaswareEvents(); } catch {}
   window.addEventListener('kcc20-kasware-net', async (ev) => {
     if (!kaswareEnabled()) return;
@@ -6702,7 +6823,8 @@ async function init() {
   const kaswareOnly = !!(saved?.address && saved?.kasware && !saved.privKey);
   if (hasLocalKey || kaswareOnly) {
     wallet = migratePinOnto(saved);
-    hydrateFromSnap(saved.address);
+    applyWalletNetwork(wallet);
+    hydrateFromSnap(wallet.address);
     if (kaswareOnly || (saved.kasware && kaswareSigning(wallet))) {
       pinUnlockedFor = wallet.id;
       sessionUnlocked = true;

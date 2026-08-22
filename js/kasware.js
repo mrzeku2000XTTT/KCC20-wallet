@@ -74,7 +74,10 @@ export function normKasAddr(a) {
 
 export function sameKasAddr(a, b) {
   const x = normKasAddr(a), y = normKasAddr(b);
-  return !!(x && y && x === y);
+  if (x && y && x === y) return true;
+  const xp = x.split(':')[1] || '';
+  const yp = y.split(':')[1] || '';
+  return !!(xp && yp && xp === yp);
 }
 
 export function kaswareConnectedAddress() {
@@ -304,25 +307,6 @@ export async function compoundWithKasware(address) {
   const p = kaswareProvider();
   if (!p) throw new Error('KasWare is not installed');
   await syncKaswareNetwork();
-  let bal = {};
-  try { bal = await p.getBalance(); } catch {}
-  let total = Number(bal?.confirmed ?? bal?.total ?? bal?.balance ?? 0);
-  if (Number.isFinite(total) && total > 0 && total < 50_000_000) {
-    total = Math.round(total * 1e8);
-  }
-  const fee = 500_000;
-  if (!Number.isFinite(total) || total <= fee + 10_000) {
-    throw new Error('KasWare balance is too small to compound on this network. Confirm KasWare is on TN10 if this app is.');
-  }
-  let raw;
-  try {
-    raw = await p.sendKaspa(String(address), total - fee);
-  } catch (e) { rejectUser(e); }
-  const parsed = parseKaswareTx(raw);
-  return {
-    txId: parsed.txId,
-    feeKas: fee / 1e8,
-    amountKas: (total - fee) / 1e8,
-    inputs: 0
-  };
+  let rows = await fetchKaswareUtxos(address);
+  return { utxos: rows, address };
 }

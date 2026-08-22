@@ -346,6 +346,7 @@ img { display: block; max-width: 100%; }
 .at-logo-up .btn { height: 40px; flex: 1; margin: 0; }
 #tok-kron.hidden, #tok-kcom.hidden, #tok-scorpion.hidden { display: none !important; }
 .at-src { margin: 2px 0 8px; flex-shrink: 0; }
+#at-src button.hidden, #tok-seg button.hidden { display: none !important; }
 .at-desk-back {
   align-self: flex-start; background: none; border: 0; color: var(--gold-2);
   font-size: 12px; font-weight: 700; padding: 0 0 8px;

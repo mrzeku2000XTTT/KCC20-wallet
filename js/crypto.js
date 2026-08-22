@@ -102,6 +102,17 @@ export function addressPrefix() {
   return isTestnet() ? 'kaspatest' : 'kaspa';
 }
 
+export function addrPayload(addr) {
+  const s = String(addr || '').trim().toLowerCase();
+  const i = s.indexOf(':');
+  return i >= 0 ? s.slice(i + 1) : s;
+}
+
+export function sameAddrPayload(a, b) {
+  const x = addrPayload(a), y = addrPayload(b);
+  return !!(x && y && x === y);
+}
+
 export function kaspaRestBase() {
   return isTestnet() ? 'https://api-tn10.kaspa.org' : 'https://api.kaspa.org';
 }

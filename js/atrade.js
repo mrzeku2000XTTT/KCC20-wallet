@@ -1,7 +1,7 @@
 /* KCC20 A-Trade — Cook public API (order book / launch) + local Scorpion agent.
    Never holds keys. Wallet or KasWare signs PSKT; we only broadcast. */
-import { loadKaspaSdk, connectPublicNode } from './tx.js?v=93';
-import { kaswareEnabled, kaswareSigning, ensureKaswareSigner, signPsktWithKasware } from './kasware.js?v=97';
+import { loadKaspaSdk, connectPublicNode } from './tx.js?v=100';
+import { kaswareEnabled, kaswareSigning, ensureKaswareSigner, signPsktWithKasware } from './kasware.js?v=100';
 
 const COOK_DIRECT = 'https://dev-api-kcc20.kaspa.com';
 const COOK_HOSTED = 'https://kcc-20-wallet.vercel.app';
@@ -374,7 +374,7 @@ export async function signAndBroadcastPskt({ wallet, txJson, signInputs, onStatu
     signedJson = tx.serializeToSafeJSON();
   }
   onStatus?.('Broadcasting…');
-  const { rpc } = await connectPublicNode();
+  const { rpc } = await connectTradeRpc(wallet?.address);
   const tx = k.Transaction.deserializeFromSafeJSON(signedJson);
   const submitted = await rpc.submitTransaction({ transaction: tx, allowOrphan: false });
   const txId = submitted?.transactionId || submitted || tx.id;

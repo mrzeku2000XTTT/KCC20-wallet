@@ -12,7 +12,7 @@
   <link rel="icon" href="assets/icon.png">
   <title>KCC20 Wallet</title>
   <meta http-equiv="Cache-Control" content="no-store, no-cache, must-revalidate">
-  <link rel="stylesheet" href="css/app.css?v=99">
+  <link rel="stylesheet" href="css/app.css?v=100">
 </head>
 <body>
   <img class="bg-poster" src="assets/bg.jpg" alt="">
@@ -50,15 +50,16 @@
             </button>
             <button class="row" id="btn-show-import">
               <div class="glyph" style="background:rgba(212,176,122,.16);color:var(--gold)">↓</div>
-              <div><div class="title">Import wallet</div><div class="sub">Paste a 64-character hex key</div></div>
+              <div><div class="title">Import wallet</div><div class="sub" id="import-sub">Paste a 64-character hex key</div></div>
               <span class="chev">›</span>
             </button>
           </div>
           <div id="import-box" class="glass hidden" style="padding:16px;margin-bottom:16px;">
-            <div class="field"><label>Private key</label><input id="import-key" placeholder="6d3af702…" spellcheck="false" autocomplete="off"></div>
-            <button class="btn btn-gold" id="btn-import">Import</button>
+            <div class="field"><label>Private key (native, this device)</label><input id="import-key" placeholder="6d3af702…" spellcheck="false" autocomplete="off"></div>
+            <button class="btn btn-gold" id="btn-import">Import native key</button>
           </div>
-          <div class="notice">Your key is generated in the browser. Signing stays local except when you confirm a send, which uses the existing covenant builder to assemble the transaction.</div>
+          <button class="btn btn-glass" id="lock-net" type="button" style="margin-bottom:12px;">Network: Mainnet</button>
+          <div class="notice">Same hex key on Testnet-10 becomes a kaspatest: address so you can sign Cook / Scorpion natively. KasWare is optional.</div>
         </section>
 
         <!-- HOME -->
@@ -210,6 +211,10 @@
           </div>
 
           <div id="at-agent" class="hidden">
+            <details class="at-help">
+              <summary>Scorpion memory</summary>
+              <pre class="at-tiny" id="ag-memory" style="white-space:pre-wrap;margin-top:8px;"></pre>
+            </details>
             <div class="at-row">
               <label class="field grow"><span>Token</span>
                 <input id="ag-tick" placeholder="KRON" value="KRON" spellcheck="false">
@@ -621,7 +626,7 @@
     })();
   </script>
   <script type="module">
-    import('./js/app.js?v=99').catch(function (err) {
+    import('./js/app.js?v=100').catch(function (err) {
       console.error(err);
       var phone = document.getElementById('phone');
       var d = document.createElement('div');

@@ -4,7 +4,7 @@ import {
   validateAndCleanUtxo, deepCloneAndFreeze, kasToSompi,
   kaspaRestBase, networkId
 } from './crypto.js?v=90';
-import { kaswareSigning, sendKaspaWithKasware, sendKrc20WithKasware } from './kasware.js?v=97';
+import { kaswareSigning, sendKaspaWithKasware, sendKrc20WithKasware, signPsktWithKasware } from './kasware.js?v=100';
 
 function API() { return kaspaRestBase(); }
 
@@ -482,7 +482,7 @@ export async function spendXmssVault({ wallet, vault, utxos, feeUtxos, witness, 
   tx.inputs[1].sigOpCount = 0;
   tx.inputs[1].computeBudget = 10;
   tx.inputs[1].sequence = 0n;
-  try { k.updateTransactionMass('mainnet', tx); } catch {}
+  try { k.updateTransactionMass(networkId(), tx); } catch {}
   const txId = await submitSignedRpc(k, rpc, url, tx, {
     sigOpCount: 0,
     computeBudget: 1400,
@@ -584,12 +584,19 @@ function sompiNum(v) {
 }
 
 export function storageMassOk(k, inAmts, outAmts) {
+  const net = networkId();
   try {
-    const m = k.calculateStorageMass('mainnet', inAmts.map(sompiNum), outAmts.map(sompiNum));
+    const m = k.calculateStorageMass(net, inAmts.map(sompiNum), outAmts.map(sompiNum));
     if (m == null) return false;
     return m <= k.maximumStandardTransactionMass();
   } catch {
-    return false;
+    try {
+      const m = k.calculateStorageMass('mainnet', inAmts.map(sompiNum), outAmts.map(sompiNum));
+      if (m == null) return false;
+      return m <= k.maximumStandardTransactionMass();
+    } catch {
+      return false;
+    }
   }
 }
 
@@ -870,7 +877,7 @@ export async function sendKas({ wallet, dest, amountKas, utxos, exact = false })
     dest: String(dest).trim(),
     amountSompi: String(requested),
     change: wallet.address,
-    network: 'mainnet',
+    network: networkId(),
     exact: !!exact
   });
   let entries;
@@ -885,7 +892,7 @@ export async function sendKas({ wallet, dest, amountKas, utxos, exact = false })
 
   const destStr = intent.dest;
   const changeAddr = intent.change;
-  const isCovenantDest = destStr.startsWith('kaspa:p');
+  const isCovenantDest = /^kaspa(test)?:p/i.test(destStr);
   const { rpc, url } = await connectPublicNode();
   const feeRate = await nodeFeeRate(rpc);
   const feeGuess = 500_000n;
@@ -922,7 +929,7 @@ export async function sendKas({ wallet, dest, amountKas, utxos, exact = false })
         priorityFee: 0n,
         feeRate,
         sigOpCount: 1,
-        networkId: 'mainnet'
+        networkId: networkId()
       });
       pendingList = built.transactions || [];
     } catch (e) {
@@ -950,7 +957,7 @@ export async function sendKas({ wallet, dest, amountKas, utxos, exact = false })
     prepInputs(tx, { sigOpCount: 0, computeBudget: p2shBudget });
     const protect = (exact || (isCovenantDest && isFinal)) ? destOutputIndex(k, tx, destStr) : -1;
     if (isCovenantDest && isFinal) covenantId = bindCovenantOutputs(k, tx, destStr);
-    try { k.updateTransactionMass('mainnet', tx); } catch {}
+    try { k.updateTransactionMass(networkId(), tx); } catch {}
     assertSimpleSendOutputs(k, tx, destStr, changeAddr, isFinal);
     let scripts = meetToccataFee(k, tx, priv, plan.entries, 0n, protect);
     if (exact) assertExactDest(k, tx, destStr, requested);
@@ -1263,7 +1270,7 @@ export async function spendExactP2sh({
     inp.sigOpCount = 0;
     inp.computeBudget = computeBudget;
   }
-  try { k.updateTransactionMass('mainnet', tx); } catch {}
+  try { k.updateTransactionMass(networkId(), tx); } catch {}
   const txId = await submitSignedRpc(k, rpc, url, tx, {
     sigOpCount: 0,
     computeBudget,
@@ -1399,7 +1406,7 @@ export async function sweepVault({ wallet, vault, utxos, extraPrivKey, escrowRel
       inp.sigOpCount = 0;
       inp.computeBudget = 60;
     }
-    try { k.updateTransactionMass('mainnet', tx); } catch {}
+    try { k.updateTransactionMass(networkId(), tx); } catch {}
     return { tx, sendAmt, fee, scripts };
   }
 
@@ -1435,23 +1442,25 @@ export async function sweepVault({ wallet, vault, utxos, extraPrivKey, escrowRel
   throw new Error(lastErr);
 }
 
-function spendEntriesFrom(utxos, wallet) {
+function spendEntriesFrom(utxos, wallet, opts = {}) {
   const list = Array.isArray(utxos) ? utxos : [];
+  const allowWatch = !!opts.allowWatch;
   return list.map(u => {
     const c = validateAndCleanUtxo(u);
     if (!c) return null;
     return {
       address: u.address || wallet.address,
-      privKey: u.privKey || u.privateKey || wallet.privKey,
+      privKey: u.privKey || u.privateKey || wallet.privKey || '',
       redeemHex: u.redeemHex || '',
       ...c
     };
-  }).filter(e => e && e.privKey && e.outpoint?.transactionId && e.amount > 0n);
+  }).filter(e => e && e.outpoint?.transactionId && e.amount > 0n && (allowWatch || e.privKey));
 }
 
-export async function compoundUtxos({ wallet, utxos }) {
+export async function compoundUtxos({ wallet, utxos, signWithKasware = false }) {
   const k = await loadKaspaSdk();
-  let entries = spendEntriesFrom(utxos, wallet);
+  const external = !!(signWithKasware || (kaswareSigning(wallet) && !wallet?.privKey));
+  let entries = spendEntriesFrom(utxos, wallet, { allowWatch: external });
   if (entries.length < 2) throw new Error('Already one UTXO — nothing to compound');
   entries = [...entries].sort((a, b) => (a.amount < b.amount ? 1 : -1));
   const total = entries.reduce((a, e) => a + e.amount, 0n);
@@ -1466,7 +1475,7 @@ export async function compoundUtxos({ wallet, utxos }) {
   try {
     const built = await k.createTransactions({
       entries,
-      outputs: [{ address: wallet.address, amount: total - feeGuess }],
+      outputs: [],
       changeAddress: wallet.address,
       priorityFee: 0n,
       feeRate,
@@ -1488,37 +1497,55 @@ export async function compoundUtxos({ wallet, utxos }) {
     pendingList = [{ transaction: tx }];
   }
 
-  const priv = new k.PrivateKey(wallet.privKey);
   let txId = null;
   let paidFee = 0n;
   let kept = 0n;
+  const priv = wallet.privKey && !external ? new k.PrivateKey(wallet.privKey) : null;
   for (let p = 0; p < pendingList.length; p++) {
     const tx = pendingList[p].transaction;
     tx.version = 1;
     prepInputs(tx, { sigOpCount: 0, computeBudget: 10 });
     try { k.updateTransactionMass(net, tx); } catch {}
-    let scripts = meetToccataFee(k, tx, priv, entries, 0n, -1);
-    try {
-      txId = await submitSignedRpc(k, rpc, url, tx, {
+    const inAmts = entries.map(e => e.amount);
+    const outAmts = [...tx.outputs].map(o => BigInt(o.value));
+    if (outAmts.length > 1 && !storageMassOk(k, inAmts, outAmts)) {
+      throw new Error('Compound would leave a dust change and blow storage mass. Retry — this merge must be a single output.');
+    }
+    if (external) {
+      const json = tx.serializeToSafeJSON();
+      const signInputs = [...tx.inputs].map((_, i) => ({ index: i, sighashType: 1 }));
+      const signedJson = await signPsktWithKasware(json, signInputs);
+      const signed = k.Transaction.deserializeFromSafeJSON(signedJson);
+      txId = await submitSignedRpc(k, rpc, url, signed, {
         sigOpCount: 0,
         computeBudget: 10,
-        lockTime: 0,
-        scripts
+        lockTime: 0
       });
-    } catch (e) {
-      const need = requiredFeeFromError(e);
-      const paid = txInputSum(tx, entries) - txOutputSum(tx);
-      if (need && need > paid) {
-        shrinkOutputsForFee(tx, need - paid + 50_000n, -1);
-        scripts = signP2pkInputs(k, tx, priv, entries);
+    } else {
+      if (!priv) throw new Error('Need Native key or KasWare to compound');
+      let scripts = meetToccataFee(k, tx, priv, entries, 0n, -1);
+      try {
         txId = await submitSignedRpc(k, rpc, url, tx, {
           sigOpCount: 0,
           computeBudget: 10,
           lockTime: 0,
           scripts
         });
-      } else {
-        throw e;
+      } catch (e) {
+        const need = requiredFeeFromError(e);
+        const paid = txInputSum(tx, entries) - txOutputSum(tx);
+        if (need && need > paid) {
+          shrinkOutputsForFee(tx, need - paid + 50_000n, -1);
+          scripts = signP2pkInputs(k, tx, priv, entries);
+          txId = await submitSignedRpc(k, rpc, url, tx, {
+            sigOpCount: 0,
+            computeBudget: 10,
+            lockTime: 0,
+            scripts
+          });
+        } else {
+          throw e;
+        }
       }
     }
     paidFee = txInputSum(tx, entries) - txOutputSum(tx);
@@ -1531,7 +1558,8 @@ export async function compoundUtxos({ wallet, utxos }) {
     amountKas: Number(kept) / 1e8,
     inputs: entries.length,
     txs: pendingList.length,
-    node: url
+    node: url,
+    signer: external ? 'kasware' : 'local'
   };
 }
 
@@ -1682,7 +1710,7 @@ async function revealKrc20({ k, wallet, priv, script, p2shAddr, revealUtxos }) {
       priorityFee: 0n,
       feeRate,
       sigOpCount: 1,
-      networkId: 'mainnet'
+      networkId: networkId()
     });
     pendingList = built.transactions || [];
   } catch (e) {
@@ -1696,7 +1724,7 @@ async function revealKrc20({ k, wallet, priv, script, p2shAddr, revealUtxos }) {
     const tx = pending.transaction;
     tx.version = 1;
     prepInputs(tx, { sigOpCount: 0, computeBudget: 40 });
-    try { k.updateTransactionMass('mainnet', tx); } catch {}
+    try { k.updateTransactionMass(networkId(), tx); } catch {}
     const scripts = [];
     for (let i = 0; i < tx.inputs.length; i++) {
       const prev = tx.inputs[i].previousOutpoint;
@@ -2142,7 +2170,7 @@ export async function sendKcc20({ wallet, dest, token, amountHuman, utxos, onSta
     tx.inputs[i].computeBudget = 100;
     tx.inputs[i].signatureScript = tokenScripts[i];
   }
-  try { k.updateTransactionMass('mainnet', tx); } catch {}
+  try { k.updateTransactionMass(networkId(), tx); } catch {}
 
   signKasInputs = function signKasInputs() {
     const signed = tokenScripts.slice();
@@ -2530,7 +2558,7 @@ export async function lockKcc20Timelock({ wallet, tick, amountHuman, decimals, m
     tx.inputs[i].computeBudget = 100;
     tx.inputs[i].signatureScript = tokenScripts[i];
   }
-  try { k.updateTransactionMass('mainnet', tx); } catch {}
+  try { k.updateTransactionMass(networkId(), tx); } catch {}
 
   function signKasInputs() {
     const signed = tokenScripts.slice();
@@ -2729,7 +2757,7 @@ export async function sweepKcc20Capsule({ wallet, vault, utxos, onStatus }) {
   }
   const p2shEnd = tokenN + p2shIns.length;
   for (let i = tokenN; i < p2shEnd; i++) tx.inputs[i].computeBudget = 60;
-  try { k.updateTransactionMass('mainnet', tx); } catch {}
+  try { k.updateTransactionMass(networkId(), tx); } catch {}
 
   function signMixed() {
     const signed = tokenScripts.slice();

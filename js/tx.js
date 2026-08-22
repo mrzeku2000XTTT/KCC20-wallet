@@ -4,7 +4,7 @@ import {
   validateAndCleanUtxo, deepCloneAndFreeze, kasToSompi,
   kaspaRestBase, networkId
 } from './crypto.js?v=90';
-import { kaswareSigning, sendKaspaWithKasware, sendKrc20WithKasware, signPsktWithKasware } from './kasware.js?v=100';
+import { kaswareSigning, sendKaspaWithKasware, sendKrc20WithKasware, signPsktWithKasware, fetchKaswareUtxos } from './kasware.js?v=100';
 
 function API() { return kaspaRestBase(); }
 
@@ -1340,6 +1340,46 @@ export async function fetchOwnedUtxos(wallet) {
   return bags;
 }
 
+function utxoKey(u) {
+  const id = u?.outpoint?.transactionId || u?.transaction_id || u?.transactionId || '';
+  const idx = u?.outpoint?.index ?? u?.index ?? 0;
+  return id ? id + ':' + idx : '';
+}
+
+function isP2pkAddr(addr, fallback) {
+  const a = String(addr || fallback || '');
+  if (/:p/i.test(a)) return false;
+  return /:q/i.test(a) || !a;
+}
+
+export async function collectSpendableUtxos(wallet) {
+  const map = new Map();
+  const add = (list, meta = {}) => {
+    for (const u of list || []) {
+      const c = validateAndCleanUtxo(u);
+      if (!c?.outpoint?.transactionId || !(c.amount > 0n)) continue;
+      const addr = u.address || meta.address || wallet.address;
+      if (!isP2pkAddr(addr, wallet.address)) continue;
+      const key = utxoKey(c);
+      if (!key || map.has(key)) continue;
+      map.set(key, {
+        ...u,
+        ...c,
+        address: addr,
+        privKey: u.privKey || u.privateKey || meta.privKey || wallet.privKey || ''
+      });
+    }
+  };
+  try { add(await fetchOwnedUtxos(wallet)); } catch {}
+  for (const row of ownedSpendRows(wallet)) {
+    try { add(await fetchAddressUtxos(row.address), row); } catch {}
+  }
+  if (kaswareSigning(wallet)) {
+    try { add(await fetchKaswareUtxos(wallet.address), { address: wallet.address }); } catch {}
+  }
+  return [...map.values()];
+}
+
 function requiredFeeFromError(e) {
   const m = errText(e).match(/required amount of (\d+)/i);
   return m ? BigInt(m[1]) : null;
@@ -1570,104 +1610,99 @@ function spendEntriesFrom(utxos, wallet, opts = {}) {
 export async function compoundUtxos({ wallet, utxos, signWithKasware = false }) {
   const k = await loadKaspaSdk();
   const external = !!(signWithKasware || (kaswareSigning(wallet) && !wallet?.privKey));
-  let entries = spendEntriesFrom(utxos, wallet, { allowWatch: external });
+  const seen = new Set();
+  let entries = spendEntriesFrom(utxos, wallet, { allowWatch: external }).filter(e => {
+    if (!isP2pkAddr(e.address, wallet.address)) return false;
+    const key = utxoKey(e);
+    if (!key || seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
   if (entries.length < 2) throw new Error('Already one UTXO — nothing to compound');
   entries = [...entries].sort((a, b) => (a.amount < b.amount ? 1 : -1));
   const total = entries.reduce((a, e) => a + e.amount, 0n);
   const { rpc, url } = await connectPublicNode();
   const net = networkId();
-  const feeRate = await nodeFeeRate(rpc);
-  const feeGuess = BigInt(Math.min(2_000_000, 450_000 + entries.length * 15_000));
-  if (total <= feeGuess + 10_000n) throw new Error('Balance too small to cover the compound fee');
+  let fee = BigInt(Math.min(2_500_000, 450_000 + entries.length * 20_000));
+  if (total <= fee + 10_000n) throw new Error('Balance too small to cover the compound fee');
 
-  let pendingList = [];
-  let lastErr = '';
-  try {
-    const built = await k.createTransactions({
-      entries,
-      outputs: [],
-      changeAddress: wallet.address,
-      priorityFee: 0n,
-      feeRate,
-      sigOpCount: 1,
-      networkId: net
-    });
-    pendingList = built.transactions || [];
-  } catch (e) {
-    lastErr = errText(e);
-  }
-  if (!pendingList.length) {
+  const assemble = (feeAmt) => {
+    const send = total - feeAmt;
+    if (send <= 0n) throw new Error('Fee would consume the whole merge');
     const tx = k.createTransaction(
       entries,
-      [{ address: wallet.address, amount: total - feeGuess }],
+      [{ address: wallet.address, amount: send }],
       0n,
       undefined,
       1
     );
-    pendingList = [{ transaction: tx }];
-  }
-
-  let txId = null;
-  let paidFee = 0n;
-  let kept = 0n;
-  const priv = wallet.privKey && !external ? new k.PrivateKey(wallet.privKey) : null;
-  for (let p = 0; p < pendingList.length; p++) {
-    const tx = pendingList[p].transaction;
     tx.version = 1;
     prepInputs(tx, { sigOpCount: 0, computeBudget: 10 });
     try { k.updateTransactionMass(net, tx); } catch {}
-    const inAmts = entries.map(e => e.amount);
-    const outAmts = [...tx.outputs].map(o => BigInt(o.value));
-    if (outAmts.length > 1 && !storageMassOk(k, inAmts, outAmts)) {
-      throw new Error('Compound would leave a dust change and blow storage mass. Retry — this merge must be a single output.');
+    if (tx.outputs.length !== 1) {
+      throw new Error('Compound must be a single output — retry');
     }
-    if (external) {
-      const json = tx.serializeToSafeJSON();
-      const signInputs = [...tx.inputs].map((_, i) => ({ index: i, sighashType: 1 }));
-      const signedJson = await signPsktWithKasware(json, signInputs);
-      const signed = k.Transaction.deserializeFromSafeJSON(signedJson);
-      txId = await submitSignedRpc(k, rpc, url, signed, {
+    return tx;
+  };
+
+  let tx = assemble(fee);
+  const inAmts = entries.map(e => e.amount);
+  const priv = wallet.privKey && !external ? new k.PrivateKey(wallet.privKey) : null;
+  let txId = null;
+
+  if (external) {
+    const json = tx.serializeToSafeJSON();
+    const signInputs = [...tx.inputs].map((_, i) => ({ index: i, sighashType: 1 }));
+    const signedJson = await signPsktWithKasware(json, signInputs);
+    const signed = k.Transaction.deserializeFromSafeJSON(signedJson);
+    txId = await submitSignedRpc(k, rpc, url, signed, {
+      sigOpCount: 0,
+      computeBudget: 10,
+      lockTime: 0
+    });
+    tx = signed;
+  } else {
+    if (!priv) throw new Error('Need Native key or KasWare to compound');
+    let scripts = meetToccataFee(k, tx, priv, entries, 0n, 0);
+    if (tx.outputs.length !== 1) throw new Error('Compound must be a single output — retry');
+    try {
+      txId = await submitSignedRpc(k, rpc, url, tx, {
         sigOpCount: 0,
         computeBudget: 10,
-        lockTime: 0
+        lockTime: 0,
+        scripts
       });
-    } else {
-      if (!priv) throw new Error('Need Native key or KasWare to compound');
-      let scripts = meetToccataFee(k, tx, priv, entries, 0n, -1);
-      try {
+    } catch (e) {
+      const need = requiredFeeFromError(e);
+      const paid = txInputSum(tx, entries) - txOutputSum(tx);
+      if (need && need > paid) {
+        fee = need + 50_000n;
+        tx = assemble(fee);
+        scripts = signP2pkInputs(k, tx, priv, entries);
         txId = await submitSignedRpc(k, rpc, url, tx, {
           sigOpCount: 0,
           computeBudget: 10,
           lockTime: 0,
           scripts
         });
-      } catch (e) {
-        const need = requiredFeeFromError(e);
-        const paid = txInputSum(tx, entries) - txOutputSum(tx);
-        if (need && need > paid) {
-          shrinkOutputsForFee(tx, need - paid + 50_000n, -1);
-          scripts = signP2pkInputs(k, tx, priv, entries);
-          txId = await submitSignedRpc(k, rpc, url, tx, {
-            sigOpCount: 0,
-            computeBudget: 10,
-            lockTime: 0,
-            scripts
-          });
-        } else {
-          throw e;
-        }
+      } else {
+        throw e;
       }
     }
-    paidFee = txInputSum(tx, entries) - txOutputSum(tx);
-    kept = txOutputSum(tx);
   }
-  if (!txId) throw new Error(lastErr || 'Compound broadcast failed');
+  const outAmts = [...tx.outputs].map(o => BigInt(o.value));
+  if (outAmts.length > 1 && !storageMassOk(k, inAmts, outAmts)) {
+    throw new Error('Compound would leave a dust change and blow storage mass. Retry — this merge must be a single output.');
+  }
+  if (!txId) throw new Error('Compound broadcast failed');
+  const paidFee = txInputSum(tx, entries) - txOutputSum(tx);
+  const kept = txOutputSum(tx);
   return {
     txId,
     feeKas: Number(paidFee) / 1e8,
     amountKas: Number(kept) / 1e8,
     inputs: entries.length,
-    txs: pendingList.length,
+    txs: 1,
     node: url,
     signer: external ? 'kasware' : 'local'
   };

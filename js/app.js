@@ -20,10 +20,10 @@ import {
   buildTimelockCovenant, buildEscrowCovenant, buildMultisigCovenant, currentDaa,
   pingPublicNode, sweepVault, toRpcTransaction, p2shSpendScript, planKasPayment, storageMassOk,
   compoundUtxos, sendKrc20, sendKcc20, loadKrc20Pending, lockKcc20Timelock, sweepKcc20Capsule,
-  fetchOwnedUtxos, buildSentinelChain, buildRecurringChain, buildHashlockCovenant,
+  fetchOwnedUtxos, collectSpendableUtxos, buildSentinelChain, buildRecurringChain, buildHashlockCovenant,
   newHashlockSecret, checkinHop, currentHop, parseXmssKit, p2shFromRedeemHex, spendXmssVault,
   disconnectRpc, buildDcaDrips, sendKasMany, releaseDcaDrip
-} from './tx.js?v=105';
+} from './tx.js?v=112';
 import { kronMarkets, quoteKronTrade, executeKronTrade, formatKasSompi, lookupKronTick, tradeCostLines, attachKronLogos, kronCandles } from './kronTrade.js?v=106';
 import {
   migrateReceiveBook, ownedAddresses, markAddressUsed, currentReceive,
@@ -46,7 +46,7 @@ import {
 } from './atrade.js?v=100';
 import { SCORPION_MEMORY } from './scorpionMemory.js?v=100';
 
-export const BUILD = '111';
+export const BUILD = '112';
 
 const TOKEN_FALLBACK_LOGO = 'assets/ttt.png';
 
@@ -230,6 +230,7 @@ let tokenStream = null;
 let kronKickAt = 0;
 let tokenFastOff = 0;
 let hushTokenToastsUntil = 0;
+let hushUtxosUntil = 0;
 let walletSnap = {};
 let lastAllSnap = 0;
 let lastAllTokenSnap = 0;
@@ -3071,8 +3072,11 @@ async function tickLive(full) {
       if (o.role !== 'home' && Number(bals[i] || 0) > 0) markAddressUsed(wallet, o.address, true);
     });
     if (Array.isArray(ownedBag)) {
-      utxos = ownedBag;
-      const uSum = ownedBag.reduce((a, e) => {
+      const keepOptimistic = Date.now() < hushUtxosUntil
+        && Array.isArray(utxos) && utxos.length === 1
+        && ownedBag.length > 1;
+      if (!keepOptimistic) utxos = ownedBag;
+      const uSum = (keepOptimistic ? utxos : ownedBag).reduce((a, e) => {
         try { return a + Number(e.amount || 0n); } catch { return a; }
       }, 0);
       if (uSum > nextBal) nextBal = uSum;
@@ -5248,66 +5252,59 @@ function openCompound() {
   const n = Array.isArray(utxos) ? utxos.length : 0;
   if (n < 2) { toast('Already one UTXO'); return; }
   const feeEst = 0.0045 + n * 0.00015;
+  const kw = kaswareSigning(wallet);
   openSheet('Compound UTXOs', `
+    <div class="kv"><span class="k">Wallet</span><span class="v">${esc(wallet?.name || 'This wallet')}</span></div>
     <div class="kv"><span class="k">Network</span><span class="v">${isTestnet() ? 'TN10' : 'mainnet'}</span></div>
     <div class="kv"><span class="k">UTXOs now</span><span class="v">${n}</span></div>
     <div class="kv"><span class="k">Balance</span><span class="v">${formatAmount(balanceSompi)} KAS</span></div>
     <div class="kv"><span class="k">Network fee</span><span class="v">~${feeEst.toFixed(4)} KAS</span></div>
-    <p class="muted" style="text-align:left;">Merges your coins into <b>one</b> UTXO on ${isTestnet() ? 'testnet-10' : 'mainnet'} (no dust leftover — that is what blew storage mass). KasWare signs a PSKT, or Native PIN signs. Same network.</p>
-  `, { confirm: kaswareEnabled() ? 'Pay with KasWare' : 'Compound now', gold: true, onConfirm: () => runCompound() });
+    <p class="muted" style="text-align:left;">Merges <b>every spendable coin in this wallet</b> into <b>one</b> UTXO (no leftover dust). ${kw ? 'KasWare signs a PSKT.' : 'Native PIN signs.'} Same for Wallet 2, WalletX, and KasWare.</p>
+  `, { confirm: kw ? 'Pay with KasWare' : 'Compound now', gold: true, onConfirm: () => runCompound() });
+}
+
+function applyCompoundLocal(result) {
+  const sompi = Math.max(0, Math.round(Number(result.amountKas || 0) * 1e8));
+  utxos = [{
+    outpoint: { transactionId: result.txId || ('compound-' + Date.now()), index: 0 },
+    amount: BigInt(sompi),
+    address: wallet?.address || ''
+  }];
+  hushUtxosUntil = Date.now() + 40000;
+  paintUtxoCount();
+  if (currentTab === 'home') renderHome();
 }
 
 async function runCompound() {
   toast('Connecting to Kaspa…');
   try {
-    if (kaswareEnabled()) {
+    const kw = kaswareSigning(wallet);
+    if (kw) {
       setSheetStatus('Matching KasWare to ' + (isTestnet() ? 'TN10' : 'mainnet') + '…');
       await ensureKaswareSigner(wallet);
-      setSheetStatus('Building a one-output merge…');
-      const kw = await compoundWithKasware(wallet.address);
-      let available = Array.isArray(kw?.utxos) ? kw.utxos : [];
-      if (available.length < 2) {
-        try { available = await fetchAddressUtxos(wallet.address); } catch {}
-      }
-      if (!Array.isArray(available) || available.length < 2) {
-        if (Array.isArray(utxos) && utxos.length >= 2) available = utxos;
-      }
-      if (!available.length) throw new Error('No UTXOs — receive KAS first');
-      if (available.length < 2) throw new Error('Already one UTXO — nothing to compound');
-      setSheetStatus('Approve compound in KasWare (one output, no dust)…');
-      const result = await compoundUtxos({ wallet, utxos: available, signWithKasware: true });
-      afterTx();
-      openSheet('Compounded', `
-        <div class="kv"><span class="k">Signed</span><span class="v">KasWare PSKT</span></div>
-        <div class="kv"><span class="k">Merged</span><span class="v">${esc(result.inputs)} → 1 UTXO</span></div>
-        <div class="kv"><span class="k">Held</span><span class="v">${esc(formatKas(result.amountKas))} KAS</span></div>
-        ${txidBlock(result.txId)}
-      `, { confirm: 'Done', cancel: false, onConfirm: () => { closeSheet(); refreshAll(); } });
-      return;
+    } else {
+      await requirePin('Confirm compound');
     }
-    await requirePin('Confirm compound');
     await loadKaspaSdk();
-    setSheetStatus('Connecting to public Kaspa node…');
+    setSheetStatus('Collecting every spendable UTXO in this wallet…');
     await pingPublicNode();
-    setSheetStatus('Fetching UTXOs…');
-    let available = [];
-    try { available = await fetchOwnedUtxos(wallet); } catch {}
-    if (!Array.isArray(available) || available.length < 2) {
-      if (Array.isArray(utxos) && utxos.length >= 2) available = utxos;
-    }
-    if (!Array.isArray(available) || available.length < 2) {
-      available = await fetchAddressUtxos(wallet.address);
-    }
+    const available = await collectSpendableUtxos(wallet);
     if (!available.length) throw new Error('No UTXOs — receive KAS first');
     if (available.length < 2) throw new Error('Already one UTXO — nothing to compound');
-    setSheetStatus(`Merging ${available.length} UTXOs…`);
-    const result = await compoundUtxos({ wallet, utxos: available });
+    setSheetStatus(kw
+      ? `Approve merge of ${available.length} UTXOs in KasWare (one output)…`
+      : `Merging ${available.length} UTXOs into one…`);
+    const result = await compoundUtxos({ wallet, utxos: available, signWithKasware: kw });
+    applyCompoundLocal(result);
     afterTx();
-    openSheet('Compounded', `
+    openSheet('UTXOs compounded', `
+      <div class="kv"><span class="k">Wallet</span><span class="v">${esc(wallet?.name || 'This wallet')}</span></div>
+      <div class="kv"><span class="k">Signed</span><span class="v">${kw ? 'KasWare PSKT' : 'Native PIN'}</span></div>
       <div class="kv"><span class="k">Merged</span><span class="v">${esc(result.inputs)} → 1 UTXO</span></div>
       <div class="kv"><span class="k">Held</span><span class="v">${esc(formatKas(result.amountKas))} KAS</span></div>
       <div class="kv"><span class="k">Network fee</span><span class="v">${Number(result.feeKas || 0).toFixed(6)} KAS</span></div>
       ${txidBlock(result.txId)}
+      <p class="muted" style="text-align:left;">This wallet now has one spendable UTXO. Vault capsules are separate and are not counted here.</p>
     `, { confirm: 'Done', cancel: false, onConfirm: () => { closeSheet(); refreshAll(); } });
   } catch (e) {
     toast(errText(e));

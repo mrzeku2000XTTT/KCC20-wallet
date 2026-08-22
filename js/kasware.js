@@ -303,16 +303,20 @@ export async function fetchKaswareUtxos(address) {
 export async function compoundWithKasware(address) {
   const p = kaswareProvider();
   if (!p) throw new Error('KasWare is not installed');
+  await syncKaswareNetwork();
   let bal = {};
   try { bal = await p.getBalance(); } catch {}
-  const total = Number(bal?.confirmed ?? bal?.total ?? bal?.balance ?? 0);
+  let total = Number(bal?.confirmed ?? bal?.total ?? bal?.balance ?? 0);
+  if (Number.isFinite(total) && total > 0 && total < 50_000_000) {
+    total = Math.round(total * 1e8);
+  }
   const fee = 500_000;
   if (!Number.isFinite(total) || total <= fee + 10_000) {
-    throw new Error('KasWare balance is too small to compound');
+    throw new Error('KasWare balance is too small to compound on this network. Confirm KasWare is on TN10 if this app is.');
   }
   let raw;
   try {
-    raw = await p.sendKaspa(address, total - fee);
+    raw = await p.sendKaspa(String(address), total - fee);
   } catch (e) { rejectUser(e); }
   const parsed = parseKaswareTx(raw);
   return {

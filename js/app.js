@@ -21,7 +21,7 @@ import {
   fetchOwnedUtxos, buildSentinelChain, buildRecurringChain, buildHashlockCovenant,
   newHashlockSecret, checkinHop, currentHop, parseXmssKit, p2shFromRedeemHex, spendXmssVault,
   disconnectRpc
-} from './tx.js?v=93';
+} from './tx.js?v=97';
 import { kronMarkets, quoteKronTrade, executeKronTrade, formatKasSompi, lookupKronTick, tradeCostLines, attachKronLogos } from './kronTrade.js?v=89';
 import {
   migrateReceiveBook, ownedAddresses, markAddressUsed, currentReceive,
@@ -33,7 +33,7 @@ import {
   isKaswareInstalled, isDesktopBrowser, kaswareEnabled, kaswareSigning, kaswareConnectedAddress,
   connectKasware, disconnectKasware, bindKaswareEvents, loadKaswarePref, compoundWithKasware,
   ensureKaswareSigner, syncKaswareNetwork
-} from './kasware.js?v=93';
+} from './kasware.js?v=97';
 import {
   cookMarkets, cookQuote, cookWrappers, pickWrappedMarketId,
   cookDeploy, cookBuildOrder, cookFillOrder, cookSweep, cookWrap, cookMint,
@@ -42,7 +42,7 @@ import {
   rememberLaunch, loadLaunched, cookOwnerBalances, cookDeployed
 } from './atrade.js?v=96';
 
-export const BUILD = '96';
+export const BUILD = '97';
 
 function errText(e) {
   if (e == null) return 'Unknown error';
@@ -4045,18 +4045,20 @@ function openCompound() {
   if (n < 2) { toast('Already one UTXO'); return; }
   const feeEst = 0.0045 + n * 0.00015;
   openSheet('Compound UTXOs', `
+    <div class="kv"><span class="k">Network</span><span class="v">${isTestnet() ? 'TN10' : 'mainnet'}</span></div>
     <div class="kv"><span class="k">UTXOs now</span><span class="v">${n}</span></div>
     <div class="kv"><span class="k">Balance</span><span class="v">${formatAmount(balanceSompi)} KAS</span></div>
     <div class="kv"><span class="k">Network fee</span><span class="v">~${feeEst.toFixed(4)} KAS</span></div>
-    <p class="muted" style="text-align:left;">Merges your coins into one UTXO. That makes the next lock/send cheaper and avoids storage-mass splits. Change stays in this wallet.</p>
-  `, { confirm: 'Compound now', gold: true, onConfirm: () => runCompound() });
+    <p class="muted" style="text-align:left;">Merges your coins into one UTXO on ${isTestnet() ? 'testnet-10' : 'mainnet'}. Change stays in this wallet. KasWare must be on the same network.</p>
+  `, { confirm: kaswareEnabled() ? 'Pay with KasWare' : 'Compound now', gold: true, onConfirm: () => runCompound() });
 }
 
 async function runCompound() {
   toast('Connecting to Kaspa…');
   try {
-    await requirePin('Confirm compound');
-    if (kaswareSigning(wallet)) {
+    if (kaswareEnabled()) {
+      setSheetStatus('Matching KasWare to ' + (isTestnet() ? 'TN10' : 'mainnet') + '…');
+      await ensureKaswareSigner(wallet);
       setSheetStatus('Approve compound in KasWare…');
       const result = await compoundWithKasware(wallet.address);
       afterTx();
@@ -4067,6 +4069,7 @@ async function runCompound() {
       `, { confirm: 'Done', cancel: false, onConfirm: () => { closeSheet(); refreshAll(); } });
       return;
     }
+    await requirePin('Confirm compound');
     await loadKaspaSdk();
     setSheetStatus('Connecting to public Kaspa node…');
     await pingPublicNode();

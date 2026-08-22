@@ -4,7 +4,7 @@ import {
   validateAndCleanUtxo, deepCloneAndFreeze, kasToSompi,
   kaspaRestBase, networkId
 } from './crypto.js?v=90';
-import { kaswareSigning, sendKaspaWithKasware, sendKrc20WithKasware } from './kasware.js?v=93';
+import { kaswareSigning, sendKaspaWithKasware, sendKrc20WithKasware } from './kasware.js?v=97';
 
 function API() { return kaspaRestBase(); }
 
@@ -1456,6 +1456,7 @@ export async function compoundUtxos({ wallet, utxos }) {
   entries = [...entries].sort((a, b) => (a.amount < b.amount ? 1 : -1));
   const total = entries.reduce((a, e) => a + e.amount, 0n);
   const { rpc, url } = await connectPublicNode();
+  const net = networkId();
   const feeRate = await nodeFeeRate(rpc);
   const feeGuess = BigInt(Math.min(2_000_000, 450_000 + entries.length * 15_000));
   if (total <= feeGuess + 10_000n) throw new Error('Balance too small to cover the compound fee');
@@ -1470,7 +1471,7 @@ export async function compoundUtxos({ wallet, utxos }) {
       priorityFee: 0n,
       feeRate,
       sigOpCount: 1,
-      networkId: 'mainnet'
+      networkId: net
     });
     pendingList = built.transactions || [];
   } catch (e) {
@@ -1495,7 +1496,7 @@ export async function compoundUtxos({ wallet, utxos }) {
     const tx = pendingList[p].transaction;
     tx.version = 1;
     prepInputs(tx, { sigOpCount: 0, computeBudget: 10 });
-    try { k.updateTransactionMass('mainnet', tx); } catch {}
+    try { k.updateTransactionMass(net, tx); } catch {}
     let scripts = meetToccataFee(k, tx, priv, entries, 0n, -1);
     try {
       txId = await submitSignedRpc(k, rpc, url, tx, {

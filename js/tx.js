@@ -334,13 +334,13 @@ export async function buildRecurringChain({
   return { ...chain, type: 'recurring', paySompi: String(pay), payeeAddr };
 }
 
-export async function buildDcaDrips({ ownerPubHex, destAddr, sliceSompi, periods, intervalMs }) {
+export async function buildDcaDrips({ ownerPubHex, destAddr, sliceSompi, destAmtSompi, periods, intervalMs }) {
   const k = await loadKaspaSdk();
   const n = Math.max(1, Math.min(8, Number(periods) || 1));
   const daaNow = await currentDaa();
   const window = Math.max(10, Math.round(Number(intervalMs || 3600000) / 1000 * 10));
   const destSpk = spkHexFromAddr(k, destAddr);
-  const destAmt = BigInt(sliceSompi);
+  const destAmt = BigInt(destAmtSompi || sliceSompi);
   const fund = destAmt + HOP_FEE;
   const drips = [];
   for (let i = 0; i < n; i++) {

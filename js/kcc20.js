@@ -113,9 +113,9 @@ export function setVaultOwner(addr) {
   const scoped = VAULTS_KEY + ':' + vaultOwner;
   try {
     const already = JSON.parse(localStorage.getItem(scoped) || 'null');
-    if (Array.isArray(already)) return;
     const legacy = JSON.parse(localStorage.getItem(VAULTS_KEY) || '[]');
-    if (Array.isArray(legacy) && legacy.length) {
+    const have = Array.isArray(already) ? already : [];
+    if (Array.isArray(legacy) && legacy.length && have.length === 0) {
       localStorage.setItem(scoped, JSON.stringify(legacy));
     }
   } catch {}
@@ -123,6 +123,27 @@ export function setVaultOwner(addr) {
 
 function vaultStoreKey() {
   return vaultOwner ? VAULTS_KEY + ':' + vaultOwner : VAULTS_KEY;
+}
+
+function vaultStoreKeys() {
+  const keys = [VAULTS_KEY];
+  const a = String(vaultOwner || '');
+  if (a) {
+    keys.push(VAULTS_KEY + ':' + a);
+    const i = a.indexOf(':');
+    if (i > 0) {
+      const p = a.slice(i + 1);
+      keys.push(VAULTS_KEY + ':kaspa:' + p);
+      keys.push(VAULTS_KEY + ':kaspatest:' + p);
+    }
+  }
+  try {
+    for (let i = 0; i < localStorage.length; i++) {
+      const k = localStorage.key(i);
+      if (k && k.startsWith(VAULTS_KEY)) keys.push(k);
+    }
+  } catch {}
+  return [...new Set(keys)];
 }
 
 /** Human amount → raw integer string (Kasplex / KCC20 units). */
@@ -180,23 +201,31 @@ export function removeToken(ticker) {
 }
 
 export function loadVaults() {
-  try {
-    const raw = JSON.parse(localStorage.getItem(vaultStoreKey()) || '[]');
-    return Array.isArray(raw) ? raw : [];
-  } catch {
-    return [];
+  const seen = new Set();
+  const out = [];
+  for (const key of vaultStoreKeys()) {
+    try {
+      const raw = JSON.parse(localStorage.getItem(key) || '[]');
+      for (const v of Array.isArray(raw) ? raw : []) {
+        if (!v?.address || seen.has(v.address)) continue;
+        seen.add(v.address);
+        out.push(v);
+      }
+    } catch {}
   }
+  return out;
 }
 
 export function saveVault(vault) {
-  const list = loadVaults();
-  list.unshift({ ...vault, createdAt: Date.now(), walletAddress: vaultOwner || vault.walletAddress || '' });
-  localStorage.setItem(vaultStoreKey(), JSON.stringify(list.slice(0, 40)));
+  const row = { ...vault, createdAt: vault.createdAt || Date.now(), walletAddress: vaultOwner || vault.walletAddress || '' };
+  const list = loadVaults().filter(v => v.address !== row.address);
+  list.unshift(row);
+  localStorage.setItem(vaultStoreKey(), JSON.stringify(list.slice(0, 80)));
 }
 
 export function updateVault(address, patch) {
   const list = loadVaults().map(v => v.address === address ? { ...v, ...patch } : v);
-  localStorage.setItem(vaultStoreKey(), JSON.stringify(list));
+  localStorage.setItem(vaultStoreKey(), JSON.stringify(list.slice(0, 80)));
 }
 
 export function formatAmount(sompi, decimals = 8) {

@@ -10,7 +10,7 @@ import {
   loadVaults, saveVault, updateVault, formatAmount, formatTokenUnits, tokenColor,
   fetchKcc20Portfolio, fetchKrc20Portfolio, fetchKcc20PortfolioMany, fetchKrc20PortfolioMany,
   krc20Logo, toTokenRaw, setVaultOwner, kcc20Identicon, VAULT_GROUPS
-} from './kcc20.js?v=89';
+} from './kcc20.js?v=105';
 import { parseIntent, describeIntent, askFor, parseDurationField, interpretVaultChat, normalizeChat } from './intent.js?v=89';
 import { payloadFromAddress } from './script.js?v=90';
 import { explainTransaction, scorpionAnswer } from './scorpion.js?v=89';
@@ -22,7 +22,7 @@ import {
   fetchOwnedUtxos, buildSentinelChain, buildRecurringChain, buildHashlockCovenant,
   newHashlockSecret, checkinHop, currentHop, parseXmssKit, p2shFromRedeemHex, spendXmssVault,
   disconnectRpc, buildDcaDrips, sendKasMany, releaseDcaDrip
-} from './tx.js?v=104';
+} from './tx.js?v=105';
 import { kronMarkets, quoteKronTrade, executeKronTrade, formatKasSompi, lookupKronTick, tradeCostLines, attachKronLogos, kronCandles } from './kronTrade.js?v=101';
 import {
   migrateReceiveBook, ownedAddresses, markAddressUsed, currentReceive,
@@ -45,7 +45,7 @@ import {
 } from './atrade.js?v=100';
 import { SCORPION_MEMORY } from './scorpionMemory.js?v=100';
 
-export const BUILD = '104';
+export const BUILD = '105';
 
 const TOKEN_FALLBACK_LOGO = 'assets/ttt.png';
 
@@ -93,7 +93,7 @@ function vaultCounterpartyKey(vault) {
 }
 
 function isHopVault(v) {
-  return v?.type === 'sentinel' || v?.type === 'recurring';
+  return v?.type === 'sentinel' || v?.type === 'recurring' || v?.type === 'dca';
 }
 
 function canCheckinVault(v) {
@@ -4461,11 +4461,22 @@ function paintDcaPlan() {
   if (!(budget >= slice)) { box.textContent = 'Budget must cover at least one buy.'; return; }
   if (buys < 1) { box.textContent = 'Budget ÷ each buy must be at least 1 buy.'; return; }
   const n = Math.min(8, buys);
-  const lockKas = n * (slice + 0.01);
-  box.innerHTML = `<b>${esc(tick)}</b> · ${n} time capsule${n === 1 ? '' : 's'} of ${slice} KAS ${esc(dcaEveryLabel(every))}.
-    You lock ~${lockKas.toFixed(2)} KAS on-chain now (one signature). Each capsule drips that slice into this wallet, then we buy ${esc(tick)}.
-    Max 8 capsules. We never custody the coins.`;
+  const later = Math.max(0, n - 1);
+  box.innerHTML = `<b>${esc(tick)}</b> · first buy of ${slice} KAS <b>when you sign</b>, then ${later} capsule${later === 1 ? '' : 's'} ${esc(dcaEveryLabel(every))}. Quoting fees…`;
   paintDcaLive();
+  const gen = (paintDcaPlan._g = (paintDcaPlan._g || 0) + 1);
+  quoteKronTrade({ tick, side: 'buy', amount: String(slice) }).then(q => {
+    if (paintDcaPlan._g !== gen || !box.isConnected) return;
+    paintDcaPlan._q = q;
+    const leave = Number(q.nativeLeave || 0) / 1e8;
+    const lockKas = later * (leave + 0.01);
+    box.innerHTML = `<b>${esc(tick)}</b> · buy ${slice} KAS now, then ${later} locked slice${later === 1 ? '' : 's'} ${esc(dcaEveryLabel(every))}.
+      Each KRON buy: ${esc(formatKasSompi(q.kasIn))} into market · protocol ${esc(formatKasSompi(q.fee))} · cell 0.50 · network ~0.40 · ~${leave.toFixed(2)} KAS leaves the card.
+      You prefund ~${(leave + lockKas).toFixed(2)} KAS (${leave.toFixed(2)} now + ${lockKas.toFixed(2)} in capsules). Capsules only drip into another ${esc(tick)} buy.`;
+  }).catch(e => {
+    if (paintDcaPlan._g !== gen) return;
+    box.innerHTML = `<b>${esc(tick)}</b> · first buy now, then ${later} capsules. Could not quote fees: ${esc(errText(e))}`;
+  });
 }
 
 function paintDcaLive() {
@@ -4530,70 +4541,89 @@ async function startDcaFromForm() {
   if (kaswareEnabled()) {
     try { await ensureKaswareSigner(wallet); }
     catch (e) { toast(errText(e)); return; }
-    toast('Approve the lock in KasWare — one signature for every capsule');
+    toast('Approve in KasWare — first KRON buy, then lock the remaining capsules');
   } else {
     if (!hexKey(wallet.privKey)) {
       toast('Import the 64-hex key to sign natively, or turn KasWare on');
       return;
     }
-    try { await requirePin('Lock DCA capsules for ' + tick); }
+    try { await requirePin('DCA first buy + lock capsules for ' + tick); }
     catch (e) { if (errText(e) === 'cancelled') return; toast(errText(e)); return; }
   }
-  toast('Building ' + n + ' time capsules…');
-  const sliceSompi = kasToSompi(slice);
-  const built = await buildDcaDrips({
-    ownerPubHex: wallet.pubKey,
-    destAddr: wallet.address,
-    sliceSompi,
-    periods: n,
-    intervalMs: every
-  });
-  const outputs = built.drips.map(d => ({ address: d.address, amount: BigInt(d.value) }));
-  toast('Locking ' + n + ' capsules on Kaspa…');
-  const utxosNow = await fetchAddressUtxos(wallet.address).catch(() => []);
-  const fund = await sendKasMany({
+  toast('Buying first ' + slice + ' KAS of ' + tick + '…');
+  const q = paintDcaPlan._q || await quoteKronTrade({ tick, side: 'buy', amount: String(slice) });
+  await executeKronTrade({
     wallet,
-    outputs,
-    utxos: utxosNow,
-    signWithKasware: kaswareEnabled()
+    tick,
+    side: 'buy',
+    amount: String(slice),
+    utxos: await fetchAddressUtxos(wallet.address).catch(() => []),
+    forceKasware: kaswareEnabled(),
+    onStatus: (m) => toast(m)
   });
-  for (const d of built.drips) {
-    saveVault({
-      type: 'dca',
-      name: 'DCA ' + tick,
-      address: d.address,
-      scriptHex: d.redeemHex,
-      redeemHex: d.redeemHex,
-      spkHex: d.spkHex,
-      unlockDaa: d.unlockDaa,
-      unlockAt: d.unlockAt,
-      destAmt: d.destAmt,
-      nextAmt: d.nextAmt,
-      hops: [d],
-      hopIndex: 0,
-      params: {
-        beneficiary: wallet.address,
-        dcaTick: tick,
-        sliceKas: slice,
-        amountKas: Number(d.value) / 1e8
-      },
-      status: 'locked',
-      fundedSompi: Number(d.value),
-      fundTxId: fund.txId
+  afterTx();
+  const later = Math.max(0, n - 1);
+  const leave = BigInt(q.nativeLeave || kasToSompi(slice + 1.5));
+  let fund = { txId: '', feeKas: 0 };
+  let drips = [];
+  if (later > 0) {
+    toast('Locking ' + later + ' capsules on Kaspa…');
+    setVaultOwner(wallet.address);
+    const built = await buildDcaDrips({
+      ownerPubHex: wallet.pubKey,
+      destAddr: wallet.address,
+      sliceSompi: kasToSompi(slice),
+      destAmtSompi: leave,
+      periods: later,
+      intervalMs: every
     });
+    drips = built.drips;
+    const outputs = drips.map(d => ({ address: d.address, amount: BigInt(d.value) }));
+    fund = await sendKasMany({
+      wallet,
+      outputs,
+      utxos: await fetchAddressUtxos(wallet.address).catch(() => []),
+      signWithKasware: kaswareEnabled()
+    });
+    for (const d of drips) {
+      saveVault({
+        type: 'dca',
+        name: 'DCA ' + tick,
+        address: d.address,
+        scriptHex: d.redeemHex,
+        redeemHex: d.redeemHex,
+        spkHex: d.spkHex,
+        unlockDaa: d.unlockDaa,
+        unlockAt: d.unlockAt,
+        destAmt: d.destAmt,
+        nextAmt: d.nextAmt,
+        hops: [d],
+        hopIndex: 0,
+        params: {
+          beneficiary: wallet.address,
+          dcaTick: tick,
+          sliceKas: slice,
+          amountKas: Number(d.value) / 1e8
+        },
+        status: 'locked',
+        fundedSompi: Number(d.value),
+        fundTxId: fund.txId,
+        tick
+      });
+    }
   }
   saveDcaJob({
-    on: true,
+    on: later > 0,
     mode: 'covenant',
     tick,
     sliceKas: slice,
     budgetKas: n * slice,
     maxBuys: n,
-    buys: 0,
-    spentKas: 0,
+    buys: 1,
+    spentKas: slice,
     intervalMs: every,
     fundTxId: fund.txId,
-    vaults: built.drips.map(d => ({
+    vaults: drips.map(d => ({
       address: d.address,
       redeemHex: d.redeemHex,
       scriptHex: d.redeemHex,
@@ -4604,15 +4634,18 @@ async function startDcaFromForm() {
       swept: false,
       bought: false
     })),
-    nextAt: built.drips[0]?.unlockAt || (Date.now() + every),
-    last: 'locked on-chain · first capsule ' + dcaEveryLabel(every),
+    nextAt: drips[0]?.unlockAt || 0,
+    last: later ? ('bought now · next capsule ' + dcaEveryLabel(every)) : 'single buy complete',
     startedAt: Date.now(),
     walletId: wallet.id,
     address: wallet.address
   });
   afterTx();
-  startDcaLoop();
-  toast('DCA locked on-chain for ' + tick);
+  if (later > 0) startDcaLoop();
+  setVaultTab('mine');
+  setVaultHistory(false);
+  renderVault();
+  toast(later ? ('Bought ' + tick + ' · ' + later + ' capsules locked') : ('Bought ' + tick));
   paintDcaPlan();
 }
 
@@ -4661,6 +4694,7 @@ async function tickDca() {
       drip.swept = true;
       drip.buyDue = true;
       drip.sweepTx = rel.txId || '';
+      try { updateVault(drip.address, { status: 'swept', unlockTxId: rel.txId, fundedSompi: 0 }); } catch {}
       job.last = 'capsule dripped · ' + (rel.txId || '').slice(0, 10);
       saveDcaJob(job);
       toast(job.tick + ' capsule opened');
@@ -4868,16 +4902,21 @@ async function reviewTrade() {
     if (!validTick(plan.tick)) { toast('Look up a ticker first'); return; }
     if (!(plan.slice >= 0.5) || plan.buys < 1) { toast('Set budget and each buy'); return; }
     const n = Math.min(8, plan.buys);
-    const lockKas = n * (plan.slice + 0.01);
+    const q = paintDcaPlan._q;
+    const leave = q ? Number(q.nativeLeave || 0) / 1e8 : plan.slice + 1.5;
+    const later = Math.max(0, n - 1);
     openSheet('Review DCA ' + plan.tick, `
       <div class="kv"><span class="k">Token</span><span class="v">${esc(plan.tick)}</span></div>
-      <div class="kv"><span class="k">Capsules</span><span class="v">${n} × ${plan.slice} KAS</span></div>
-      <div class="kv"><span class="k">Opens</span><span class="v">${esc(dcaEveryLabel(plan.every))}</span></div>
-      <div class="kv"><span class="k">Lock now</span><span class="v">~${lockKas.toFixed(2)} KAS on-chain</span></div>
-      <div class="kv"><span class="k">Sign</span><span class="v">${kaswareEnabled() ? 'KasWare once' : 'Native PIN once'}</span></div>
-      <p class="muted" style="text-align:left;padding-top:8px;">Your budget is locked in Kaspa time capsules (CLTV). This app never holds it. Each capsule opens on schedule and can drip to this wallet without another PIN. Then we buy ${esc(plan.tick)} (Native key stays in this session, or KasWare pops that swap if toggled on). Max 8 capsules.</p>
+      <div class="kv"><span class="k">First buy</span><span class="v">${plan.slice} KAS now, when you sign</span></div>
+      <div class="kv"><span class="k">Then</span><span class="v">${later} capsule${later === 1 ? '' : 's'} ${esc(dcaEveryLabel(plan.every))}</span></div>
+      ${q ? `<div class="kv"><span class="k">Into market</span><span class="v">${esc(formatKasSompi(q.kasIn))} KAS</span></div>
+      <div class="kv"><span class="k">Protocol</span><span class="v">${esc(formatKasSompi(q.fee))} KAS</span></div>
+      <div class="kv"><span class="k">Cell + network</span><span class="v">0.50 + ~0.40 KAS</span></div>
+      <div class="kv"><span class="k">Per buy leaves</span><span class="v">~${leave.toFixed(2)} KAS</span></div>` : ''}
+      <div class="kv"><span class="k">Prefund capsules</span><span class="v">~${(later * (leave + 0.01)).toFixed(2)} KAS on-chain</span></div>
+      <p class="muted" style="text-align:left;padding-top:8px;">First slice buys ${esc(plan.tick)} immediately. The rest is locked in CLTV vaults sized for a real KRON buy (fees included). Capsules drip only into later ${esc(plan.tick)} buys. This app never holds the coins.</p>
     `, {
-      confirm: kaswareEnabled() ? 'Lock capsules (KasWare)' : 'Lock capsules with PIN',
+      confirm: kaswareEnabled() ? 'Buy now + lock (KasWare)' : 'Buy now + lock with PIN',
       gold: true,
       onConfirm: async () => { closeSheet(); await startDcaFromForm(); }
     });
@@ -7002,7 +7041,12 @@ function bind() {
     const tab = t.dataset.tab;
     showPage(tab);
     if (tab === 'tokens') setAtPane(atPane || 'book');
-    if (tab === 'vault') renderVault();
+    if (tab === 'vault') {
+      setVaultTab('mine');
+      const all = loadVaults();
+      const live = all.some(v => !isVaultHistory(v));
+      setVaultHistory(!live && all.length > 0);
+    }
     if (tab === 'activity') renderActivity(window.__txs || []);
     if (tab === 'you') renderProfile();
     if (tab === 'home') refreshAll();

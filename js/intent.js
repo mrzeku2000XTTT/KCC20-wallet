@@ -5,8 +5,112 @@ const SKIP_TICK = new Set([
   'KAS', 'KASPA', 'FOR', 'MIN', 'MINS', 'MINUTE', 'MINUTES', 'HOUR', 'HOURS', 'HRS',
   'DAY', 'DAYS', 'SEC', 'SECS', 'SECOND', 'SECONDS', 'WEEK', 'WEEKS',
   'LOCK', 'HOLD', 'SEND', 'PAY', 'THE', 'AND', 'WITH', 'THIS', 'THAT', 'FROM',
-  'TIME', 'CAPSULE', 'FREEZE', 'VAULT', 'TOKEN', 'TOKENS'
+  'TIME', 'CAPSULE', 'FREEZE', 'VAULT', 'TOKEN', 'TOKENS',
+  'RENT', 'HOUSE', 'CAR', 'NOTE', 'DATE', 'UNTIL', 'DUE', 'SAVE', 'SAVINGS', 'BILL'
 ]);
+
+const LIFE_LABEL = {
+  rent: 'House rent',
+  car: 'Car note',
+  spend: 'Spending',
+  control: 'Control',
+  save: 'Savings'
+};
+
+const MONTHS = {
+  january: 0, jan: 0, february: 1, feb: 1, march: 2, mar: 2, april: 3, apr: 3, may: 4,
+  june: 5, jun: 5, july: 6, jul: 6, august: 7, aug: 7, september: 8, sep: 8, sept: 8,
+  october: 9, oct: 9, november: 10, nov: 10, december: 11, dec: 11
+};
+
+export function parseLifeKind(text) {
+  const t = String(text || '').toLowerCase();
+  if (/\b(rent|lease|landlord|apartment|house\s*rent|housing)\b/.test(t)) return 'rent';
+  if (/\b(car\s*note|car\s*payment|auto\s*loan|vehicle|car\s+loan)\b/.test(t)) return 'car';
+  if (/\b(sav(e|ing|ings)|emergency\s*fund|rainy\s*day)\b/.test(t)) return 'save';
+  if (/\b(control|envelope|earmark|allowance)\b/.test(t)) return 'control';
+  if (/\b(spend|spending|grocery|utilities|wifi|electric|bill)\b/.test(t)) return 'spend';
+  return null;
+}
+
+export function parseUnlockAnytime(text) {
+  return /\b(unlock\s+any\s*time|whenever\s+i\s+say|can\s+unlock|no\s+timer|flexible|unlock\s+whenever|i\s+can\s+unlock)\b/i.test(String(text || ''));
+}
+
+function parseClock(text) {
+  const m = String(text || '').match(/\b(?:at\s+)?(\d{1,2})(?::(\d{2}))?\s*(am|pm)?\b/i);
+  if (!m) return { h: 0, mi: 0, hit: false };
+  let h = Number(m[1]);
+  const mi = m[2] != null ? Number(m[2]) : 0;
+  const ap = (m[3] || '').toLowerCase();
+  if (ap === 'pm' && h < 12) h += 12;
+  if (ap === 'am' && h === 12) h = 0;
+  if (!ap && h > 23) return { h: 0, mi: 0, hit: false };
+  return { h, mi, hit: true };
+}
+
+function dueStamp(y, mo, d, h, mi) {
+  const dt = new Date(Date.UTC(y, mo, d, h, mi, 0));
+  if (Number.isNaN(dt.getTime())) return null;
+  const p = n => String(n).padStart(2, '0');
+  return { at: dt.getTime(), label: `${y}-${p(mo + 1)}-${p(d)} ${p(h)}:${p(mi)} UTC` };
+}
+
+export function parseDueAt(text) {
+  const t = String(text || '');
+  const clock = parseClock(t);
+  let m = t.match(/\b(20\d{2})[-/](\d{1,2})[-/](\d{1,2})(?:[ T](\d{1,2}):(\d{2}))?/);
+  if (m) {
+    const h = m[4] != null ? Number(m[4]) : clock.h;
+    const mi = m[5] != null ? Number(m[5]) : clock.mi;
+    return dueStamp(Number(m[1]), Number(m[2]) - 1, Number(m[3]), h, mi);
+  }
+  m = t.match(/\b(jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|jun(?:e)?|jul(?:y)?|aug(?:ust)?|sep(?:t(?:ember)?)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)\.?\s+(\d{1,2})(?:st|nd|rd|th)?(?:,?\s*(20\d{2}))?/i);
+  if (m) {
+    const mo = MONTHS[m[1].toLowerCase()];
+    const d = Number(m[2]);
+    let y = m[3] ? Number(m[3]) : new Date().getUTCFullYear();
+    let s = dueStamp(y, mo, d, clock.h, clock.mi);
+    if (s && s.at < Date.now() - 3600000 && !m[3]) s = dueStamp(y + 1, mo, d, clock.h, clock.mi);
+    return s;
+  }
+  m = t.match(/\b(?:until|on|by)\s+(?:the\s+)?(\d{1,2})(?:st|nd|rd|th)\b/i);
+  if (m) {
+    const d = Number(m[1]);
+    const now = new Date();
+    let y = now.getUTCFullYear();
+    let mo = now.getUTCMonth();
+    let s = dueStamp(y, mo, d, clock.h, clock.mi);
+    if (s && s.at < Date.now()) {
+      mo += 1;
+      if (mo > 11) { mo = 0; y += 1; }
+      s = dueStamp(y, mo, d, clock.h, clock.mi);
+    }
+    return s;
+  }
+  if (/\btomorrow\b/i.test(t)) {
+    const n = new Date(Date.now() + 86400000);
+    return dueStamp(n.getUTCFullYear(), n.getUTCMonth(), n.getUTCDate(), clock.hit ? clock.h : 12, clock.mi);
+  }
+  const week = ['sunday', 'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday'];
+  m = t.match(/\b(?:next\s+)?(sunday|monday|tuesday|wednesday|thursday|friday|saturday)\b/i);
+  if (m) {
+    const want = week.indexOf(m[1].toLowerCase());
+    const now = new Date();
+    let add = (want - now.getUTCDay() + 7) % 7;
+    if (add === 0) add = 7;
+    const n = new Date(Date.now() + add * 86400000);
+    return dueStamp(n.getUTCFullYear(), n.getUTCMonth(), n.getUTCDate(), clock.hit ? clock.h : 12, clock.mi);
+  }
+  if (/\bnext\s+month\b/i.test(t)) {
+    const now = new Date();
+    let y = now.getUTCFullYear();
+    let mo = now.getUTCMonth() + 1;
+    if (mo > 11) { mo = 0; y += 1; }
+    return dueStamp(y, mo, Math.min(now.getUTCDate(), 28), clock.hit ? clock.h : 12, clock.mi);
+  }
+  return null;
+}
 
 const UNIT_TO_DAYS = {
   s: 1 / 86400, sec: 1 / 86400, secs: 1 / 86400, second: 1 / 86400, seconds: 1 / 86400,
@@ -84,6 +188,7 @@ function detectType(text, prev) {
   if (/\b(recurring|subscription|x402)\b/.test(t)) return 'recurring';
   if (/\b(hash\s*lock|htlc|hash vault)\b/.test(t)) return 'hashlock';
   if (/\b(send|pay|transfer)\b/.test(t) && parseAddress(t)) return 'send';
+  if (parseLifeKind(t) || parseUnlockAnytime(t) || (/\b(lock|hold|save|put\s+aside)\b/.test(t) && parseDueAt(t))) return 'life';
   if (/\b(lock|timelock|time\s*capsule|hold|freeze|vault)\b/.test(t) && parseTicker(t)) return 'kcc20lock';
   if (/\b(lock|timelock|time\s*capsule|hold|freeze|vault)\b/.test(t)) return 'timelock';
   if (parseDuration(t) && !parseAddress(t) && parseTicker(t)) return 'kcc20lock';
@@ -105,10 +210,14 @@ export function parseIntent(text, prev = null) {
       }
     : null);
   const address = parseAddress(raw) || prev?.params?.buyerAddress || prev?.params?.counterparty || prev?.params?.destination || null;
-  const type = detectType(raw, prev);
+  const lifeKind = parseLifeKind(raw) || prev?.params?.lifeKind || null;
+  const due = parseDueAt(raw) || (prev?.params?.dueAt ? { at: prev.params.dueAt, label: prev.params.dueLabel } : null);
+  const unlockAnytime = parseUnlockAnytime(raw) || (!!prev?.params?.unlockAnytime && !due);
+  let type = detectType(raw, prev);
+  if (lifeKind || unlockAnytime || (due && amountKas)) type = 'life';
 
-  if (!type && !amountKas && !tokenAmt && !duration && !address) {
-    return { error: 'unparsed', hint: 'Try: Lock 0.15 KAS for 3 minutes — or Lock 20 KKDAG for 3 minutes' };
+  if (!type && !amountKas && !tokenAmt && !duration && !address && !lifeKind && !due) {
+    return { error: 'unparsed', hint: 'Try: Lock 1000 KAS for rent until September 1 2026 9:00 UTC' };
   }
 
   const params = {};
@@ -127,16 +236,37 @@ export function parseIntent(text, prev = null) {
     params.lockMinutes = duration.minutes;
     params.durationLabel = duration.label;
   }
+  if (type === 'life') {
+    params.lifeKind = lifeKind || (unlockAnytime ? 'control' : 'spend');
+    params.lifeLabel = LIFE_LABEL[params.lifeKind] || 'Real life';
+    params.unlockAnytime = !!(unlockAnytime || (params.lifeKind === 'control' && !due && !duration));
+    if (due && !params.unlockAnytime) {
+      params.dueAt = due.at;
+      params.dueLabel = due.label;
+      const mins = Math.max(1, Math.round((due.at - Date.now()) / 60000));
+      params.lockMinutes = mins;
+      params.lockDays = mins / 1440;
+      params.durationLabel = 'until ' + due.label;
+    }
+  }
   if (type === 'escrow' && address) params.buyerAddress = address;
   if (type === 'multisig' && address) params.counterparty = address;
   if (type === 'send' && address) params.destination = address;
 
   const missing = [];
-  if (!type) missing.push('what to do (lock, escrow, send, freeze, multisig)');
+  if (!type) missing.push('what to do (lock, escrow, send, freeze, rent, savings)');
   if (type === 'kcc20lock') {
     if (!params.amountToken) missing.push('token amount (e.g. 20 KKDAG)');
     if (!params.tick) missing.push('KCC20 ticker');
     if (!params.lockMinutes && !params.lockDays) missing.push('how long (e.g. 3 minutes)');
+  } else if (type === 'life') {
+    if (!params.amountKas) missing.push('amount in KAS');
+    if (!params.unlockAnytime && !params.lockMinutes && !params.dueAt) {
+      missing.push('when it is due (a date/time, or say unlock anytime)');
+    }
+    if (params.dueAt && params.dueAt < Date.now() - 60000 && !params.unlockAnytime) {
+      missing.push('a future due date');
+    }
   } else {
     if (!params.amountKas) missing.push('amount in KAS');
     if (type === 'timelock' && !params.lockMinutes && !params.lockDays) missing.push('how long (e.g. 3 minutes)');
@@ -160,6 +290,11 @@ export function describeIntent(intent) {
   const amt = p.amountKas != null ? `${p.amountKas} KAS` : 'an amount';
   const tokenAmt = p.amountToken != null ? `${p.amountToken} ${p.tick || 'KCC20'}` : null;
   const dur = p.durationLabel || (p.lockMinutes ? `${p.lockMinutes} minutes` : (p.lockDays ? `${p.lockDays} days` : 'a duration'));
+  if (intent.type === 'life') {
+    const kind = p.lifeLabel || LIFE_LABEL[p.lifeKind] || 'Real life';
+    if (p.unlockAnytime) return `${kind}: lock ${amt} in a control envelope. You can unlock anytime with PIN.`;
+    return `${kind}: lock ${amt} until ${p.dueLabel || dur}. Cannot unlock early.`;
+  }
   if (intent.type === 'kcc20lock') return `KCC20 freeze: lock ${tokenAmt || ('KCC20' + (p.tick ? ' ' + p.tick : ''))} for ${dur}. Same CLTV as native KAS.`;
   if (intent.type === 'timelock') return `Time capsule: lock ${amt} for ${dur}.`;
   if (intent.type === 'sentinel') return `Sentinel: lock ${amt} for ${dur}, check-in or release to heir.`;
@@ -177,6 +312,7 @@ export function askFor(missing) {
   if (first.includes('token amount')) return 'How many tokens? Example: “20 KKDAG”.';
   if (first.includes('KCC20 ticker')) return 'Which KCC20 ticker? Example: KKDAG.';
   if (first.includes('amount')) return 'How much KAS? You can say “.15 kas”.';
+  if (first.includes('when it is due') || first.includes('future due')) return 'When is it due? Example: “September 1 2026 9:00 UTC”, or say “unlock anytime”.';
   if (first.includes('how long')) return 'How long should it stay locked? Example: “3 minutes” or “30 days”.';
   if (first.includes('buyer')) return 'Paste the buyer’s kaspa: address.';
   if (first.includes('counterparty')) return 'Paste the other signer’s kaspa: address.';
@@ -229,7 +365,7 @@ function editDist(a, b) {
   return dp[a.length][b.length];
 }
 
-const KNOWN = ['lock', 'freeze', 'send', 'pay', 'escrow', 'multisig', 'sentinel', 'capsule', 'minutes', 'hours', 'days', 'kas', 'kkdag', 'kron', 'kpulse', 'vault', 'hold'];
+const KNOWN = ['lock', 'freeze', 'send', 'pay', 'escrow', 'multisig', 'sentinel', 'capsule', 'minutes', 'hours', 'days', 'kas', 'kkdag', 'kron', 'kpulse', 'vault', 'hold', 'rent', 'until', 'due', 'save'];
 
 export function normalizeChat(text) {
   let t = String(text || '').trim();
@@ -266,7 +402,7 @@ export function interpretVaultChat(text, prev = null) {
   if (/^(hi|hey|hello|yo|sup|help|what can you do|\?)\b/i.test(low) || low.length < 3) {
     return {
       kind: 'talk',
-      text: 'Tell me in plain words. Examples: “lock 0.15 kas for 3 minutes”, “freeze 10 kdag 1 min”, “send 2 kas to wallet 2”. I fix typos.'
+      text: 'Tell me in plain words. Examples: “lock 1000 kas for rent until September 1 2026 9:00 UTC”, “save 200 kas, unlock anytime”, “lock 0.15 kas for 3 minutes”.'
     };
   }
   const intent = parseIntent(norm, prev);

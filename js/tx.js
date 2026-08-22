@@ -158,6 +158,25 @@ export async function currentDaa() {
   return Number(info.virtualDaaScore ?? info.virtual_daa_score ?? 0);
 }
 
+export async function buildOwnerEnvelope({ pubkeyHex }) {
+  const k = await loadKaspaSdk();
+  const sb = new k.ScriptBuilder();
+  sb.addData(hexToBytes(pubkeyHex));
+  sb.addOp(k.Opcodes.OpCheckSig);
+  const redeemHex = sb.toString();
+  const p2sh = sb.createPayToScriptHashScript();
+  const net = networkId() === 'testnet-10' ? 'testnet-10' : 'mainnet';
+  const addr = k.addressFromScriptPublicKey(p2sh, net);
+  if (!addr) throw new Error('SDK did not produce a P2SH address');
+  return {
+    address: String(addr),
+    redeemHex,
+    spkHex: p2sh.script,
+    unlockDaa: null,
+    type: 'life'
+  };
+}
+
 export async function buildTimelockCovenant({ pubkeyHex, minutes }) {
   const k = await loadKaspaSdk();
   const daaNow = await currentDaa();

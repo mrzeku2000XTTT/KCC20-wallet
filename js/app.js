@@ -10,20 +10,20 @@ import {
   loadVaults, saveVault, updateVault, deleteVault, purgeVaultsWhere, formatAmount, formatTokenUnits, tokenColor,
   fetchKcc20Portfolio, fetchKrc20Portfolio, fetchKcc20PortfolioMany, fetchKrc20PortfolioMany,
   fetchKronAddrTrades, fetchKronTokenUtxos, KRON_IDX,
-  krc20Logo, toTokenRaw, setVaultOwner, kcc20Identicon, VAULT_GROUPS
-} from './kcc20.js?v=115';
-import { parseIntent, describeIntent, askFor, parseDurationField, interpretVaultChat, normalizeChat } from './intent.js?v=89';
+  krc20Logo, toTokenRaw, setVaultOwner, kcc20Identicon, VAULT_GROUPS, LIFE_KINDS, lifeKindMeta
+} from './kcc20.js?v=117';
+import { parseIntent, describeIntent, askFor, parseDurationField, interpretVaultChat, normalizeChat } from './intent.js?v=117';
 import { payloadFromAddress } from './script.js?v=90';
 import { explainTransaction, scorpionAnswer } from './scorpion.js?v=114';
 import {
   sendKas, fetchAddressUtxos, fetchAddressBalance, loadKaspaSdk,
-  buildTimelockCovenant, buildEscrowCovenant, buildMultisigCovenant, currentDaa,
+  buildTimelockCovenant, buildOwnerEnvelope, buildEscrowCovenant, buildMultisigCovenant, currentDaa,
   pingPublicNode, sweepVault, toRpcTransaction, p2shSpendScript, planKasPayment, storageMassOk,
   compoundUtxos, sendKrc20, sendKcc20, loadKrc20Pending, lockKcc20Timelock, sweepKcc20Capsule,
   fetchOwnedUtxos, collectSpendableUtxos, buildSentinelChain, buildRecurringChain, buildHashlockCovenant,
   newHashlockSecret, checkinHop, currentHop, parseXmssKit, p2shFromRedeemHex, spendXmssVault,
   disconnectRpc, buildDcaDrips, sendKasMany, releaseDcaDrip, cancelDcaDrip
-} from './tx.js?v=113';
+} from './tx.js?v=117';
 import { kronMarkets, quoteKronTrade, executeKronTrade, formatKasSompi, lookupKronTick, tradeCostLines, attachKronLogos, kronCandles } from './kronTrade.js?v=106';
 import {
   migrateReceiveBook, ownedAddresses, markAddressUsed, currentReceive,
@@ -46,7 +46,7 @@ import {
 } from './atrade.js?v=100';
 import { SCORPION_MEMORY } from './scorpionMemory.js?v=100';
 
-export const BUILD = '116';
+export const BUILD = '117';
 
 const TOKEN_FALLBACK_LOGO = 'assets/ttt.png';
 
@@ -60,6 +60,7 @@ function productForIntent(intent) {
   if (intent.type === 'kcc20lock') return VAULT_PRODUCTS.find(p => p.id === 'kcc20freeze');
   if (intent.type === 'hashlock') return VAULT_PRODUCTS.find(p => p.id === 'hashlock');
   if (intent.type === 'xmss') return VAULT_PRODUCTS.find(p => p.id === 'xmss');
+  if (intent.type === 'life') return { id: 'life', name: 'Real life', type: 'life', tag: '⌂' };
   if (intent.type === 'timelock') return VAULT_PRODUCTS.find(p => p.id === 'timelock');
   return VAULT_PRODUCTS.find(p => p.id === intent.type)
     || VAULT_PRODUCTS.find(p => p.type === intent.type)
@@ -107,6 +108,10 @@ function vaultCounterpartyKey(vault) {
   return walletByAddress(addr)?.privKey || '';
 }
 
+function isLifeVault(v) {
+  return v?.type === 'life' || !!v?.lifeKind || !!v?.params?.lifeKind;
+}
+
 function isDcaVault(v) {
   return v?.type === 'dca' || /^DCA\s/i.test(String(v?.name || ''));
 }
@@ -126,6 +131,7 @@ function canCheckinVault(v) {
 function canSweepVault(v, daa) {
   if (!v?.address || v.status === 'swept' || v.status === 'unfunded') return false;
   const now = daa || lastDaa;
+  if (v.unlockAnytime || v.params?.unlockAnytime) return Number(v.fundedSompi || 0) > 0 || vaultLockedSompi(v) > 0;
   if (v.type === 'dca') return Number(v.fundedSompi || 0) > 0 || vaultLockedSompi(v) > 0;
   if (isHopVault(v)) {
     const hop = currentHop(v) || v;
@@ -1701,6 +1707,7 @@ function vaultStatusLine(v) {
     return `Hop ${i + 1}/${v.hops.length}${clock} · ${amt}`;
   }
   if (!locked && !tok) return `${v.status || 'unfunded'} · ${amt}`;
+  if (isLifeVault(v) && (v.unlockAnytime || v.params?.unlockAnytime)) return `Unlock anytime · ${amt}`;
   if (v.unlockDaa || v.unlockAt) {
     const sec = remainingLockSec(v.unlockDaa, v.unlockAt);
     const when = v.unlockAt ? ' · ' + formatUtc(v.unlockAt) : '';
@@ -1715,6 +1722,13 @@ function setVaultTab(tab) {
   document.querySelectorAll('#vault-seg button').forEach(b => b.classList.toggle('on', b.dataset.vtab === tab));
   $('vault-create')?.classList.toggle('hidden', tab !== 'create');
   $('vault-mine-wrap')?.classList.toggle('hidden', tab !== 'mine');
+  $('vault-life-wrap')?.classList.toggle('hidden', tab !== 'life');
+  if (tab === 'life') {
+    renderLifeVaults();
+    if ($('chat-input')) $('chat-input').placeholder = 'Lock 1000 KAS for rent until Sep 1 9:00 UTC…';
+  } else if ($('chat-input')) {
+    $('chat-input').placeholder = 'Tell Argent what to lock…';
+  }
 }
 
 let showVaultHistory = false;
@@ -1728,7 +1742,7 @@ function setVaultHistory(on) {
 }
 
 function renderVault() {
-  const all = loadVaults();
+  const all = loadVaults().filter(v => !isLifeVault(v));
   const history = all.filter(isVaultHistory);
   const live = all.filter(v => !isVaultHistory(v));
   const mine = showVaultHistory ? history : live;
@@ -1760,6 +1774,123 @@ function renderVault() {
     e.stopPropagation();
     sweepAllVaults().catch(err => toast(errText(err)));
   };
+  if (!$('vault-life-wrap')?.classList.contains('hidden')) renderLifeVaults();
+}
+
+let lifeFilter = 'all';
+let showLifeHistory = false;
+
+function renderLifeVaults() {
+  const box = $('vault-life');
+  const filters = $('life-filters');
+  if (filters) {
+    const chips = [{ id: 'all', label: 'All', tag: '◆' }, ...LIFE_KINDS];
+    filters.innerHTML = chips.map(k =>
+      `<button type="button" data-lifekind="${esc(k.id)}" class="${lifeFilter === k.id ? 'on' : ''}">${esc(k.tag || '')} ${esc(k.label)}</button>`
+    ).join('');
+  }
+  document.querySelectorAll('#life-hist-seg button').forEach(b => {
+    b.classList.toggle('on', (b.dataset.lifehist === 'history') === showLifeHistory);
+  });
+  if (!box) return;
+  let list = loadVaults().filter(isLifeVault);
+  list = showLifeHistory ? list.filter(isVaultHistory) : list.filter(v => !isVaultHistory(v));
+  if (lifeFilter !== 'all') list = list.filter(v => (v.lifeKind || v.params?.lifeKind) === lifeFilter);
+  if (!list.length) {
+    box.innerHTML = `<div class="empty vault-empty">${showLifeHistory
+      ? 'No finished real-life cases yet.'
+      : 'No real-life locks yet. Tell Argent: “lock 1000 kas for rent until September 1 2026 9:00 UTC”.'}</div>`;
+    return;
+  }
+  box.innerHTML = list.map(v => {
+    const meta = lifeKindMeta(v.lifeKind || v.params?.lifeKind);
+    const anytime = !!(v.unlockAnytime || v.params?.unlockAnytime);
+    const amt = formatAmount(vaultLockedSompi(v)) + ' KAS';
+    const due = v.unlockAt ? formatUtc(v.unlockAt) : (v.params?.dueLabel || '');
+    const sub = anytime
+      ? 'Unlock anytime with PIN'
+      : (due ? ('Due ' + due) : vaultStatusLine(v));
+    return `
+      <div class="row token-row vault-card life-card${showLifeHistory ? ' history' : ''}">
+        <div class="dot" style="background:rgba(212,176,122,.18);color:var(--gold-2)">${esc(meta.tag)}</div>
+        <div style="min-width:0;flex:1">
+          <div class="title">${esc(v.name || meta.label)}</div>
+          <div class="sub">${esc(sub)}</div>
+        </div>
+        <div class="life-amt">
+          <b>${esc(amt)}</b>
+          <em>${anytime ? 'Control' : (showLifeHistory ? 'Paid' : 'Locked')}</em>
+        </div>
+        <div class="vault-card-actions">
+          <button class="nav-btn ghost" data-vault="${esc(v.address || '')}">Info</button>
+          ${showLifeHistory ? '' : `<button class="nav-btn" data-sweep="${esc(v.address || '')}">${anytime ? 'Unlock' : 'Sweep'}</button>`}
+        </div>
+      </div>`;
+  }).join('');
+}
+
+function openLifeComposer(prefill = {}) {
+  const kind = prefill.lifeKind || lifeFilter !== 'all' ? (prefill.lifeKind || lifeFilter) : 'rent';
+  const meta = lifeKindMeta(kind);
+  const kasMax = maxFillForAsset({ native: true, protocol: 'kas', ticker: 'KAS', decimals: 8, balance: String(balanceSompi) });
+  openSheet(meta.label, `
+    <p class="muted" style="text-align:left;padding:0 0 10px;">${esc(meta.hint)} Argent compiles a real P2SH covenant.</p>
+    <div class="life-filters" id="life-kind-pick">
+      ${LIFE_KINDS.map(k => `<button type="button" data-pickkind="${esc(k.id)}" class="${k.id === kind ? 'on' : ''}">${esc(k.tag)} ${esc(k.label)}</button>`).join('')}
+    </div>
+    <div class="field"><label>Amount (KAS)</label>
+      <div class="dest-row">
+        <input id="life-amt" type="text" inputmode="decimal" placeholder="${esc(kasMax)}" value="${esc(prefill.amountKas || '')}">
+        <button class="max-btn" id="life-max" type="button">Max</button>
+      </div>
+    </div>
+    <label class="row" style="padding:10px 0;gap:10px;">
+      <input type="checkbox" id="life-anytime" ${prefill.unlockAnytime || kind === 'control' ? 'checked' : ''}>
+      <span>Unlock anytime with PIN</span>
+    </label>
+    <div class="field" id="life-due-wrap">
+      <label>Due date & time (local)</label>
+      <input id="life-due" type="datetime-local" value="${esc(prefill.dueLocal || '')}">
+    </div>
+  `, {
+    confirm: 'Build covenant',
+    gold: true,
+    onConfirm: () => {
+      const pick = document.querySelector('#life-kind-pick button.on')?.dataset.pickkind || kind;
+      const amt = Number($('life-amt')?.value);
+      const anytime = !!$('life-anytime')?.checked;
+      const local = $('life-due')?.value;
+      const dueAt = local ? new Date(local).getTime() : 0;
+      if (!(amt > 0)) throw new Error('Enter an amount');
+      if (!anytime && !(dueAt > Date.now())) throw new Error('Pick a future due date, or check unlock anytime');
+      const mins = anytime ? 0 : Math.max(1, Math.round((dueAt - Date.now()) / 60000));
+      const dueLabel = anytime ? '' : formatUtc(dueAt);
+      return buildCovenant({ id: 'life', type: 'life', name: lifeKindMeta(pick).label }, {
+        amountKas: amt,
+        lifeKind: pick,
+        lifeLabel: lifeKindMeta(pick).label,
+        unlockAnytime: anytime,
+        dueAt: anytime ? 0 : dueAt,
+        dueLabel,
+        lockMinutes: mins,
+        durationLabel: anytime ? 'unlock anytime' : ('until ' + dueLabel)
+      });
+    }
+  });
+  $('life-max')?.addEventListener('click', () => { if ($('life-amt')) $('life-amt').value = kasMax; haptic(); });
+  const syncAnytime = () => {
+    const on = !!$('life-anytime')?.checked;
+    $('life-due-wrap')?.classList.toggle('hidden', on);
+  };
+  $('life-anytime')?.addEventListener('change', syncAnytime);
+  syncAnytime();
+  $('life-kind-pick')?.addEventListener('click', e => {
+    const b = e.target.closest('[data-pickkind]');
+    if (!b) return;
+    $('life-kind-pick').querySelectorAll('button').forEach(x => x.classList.toggle('on', x === b));
+    if (b.dataset.pickkind === 'control' && $('life-anytime')) $('life-anytime').checked = true;
+    syncAnytime();
+  });
 }
 
 function sompiOf(v) {
@@ -6588,9 +6719,13 @@ async function buildCovenant(p, explicit) {
     toast('Enter an amount like 0.15');
     return;
   }
-  if ((p.type === 'timelock' || p.type === 'sentinel' || p.type === 'recurring' || p.type === 'hashlock')
+  if (p.type !== 'life' && (p.type === 'timelock' || p.type === 'sentinel' || p.type === 'recurring' || p.type === 'hashlock')
       && !params.lockDays && !params.lockMinutes) {
     toast('Enter a duration like 3 minutes');
+    return;
+  }
+  if (p.type === 'life' && !params.unlockAnytime && !params.lockMinutes && !params.dueAt) {
+    toast('Need a due date, or say unlock anytime');
     return;
   }
   if (p.type === 'escrow' && !params.buyerAddress) { toast('Need a buyer address'); return; }
@@ -6628,6 +6763,22 @@ async function buildCovenant(p, explicit) {
       payload.scriptBytes = kit.scriptBytes;
     } else if (p.type === 'timelock') {
       built = await buildTimelockCovenant({ pubkeyHex: wallet.pubKey, minutes });
+    } else if (p.type === 'life') {
+      const anytime = !!params.unlockAnytime;
+      if (anytime) {
+        built = await buildOwnerEnvelope({ pubkeyHex: wallet.pubKey });
+      } else {
+        const wait = Number(params.lockMinutes) || Math.round((Number(params.lockDays) || 0) * 1440)
+          || Math.max(1, Math.round((Number(params.dueAt) - Date.now()) / 60000));
+        if (!wait) throw new Error('Need a due date or duration');
+        built = await buildTimelockCovenant({ pubkeyHex: wallet.pubKey, minutes: wait });
+        payload.lockMinutes = wait;
+      }
+      payload.lifeKind = params.lifeKind || 'spend';
+      payload.lifeLabel = params.lifeLabel || lifeKindMeta(payload.lifeKind).label;
+      payload.unlockAnytime = anytime;
+      payload.dueAt = anytime ? 0 : (params.dueAt || (Date.now() + Number(payload.lockMinutes || 0) * 60000));
+      payload.dueLabel = params.dueLabel || '';
     } else if (p.type === 'sentinel') {
       const heir = payload.beneficiary || wallet.address;
       if (!isValidKaspaAddress(heir)) throw new Error('Beneficiary must be a kaspa: address');
@@ -6690,13 +6841,17 @@ async function buildCovenant(p, explicit) {
     if (!String(built.address).startsWith('kaspa:p')) {
       throw new Error('Expected a covenant P2SH (kaspa:p…) got ' + built.address);
     }
+    const life = p.type === 'life';
     const vault = {
       type: p.type,
-      name: p.name || p.type,
+      name: life ? (payload.lifeLabel || p.name) : (p.name || p.type),
       address: built.address,
       scriptHex: built.redeemHex,
       spkHex: built.spkHex,
       unlockDaa: built.unlockDaa || null,
+      unlockAt: life ? (payload.unlockAnytime ? 0 : (payload.dueAt || 0)) : null,
+      unlockAnytime: life ? !!payload.unlockAnytime : false,
+      lifeKind: life ? payload.lifeKind : '',
       hops: built.hops || null,
       hopIndex: built.hopIndex || 0,
       paySompi: built.paySompi || null,
@@ -6713,6 +6868,7 @@ async function buildCovenant(p, explicit) {
       mirrorVaultTo(payload.beneficiary, vault);
     }
     renderVault();
+    if (life) setVaultTab('life');
     openVaultReady(vault);
   } catch (e) { toast(errText(e)); }
 }
@@ -6832,6 +6988,9 @@ function openLockTimer(vault) {
   let help = 'Sweep returns KAS to this wallet.';
   if (kcc && locked) help = 'Still frozen. When the timer hits zero, Sweep returns the tokens plus leftover witness KAS.';
   else if (kcc) help = 'Lock has expired. Sweep now, or wait — auto-return is on.';
+  else if (isLifeVault(vault) && (vault.unlockAnytime || vault.params?.unlockAnytime)) help = 'Control envelope. Sweep returns KAS whenever you confirm with PIN.';
+  else if (isLifeVault(vault) && locked) help = 'Real-life lock. Sweep is blocked until the due time you set.';
+  else if (isLifeVault(vault)) help = 'Due time passed. Sweep returns this KAS to the wallet.';
   else if (vault.type === 'dca') help = 'Test DCA. Delete removes it from this device instantly. On-chain sweep is skipped.';
   else if (hop && locked) help = 'Check-in now to move the coins to the next hop. If this window ends, the beneficiary can claim.';
   else if (hop) help = 'Check-in window ended. Sweep / timeout releases to the beneficiary.';
@@ -7133,6 +7292,7 @@ async function argentRemote(message) {
     history: chatTurns.slice(-8),
     context: {
       products: VAULT_PRODUCTS.map(p => ({ id: p.id, name: p.name, type: p.type })),
+      lifeKinds: LIFE_KINDS,
       ticks,
       wallets: loadWalletList().map(w => ({ name: w.name, address: w.address }))
     }
@@ -7199,7 +7359,7 @@ async function sendChat() {
     if (!(remote?.reply || remote?.text)) {
       const fallback = localView.kind === 'talk'
         ? localView.text
-        : 'Argent here. I can lock KAS, freeze KCC20, escrow, 2-of-2, or send to wallet 2. Example: <em>lock .15 kas for 3 minutes</em>';
+        : 'Argent here. I lock rent, car notes, savings, and time capsules. Example: <em>lock 1000 kas for rent until September 1 2026 9:00 UTC</em>';
       appendChat('ai', fallback);
       chatTurns.push({ role: 'assistant', content: fallback.replace(/<[^>]+>/g, '') });
     }
@@ -7370,6 +7530,34 @@ function bind() {
     if (!btn?.dataset.vhist) return;
     haptic();
     setVaultHistory(btn.dataset.vhist === 'history');
+  });
+  $('life-filters')?.addEventListener('click', e => {
+    const b = e.target.closest('[data-lifekind]');
+    if (!b) return;
+    haptic();
+    lifeFilter = b.dataset.lifekind || 'all';
+    renderLifeVaults();
+  });
+  $('life-hist-seg')?.addEventListener('click', e => {
+    const b = e.target.closest('[data-lifehist]');
+    if (!b?.dataset.lifehist) return;
+    haptic();
+    showLifeHistory = b.dataset.lifehist === 'history';
+    renderLifeVaults();
+  });
+  click('btn-life-new', () => openLifeComposer());
+  $('vault-life')?.addEventListener('click', e => {
+    const sweepBtn = e.target.closest('[data-sweep]');
+    if (sweepBtn?.dataset.sweep) {
+      e.preventDefault();
+      e.stopPropagation();
+      const vault = loadVaults().find(v => v.address === sweepBtn.dataset.sweep);
+      if (!vault) { toast('Vault not found'); return; }
+      unlockVault(vault).catch(err => toast(errText(err)));
+      return;
+    }
+    const row = e.target.closest('[data-vault]');
+    if (row?.dataset.vault) openVaultDetail(row.dataset.vault);
   });
   click('btn-add-token', openAddToken);
   click('argent-orb', toggleArgent);

@@ -12,7 +12,7 @@
   <link rel="icon" href="assets/icon.png">
   <title>KCC20 Wallet</title>
   <meta http-equiv="Cache-Control" content="no-store, no-cache, must-revalidate">
-  <link rel="stylesheet" href="css/app.css?v=116">
+  <link rel="stylesheet" href="css/app.css?v=117">
 </head>
 <body>
   <img class="bg-poster" src="assets/bg.jpg" alt="">
@@ -277,6 +277,7 @@
           <div class="seg" id="vault-seg">
             <button class="on" data-vtab="create" type="button">Create</button>
             <button data-vtab="mine" type="button">Vaults</button>
+            <button data-vtab="life" type="button">Life</button>
           </div>
           <div id="vault-create">
             <div class="vault-grid" id="vault-products"></div>
@@ -295,6 +296,15 @@
               <button class="btn btn-glass" id="btn-sweep-addr" type="button" style="margin-top:8px;height:44px;">Sweep this address</button>
             </div>
           </div>
+          <div id="vault-life-wrap" class="hidden">
+            <div class="life-filters" id="life-filters"></div>
+            <div class="seg" id="life-hist-seg">
+              <button class="on" data-lifehist="live" type="button">Active</button>
+              <button data-lifehist="history" type="button">History</button>
+            </div>
+            <div class="glass list" id="vault-life"></div>
+            <button class="btn btn-gold" id="btn-life-new" type="button" style="margin-top:10px;">New real-life lock</button>
+          </div>
           <div id="argent-dock">
             <div class="argent-panel glass" id="argent-panel" role="dialog" aria-label="Argent">
               <div class="chat-head">
@@ -302,10 +312,10 @@
                 <button type="button" class="argent-x" id="argent-close" aria-label="Close Argent">Close</button>
               </div>
               <div class="chat" id="chat-log">
-                <div class="bubble ai">I’m <strong>Argent</strong>. Tap a tile, or type <em>lock .15 kas for 3 minutes</em>.</div>
+                <div class="bubble ai">I’m <strong>Argent</strong>. Try <em>lock 1000 kas for rent until September 1 2026 9:00 UTC</em> or <em>save 200 kas, unlock anytime</em>.</div>
               </div>
               <div class="chatbar">
-                <input id="chat-input" placeholder="Tell Argent what to lock…" autocomplete="off" enterkeyhint="send">
+                <input id="chat-input" placeholder="Lock 1000 KAS for rent until Sep 1…" autocomplete="off" enterkeyhint="send">
                 <button class="send-orb" id="chat-send" type="button" aria-label="Send">↑</button>
               </div>
             </div>
@@ -659,7 +669,7 @@
     })();
   </script>
   <script type="module">
-    import('./js/app.js?v=116').catch(function (err) {
+    import('./js/app.js?v=117').catch(function (err) {
       console.error(err);
       var phone = document.getElementById('phone');
       var d = document.createElement('div');

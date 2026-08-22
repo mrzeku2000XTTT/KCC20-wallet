@@ -345,7 +345,86 @@ img { display: block; max-width: 100%; }
 }
 .at-logo-up .btn { height: 40px; flex: 1; margin: 0; }
 #tok-kron.hidden, #tok-kcom.hidden, #tok-scorpion.hidden { display: none !important; }
-.at-src { margin: 2px 0 6px; flex-shrink: 0; }
+.at-src { margin: 2px 0 8px; flex-shrink: 0; }
+.at-desk-back {
+  align-self: flex-start; background: none; border: 0; color: var(--gold-2);
+  font-size: 12px; font-weight: 700; padding: 0 0 8px;
+}
+.at-desk-head { display: flex; align-items: center; gap: 10px; margin-bottom: 8px; }
+.at-desk-head .dot { width: 40px; height: 40px; flex-shrink: 0; }
+.at-desk-head .meta { min-width: 0; }
+.at-desk-head .title { font-size: 18px; font-weight: 750; line-height: 1.1; }
+.at-desk-head .sub { font-size: 12px; color: var(--label-2); display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.at-desk-head .px { margin-left: auto; text-align: right; font-weight: 750; font-size: 16px; font-variant-numeric: tabular-nums; flex-shrink: 0; }
+.at-desk-head .px em { display: block; font-style: normal; font-size: 11px; font-weight: 650; }
+.at-venue {
+  display: inline-flex; align-items: center;
+  font-size: 9px; font-weight: 750; letter-spacing: 0.08em; text-transform: uppercase;
+  color: var(--gold-2); border: 0.5px solid rgba(212,176,122,0.4);
+  border-radius: 999px; padding: 1px 6px;
+}
+.at-chg.up { color: var(--teal); }
+.at-chg.down { color: var(--red); }
+.at-stats {
+  display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px;
+  margin-bottom: 8px;
+}
+.at-stat {
+  background: rgba(0,0,0,0.28); border: 0.5px solid var(--hairline);
+  border-radius: 10px; padding: 6px 7px; min-width: 0;
+}
+.at-stat b {
+  display: block; font-size: 11px; font-weight: 750;
+  font-variant-numeric: tabular-nums; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.at-stat span {
+  display: block; font-size: 9px; color: var(--label-2);
+  letter-spacing: 0.04em; text-transform: uppercase;
+}
+.at-chart {
+  width: 100%; height: 168px; display: block; border-radius: 14px;
+  background: linear-gradient(180deg, rgba(8,10,12,0.78), rgba(8,10,12,0.4));
+  border: 0.5px solid var(--hairline);
+  margin-bottom: 8px;
+}
+.at-ob {
+  display: grid; grid-template-columns: 1fr 1fr; gap: 8px;
+  font-size: 11px; margin-bottom: 8px;
+  background: rgba(0,0,0,0.22); border: 0.5px solid var(--hairline);
+  border-radius: 14px; padding: 8px;
+}
+.at-ob b { display: block; font-size: 10px; letter-spacing: 0.06em; text-transform: uppercase; color: var(--label-2); margin-bottom: 4px; }
+.at-ob .col { min-width: 0; }
+.at-ob .ask { color: #ff6b6b; }
+.at-ob .bid { color: #49eacb; }
+.at-ob .lvl {
+  position: relative; display: flex; justify-content: space-between; gap: 8px;
+  font-variant-numeric: tabular-nums; padding: 3px 5px; border-radius: 6px;
+  width: 100%; color: inherit; text-align: left;
+}
+.at-ob .lvl i {
+  position: absolute; inset: 0 auto 0 0; border-radius: 6px; pointer-events: none;
+}
+.at-ob .ask i { background: rgba(255,69,58,0.18); }
+.at-ob .bid i { background: rgba(73,234,203,0.16); }
+.at-ob .lvl span, .at-ob .lvl em { position: relative; z-index: 1; }
+.at-ob .lvl em { font-style: normal; color: var(--label-2); }
+.at-spread {
+  grid-column: 1 / -1; text-align: center; font-size: 11px; font-weight: 750;
+  padding: 4px 0 0; color: var(--gold-2);
+}
+.at-ana {
+  margin: 0 0 8px; padding: 8px 10px; border-radius: 12px;
+  background: rgba(0,0,0,0.22); border: 0.5px solid var(--hairline);
+  flex-shrink: 0;
+}
+.at-ana summary { font-size: 12px; font-weight: 750; color: var(--gold-2); cursor: pointer; }
+.at-ana .kv { margin-top: 6px; }
+.at-ticket { flex-shrink: 0; }
+#at-desk { flex: 1; min-height: 0; overflow-y: auto; display: flex; flex-direction: column; }
+#at-desk.hidden, #at-mkt-wrap.hidden { display: none !important; }
+#at-mkt-wrap { flex: 1; min-height: 0; display: flex; flex-direction: column; }
+.at-mkts .token-row { min-height: 56px; }
 .at-note, .at-tiny { font-size: 10px; color: var(--label-2); line-height: 1.3; margin: 0; flex-shrink: 0; }
 .at-help {
   margin: 0 0 8px; padding: 8px 10px; border-radius: 12px;

@@ -12,7 +12,7 @@
   <link rel="icon" href="assets/icon.png">
   <title>KCC20 Wallet</title>
   <meta http-equiv="Cache-Control" content="no-store, no-cache, must-revalidate">
-  <link rel="stylesheet" href="css/app.css?v=98">
+  <link rel="stylesheet" href="css/app.css?v=99">
 </head>
 <body>
   <img class="bg-poster" src="assets/bg.jpg" alt="">
@@ -102,7 +102,7 @@
         <section class="page at-fit" id="page-tokens">
           <div class="at-head">
             <div class="seg" id="at-seg">
-              <button class="on" data-at="book" type="button">Book</button>
+              <button class="on" data-at="book" type="button">COOK</button>
               <button data-at="launch" type="button">Launch</button>
               <button data-at="agent" type="button">Agent</button>
             </div>
@@ -112,33 +112,50 @@
           <p class="at-note" id="at-note">Covenants hold the funds. This app never custodied them. Sign with this wallet or KasWare.</p>
 
           <div id="at-book">
-            <div class="at-row">
-              <label class="field grow"><span>Ticker</span>
-                <input id="at-tick" placeholder="KRON / KKDAG" value="KRON" spellcheck="false">
-              </label>
-              <label class="field small"><span>Slip %</span>
-                <input id="at-slip" type="number" min="0.1" max="15" step="0.1" value="1">
-              </label>
-            </div>
-            <div class="at-row">
-              <label class="field grow"><span id="at-amt-lab">Pay (KAS)</span>
-                <input id="at-amt" placeholder="0.15" inputmode="decimal">
-              </label>
-              <label class="field grow"><span>Limit (KAS/token)</span>
-                <input id="at-limit" placeholder="optional" inputmode="decimal">
-              </label>
-            </div>
-            <div class="at-quote" id="at-quote">Pick a market. Limit is a max/min price. Slippage is checked on review.</div>
-            <div class="btn-row" style="margin:6px 0 8px;">
-              <button class="btn btn-gold" id="at-buy" type="button">Buy</button>
-              <button class="btn btn-glass" id="at-sell" type="button">Sell</button>
-            </div>
             <div class="seg at-src" id="at-src">
-              <button class="on" data-src="kron" type="button">KRON live</button>
-              <button data-src="cook" type="button">Cook book</button>
+              <button class="on" data-src="kron" type="button">KRON</button>
+              <button data-src="cook" type="button">K.COM</button>
+              <button data-src="scorpion" type="button">Scorpion</button>
             </div>
-            <div class="glass list at-mkts" id="kron-markets"></div>
-            <div class="glass list at-mkts hidden" id="at-cook-mkts"></div>
+            <div id="at-desk" class="hidden">
+              <button class="at-desk-back" id="at-desk-back" type="button">← Markets</button>
+              <div class="at-desk-head" id="at-desk-head"></div>
+              <div class="at-stats" id="at-stats"></div>
+              <canvas id="at-chart" class="at-chart" width="720" height="240"></canvas>
+              <div class="at-ob" id="at-ob"></div>
+              <details class="at-ana" id="at-ana">
+                <summary>Details &amp; analysis</summary>
+                <div id="at-ana-body"></div>
+              </details>
+              <div class="at-ticket">
+                <div class="at-row">
+                  <label class="field grow"><span>Ticker</span>
+                    <input id="at-tick" placeholder="KRON / KKDAG" value="KRON" spellcheck="false">
+                  </label>
+                  <label class="field small"><span>Slip %</span>
+                    <input id="at-slip" type="number" min="0.1" max="15" step="0.1" value="1">
+                  </label>
+                </div>
+                <div class="at-row">
+                  <label class="field grow"><span id="at-amt-lab">Pay (KAS)</span>
+                    <input id="at-amt" placeholder="0.15" inputmode="decimal">
+                  </label>
+                  <label class="field grow"><span>Limit (KAS/token)</span>
+                    <input id="at-limit" placeholder="optional" inputmode="decimal">
+                  </label>
+                </div>
+                <div class="at-quote" id="at-quote">Tap a token. Limit rests on the book; empty limit takes AMM or the best fill. Native or KasWare signs.</div>
+                <div class="btn-row" style="margin:6px 0 8px;">
+                  <button class="btn btn-gold" id="at-buy" type="button">Buy</button>
+                  <button class="btn btn-glass" id="at-sell" type="button">Sell</button>
+                </div>
+              </div>
+            </div>
+            <div id="at-mkt-wrap">
+              <div class="glass list at-mkts" id="kron-markets"></div>
+              <div class="glass list at-mkts hidden" id="at-cook-mkts"></div>
+              <div class="glass list at-mkts hidden" id="at-sco-mkts"></div>
+            </div>
           </div>
 
           <div id="at-launch" class="hidden">
@@ -604,7 +621,7 @@
     })();
   </script>
   <script type="module">
-    import('./js/app.js?v=98').catch(function (err) {
+    import('./js/app.js?v=99').catch(function (err) {
       console.error(err);
       var phone = document.getElementById('phone');
       var d = document.createElement('div');

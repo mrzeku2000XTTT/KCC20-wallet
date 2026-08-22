@@ -108,6 +108,22 @@ export async function attachKronLogos(holdings) {
   });
 }
 
+export async function kronCandles(tick, limit = 72) {
+  const r = await idx('/token/' + encodeURIComponent(String(tick || '').toUpperCase()) + '/ohlc');
+  const rows = Array.isArray(r) ? r : [];
+  return rows.map(c => {
+    const t = Number(c.time || 0);
+    return {
+      t: t > 1e12 ? t : t * 1000,
+      o: Number(c.open || 0),
+      h: Number(c.high || 0),
+      l: Number(c.low || 0),
+      c: Number(c.close || 0),
+      v: Number(c.volume || 0)
+    };
+  }).filter(x => x.c > 0 && x.t > 0).sort((a, b) => a.t - b.t).slice(-limit);
+}
+
 export async function lookupKronTick(tick) {
   const t = String(tick || '').trim().toUpperCase();
   if (!/^[A-Z0-9]{2,12}$/.test(t)) throw new Error('Enter a ticker like KRON or KKDAG');

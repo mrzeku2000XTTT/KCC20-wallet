@@ -143,8 +143,50 @@ export async function cookMarkets(limit = 20) {
   return Array.isArray(data?.items) ? data.items : (Array.isArray(data) ? data : []);
 }
 
+export function cookTickOf(row) {
+  return String(row?.metadata?.ticker || row?.ticker || row?.tick || row?.tokenName || '').trim().toUpperCase();
+}
+
+export function cookBookLevels(book, decimals = 8) {
+  const dec = Number(decimals || 8);
+  const map = (orders, depth) => {
+    if (Array.isArray(depth) && depth.length) {
+      return depth.map(d => ({
+        px: sompiToKas(d.unitPriceSompi),
+        amt: Number(d.tokenAmount || 0) / (10 ** dec),
+        n: Number(d.orderCount || 1)
+      }));
+    }
+    const grouped = new Map();
+    for (const o of orders || []) {
+      const px = sompiToKas(o.unitPriceSompi);
+      const amt = Number(o.remainingTokenAmount || o.lockedTokenAmount || o.tokenAmount || 0) / (10 ** dec);
+      const prev = grouped.get(px) || { px, amt: 0, n: 0 };
+      prev.amt += amt;
+      prev.n += 1;
+      grouped.set(px, prev);
+    }
+    return [...grouped.values()];
+  };
+  const asks = map(book?.asks, book?.askDepth).filter(x => x.px > 0).sort((a, b) => a.px - b.px).slice(0, 8);
+  const bids = map(book?.bids, book?.bidDepth).filter(x => x.px > 0).sort((a, b) => b.px - a.px).slice(0, 8);
+  return { asks, bids };
+}
+
 export async function cookOrderbook(tokenId) {
   return cookGet('/trading/tokens/' + encodeURIComponent(tokenId) + '/orderbook');
+}
+
+export async function cookCandles(tokenId, limit = 48) {
+  const data = await cookGet('/trading/tokens/' + encodeURIComponent(tokenId) + '/candles?intervalMs=3600000&limit=' + limit);
+  const rows = Array.isArray(data) ? data : (data?.items || data?.result || []);
+  return rows.map(c => ({
+    t: Number(c.bucketTimeMs || 0),
+    o: sompiToKas(c.openUnitPriceSompi),
+    h: sompiToKas(c.highUnitPriceSompi),
+    l: sompiToKas(c.lowUnitPriceSompi),
+    c: sompiToKas(c.closeUnitPriceSompi)
+  })).filter(x => x.c > 0).sort((a, b) => a.t - b.t);
 }
 
 export async function cookQuote(tokenId, { side, amount, mode = 'limit', limitUnitPriceSompi }) {

@@ -9,8 +9,9 @@ import {
   NATIVE_KAS, VAULT_PRODUCTS, loadWatchlist, addToken, removeToken,
   loadVaults, saveVault, updateVault, formatAmount, formatTokenUnits, tokenColor,
   fetchKcc20Portfolio, fetchKrc20Portfolio, fetchKcc20PortfolioMany, fetchKrc20PortfolioMany,
+  fetchKronAddrTrades, KRON_IDX,
   krc20Logo, toTokenRaw, setVaultOwner, kcc20Identicon, VAULT_GROUPS
-} from './kcc20.js?v=105';
+} from './kcc20.js?v=108';
 import { parseIntent, describeIntent, askFor, parseDurationField, interpretVaultChat, normalizeChat } from './intent.js?v=89';
 import { payloadFromAddress } from './script.js?v=90';
 import { explainTransaction, scorpionAnswer } from './scorpion.js?v=89';
@@ -45,7 +46,7 @@ import {
 } from './atrade.js?v=100';
 import { SCORPION_MEMORY } from './scorpionMemory.js?v=100';
 
-export const BUILD = '107';
+export const BUILD = '108';
 
 const TOKEN_FALLBACK_LOGO = 'assets/ttt.png';
 
@@ -211,6 +212,7 @@ let tokenActBackfill = false;
 let activityAll = false;
 let seenTokens = false;
 let tokenStream = null;
+let kronKickAt = 0;
 let tokenFastOff = 0;
 let hushTokenToastsUntil = 0;
 let walletSnap = {};
@@ -1803,9 +1805,9 @@ function pushTokenActivity(ev, addr) {
     wallet: loadWalletList().find(w => w.address === use)?.name || ''
   };
   const dup = list.find(x => {
-    if (x.tick !== row.tick || x.dir !== row.dir || x.amount !== row.amount) return false;
-    if ((x.label || '') !== (row.label || '')) return false;
-    if (row.txId && x.txId) return x.txId === row.txId;
+    if (x.tick !== row.tick || x.dir !== row.dir) return false;
+    if (row.txId && x.txId && x.txId === row.txId) return true;
+    if (x.amount !== row.amount) return false;
     return Math.abs((x.time || 0) - row.time) < 180000;
   });
   if (dup) {
@@ -1814,13 +1816,23 @@ function pushTokenActivity(ev, addr) {
       if (ev.time) dup.time = Number(ev.time);
       saveTokenActivity(list, use);
     }
-    if (currentTab === 'activity') renderActivity(window.__txs || []);
+    scheduleActivityPaint();
     return dup;
   }
   list.unshift(row);
   saveTokenActivity(list, use);
-  if (currentTab === 'activity') renderActivity(window.__txs || []);
+  scheduleActivityPaint();
   return row;
+}
+
+let activityPaint = 0;
+function scheduleActivityPaint() {
+  if (currentTab !== 'activity') return;
+  if (activityPaint) return;
+  activityPaint = requestAnimationFrame(() => {
+    activityPaint = 0;
+    renderActivity(window.__txs || []);
+  });
 }
 
 function isVaultActivityLabel(label) {
@@ -1875,7 +1887,7 @@ async function attachKcc20ReceiveTxid(ev) {
   if (!ev || ev.txId || ev.protocol === 'krc20' || !wallet?.address) return;
   try {
     const res = await fetch(
-      'https://idx.kron.technology/v1/kcc20/token/' +
+      KRON_IDX + '/token/' +
       encodeURIComponent(ev.tick) + '/address/' +
       encodeURIComponent(wallet.address) + '/utxos',
       { cache: 'no-store' }
@@ -1902,6 +1914,36 @@ async function attachKcc20ReceiveTxid(ev) {
   } catch {}
 }
 
+async function ingestKronActivity(addr) {
+  const use = addr || wallet?.address;
+  if (!use || isTestnet()) return;
+  const rows = await fetchKronAddrTrades(use, 20);
+  for (const t of rows) {
+    const tick = String(t.tick || t.ticker || '').toUpperCase();
+    if (!tick) continue;
+    const side = String(t.side || '').toLowerCase();
+    const dir = side === 'sell' ? 'out' : 'in';
+    const held = (kccHoldings || []).find(x => String(x.ticker || '').toUpperCase() === tick);
+    const dec = Number(held?.decimals ?? t.dec ?? t.decimals ?? 0);
+    const vol = Number(t.volume ?? t.amount ?? t.tokenAmount ?? 0);
+    if (!(vol > 0)) continue;
+    const scale = 10 ** Math.min(12, Math.max(0, dec));
+    const amount = String(Math.max(1, Math.round(vol * scale)));
+    const ts = Number(t.ts || t.time || 0);
+    const time = ts > 1e12 ? ts : (ts > 1e9 ? ts * 1000 : Date.now());
+    pushTokenActivity({
+      dir,
+      tick,
+      protocol: 'kcc20',
+      amount,
+      decimals: dec,
+      txId: t.txid || t.txId || '',
+      time,
+      label: dir === 'out' ? 'Sold' : 'Bought'
+    }, use);
+  }
+}
+
 function summarizeTx(tx, myAddr) {
   const inputs = tx.inputs || [];
   const outputs = tx.outputs || [];
@@ -1912,7 +1954,8 @@ function summarizeTx(tx, myAddr) {
   const sentToOthers = toOthers.reduce((a, o) => a + sompiOf(o.amount), 0);
   const p2shOut = toOthers.find(o => String(outputAddr(o)).startsWith('kaspa:p'));
   const p2shIn = inputs.some(i => String(inputAddr(i)).startsWith('kaspa:p'));
-  const fee = spent > 0 ? Math.max(0, spent - received - sentToOthers) : 0;
+  const feeRaw = spent > 0 ? Math.max(0, spent - received - sentToOthers) : 0;
+  const fee = feeRaw > 0 && feeRaw < 50_000_000_000 ? feeRaw : 0;
   const vaultIn = inputs.filter(i => String(inputAddr(i)).startsWith('kaspa:p')).reduce((a, i) => a + inputAmt(i), 0);
   const sweepFee = p2shIn && vaultIn > received ? vaultIn - received : 0;
   if (p2shIn && received > 0) {
@@ -1935,16 +1978,28 @@ function activityVal(a) {
   return (a.dir === 'in' ? '+' : '−') + formatTokenUnits(a.amount, a.decimals) + ' ' + a.tick;
 }
 
+function overlayTokenOnChain(tok, chainRow) {
+  if (!tok) return null;
+  if (tok.protocol === 'kas' || tok.tick === 'KAS') return tok;
+  if (isVaultActivityLabel(tok.label)) return tok;
+  if (tok.dir === 'in') return null;
+  if (chainRow?.dir === 'out') return tok;
+  return tok;
+}
+
 function rowsForWallet(addr, txs, walletName) {
   const tokenActs = loadTokenActivity(addr);
   const chain = Array.isArray(txs) ? txs : [];
-  const chainIds = new Set(chain.map(t => t.transaction_id || t.transactionId).filter(Boolean));
   const rows = [];
   const tag = walletName && activityAll ? walletName + ' · ' : '';
+  const overlayed = new Set();
   for (const tx of chain) {
     const id = tx.transaction_id || tx.transactionId || '';
-    const tok = tokenActs.find(a => a.txId && a.txId === id);
+    const found = tokenActs.find(a => a.txId && a.txId === id);
     const row = summarizeTx(tx, addr);
+    const tok = overlayTokenOnChain(found, row);
+    if (found && !tok && found.dir === 'in' && found.tick !== 'KAS') continue;
+    if (tok && found) overlayed.add(found.id);
     if (tok) {
       if (isVaultActivityLabel(tok.label)) {
         row.label = tok.tick && tok.tick !== 'KAS' ? `${tok.label} ${tok.tick}` : tok.label;
@@ -1963,12 +2018,14 @@ function rowsForWallet(addr, txs, walletName) {
       title: tag + row.label,
       sub: [tok ? (tok.protocol === 'krc20' ? 'KRC-20' : (tok.protocol === 'kas' ? 'KAS' : 'KCC20')) : expl.title, tok?.note || '', id ? id.slice(0, 10) + '…' : '', new Date(tx.block_time || Date.now()).toLocaleString()].filter(Boolean).join(' · '),
       val: row.tokenLabel || ((row.dir === 'in' ? '+' : '−') + formatAmount(row.amount || 0)),
-      feeLine: row.fee > 0 ? `fee ${formatAmount(row.fee)} KAS` : (tok?.note || row.note || ''),
+      feeLine: (tok && tok.protocol !== 'kas' && tok.tick !== 'KAS')
+        ? (tok.note || '')
+        : (row.fee > 0 && row.fee < 50_000_000_000 ? `fee ${formatAmount(row.fee)} KAS` : (tok?.note || row.note || '')),
       tokId: tok?.id || ''
     });
   }
   for (const a of tokenActs) {
-    if (a.txId && chainIds.has(a.txId)) continue;
+    if (overlayed.has(a.id)) continue;
     const proto = a.protocol === 'krc20' ? 'KRC-20' : (a.protocol === 'kas' || a.tick === 'KAS' ? 'KAS' : 'KCC20');
     const vaultish = isVaultActivityLabel(a.label);
     const lab = a.label || (a.dir === 'in' ? 'Received' : 'Sent');
@@ -2705,7 +2762,7 @@ async function backfillRecentKcc20Activity() {
     const acts = loadTokenActivity();
     try {
       const res = await fetch(
-        'https://idx.kron.technology/v1/kcc20/token/' +
+        KRON_IDX + '/token/' +
         encodeURIComponent(tick) + '/address/' +
         encodeURIComponent(wallet.address) + '/utxos',
         { cache: 'no-store' }
@@ -2865,6 +2922,7 @@ function startLiveSync() {
   stopLiveSync();
   tickLive(true);
   liveTimer = setInterval(() => tickLive(false), liveFast ? 1500 : 3000);
+  startKccWatch();
 }
 
 function stopLiveSync() {
@@ -2872,7 +2930,23 @@ function stopLiveSync() {
   stopKccWatch();
 }
 
-function startKccWatch() {}
+function startKccWatch() {
+  if (tokenStream || isTestnet() || typeof EventSource === 'undefined') return;
+  try {
+    const es = new EventSource(KRON_IDX + '/stream');
+    const kick = () => {
+      const now = Date.now();
+      if (now - kronKickAt < 400) return;
+      kronKickAt = now;
+      setLiveFast(true);
+      kickTokenRefresh();
+      if (currentTab === 'activity') refreshActivityNow();
+    };
+    es.addEventListener('update', kick);
+    es.onmessage = kick;
+    tokenStream = es;
+  } catch {}
+}
 
 function stopKccWatch() {
   try { tokenStream?.close(); } catch {}
@@ -2973,7 +3047,7 @@ async function tickLive(full) {
       refreshVaultBalances();
     }
     const now = Date.now();
-    if (full || balChanged || liveFast || now - lastTokenFetch > 8000) kickTokenRefresh();
+    if (full || balChanged || liveFast || currentTab === 'activity' || now - lastTokenFetch > (currentTab === 'activity' ? 1500 : 8000)) kickTokenRefresh();
     if (full || now - lastAutoSweep > 8000) {
       lastAutoSweep = now;
       maybeAutoUnlock();
@@ -3011,7 +3085,8 @@ async function refreshTokenHoldings() {
   } catch (e) {
     tokenLoadErr = errText(e);
   }
-  if (seenTokens && Date.now() > hushTokenToastsUntil) {
+  if (seenTokens) {
+    const hushToast = Date.now() < hushTokenToastsUntil;
     const after = [...kccHoldings, ...krcHoldings];
     for (const t of after) {
       const prev = before.find(x => (t.tokenId && x.tokenId === t.tokenId) || (x.protocol === t.protocol && x.ticker === t.ticker));
@@ -3019,8 +3094,10 @@ async function refreshTokenHoldings() {
       const prevAmt = prev ? Number(prev.balance || 0) : 0;
       if (nextAmt > prevAmt) {
         const d = nextAmt - prevAmt;
-        toast(`Received ${formatTokenUnits(d, t.decimals)} ${t.ticker}`);
-        haptic();
+        if (!hushToast) {
+          toast(`Received ${formatTokenUnits(d, t.decimals)} ${t.ticker}`);
+          haptic();
+        }
         const ev = pushTokenActivity({
           dir: 'in',
           tick: t.ticker,
@@ -3041,6 +3118,7 @@ async function refreshTokenHoldings() {
   }
   seenTokens = true;
   rememberActiveSnap();
+  ingestKronActivity(addr).catch(() => {});
   if (currentTab === 'home') renderHome();
   if (currentTab === 'tokens') renderTokens();
   if (currentTab === 'you') renderProfile();
@@ -7085,7 +7163,14 @@ function bind() {
       const live = all.some(v => !isVaultHistory(v));
       setVaultHistory(!live && all.length > 0);
     }
-    if (tab === 'activity') renderActivity(window.__txs || []);
+    if (tab === 'activity') {
+      setLiveFast(true);
+      kickTokenRefresh();
+      ingestKronActivity().catch(() => {});
+      refreshActivityNow();
+    } else if (liveFast && Date.now() > hushTokenToastsUntil) {
+      setLiveFast(false);
+    }
     if (tab === 'you') renderProfile();
     if (tab === 'home') refreshAll();
   });

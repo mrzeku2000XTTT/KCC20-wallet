@@ -268,6 +268,7 @@ export function tokenColor(ticker) {
 const KCC20_API = 'https://kcc20.info';
 const KASCOV_API = 'https://kascov.io';
 const KASPLEX_API = 'https://api.kasplex.org/v1/krc20';
+export const KRON_IDX = 'https://idx.kron.technology/v1/kcc20';
 
 function asList(v) {
   if (Array.isArray(v)) return v;
@@ -325,24 +326,103 @@ async function fetchJson(url) {
   return res.json();
 }
 
-/** kascov.io is CORS-open (what KasWare-class wallets use for KRON / KCC20). kcc20.info is not. */
-export async function fetchKcc20Portfolio(address, pubKey) {
+function mapKronHold(r) {
+  const ticker = String(r.tick || r.ticker || r.symbol || '').toUpperCase();
+  const bal = r.balance ?? r.amount ?? r.tokenAmount ?? r.holding;
+  if (!ticker || !(Number(bal) > 0)) return null;
+  return {
+    protocol: 'kcc20',
+    ticker,
+    name: r.name || ticker,
+    balance: String(bal),
+    decimals: Number(r.dec ?? r.decimals ?? 0),
+    tokenId: r.covenantId || r.tokenId || '',
+    cells: Number(r.utxoCount || r.cells || 0),
+    image: r.logoURI || r.logo || ''
+  };
+}
+
+function withTimeout(promise, ms, fallback) {
+  let t;
+  return Promise.race([
+    promise,
+    new Promise(resolve => { t = setTimeout(() => resolve(fallback), ms); })
+  ]).finally(() => clearTimeout(t));
+}
+
+/** KRON indexer: CORS-open, live KCC20 balances. Path is /address/{addr}/tokenlist. */
+export async function fetchKronAddrHoldings(address) {
+  if (!address) return [];
+  try {
+    const body = await fetchJson(KRON_IDX + '/address/' + encodeURIComponent(address) + '/tokenlist');
+    const rows = Array.isArray(body?.result) ? body.result
+      : Array.isArray(body) ? body : [];
+    return rows.map(mapKronHold).filter(Boolean);
+  } catch {
+    return [];
+  }
+}
+
+export async function fetchKronAddrTrades(address, limit = 24) {
+  if (!address) return [];
+  try {
+    const body = await fetchJson(
+      KRON_IDX + '/address/' + encodeURIComponent(address) + '/trades?limit=' + (Number(limit) || 24)
+    );
+    const rows = Array.isArray(body?.result) ? body.result
+      : Array.isArray(body) ? body : [];
+    return rows.filter(r => r && (r.tick || r.ticker) && (r.txid || r.txId));
+  } catch {
+    return [];
+  }
+}
+
+async function fetchKascovHoldings(address, pubKey) {
   const keys = [];
   if (address) keys.push(address);
   const pk = String(pubKey || '').replace(/^0x/i, '');
   if (pk && pk.length >= 64) keys.push(pk);
-
   let lastErr = null;
   for (const key of keys) {
     try {
       const data = await fetchJson(`${KASCOV_API}/data/mainnet/addr/${key}.json`);
       if (data && Array.isArray(data.token_holdings)) {
-        return data.token_holdings.filter(p => Number(p.balance) > 0).map(mapKccRow);
+        return { list: data.token_holdings.filter(p => Number(p.balance) > 0).map(mapKccRow), err: null };
       }
     } catch (e) {
       lastErr = e;
     }
   }
+  return { list: [], err: lastErr };
+}
+
+function mergeHoldings(kron, kascov) {
+  const map = new Map();
+  for (const t of [...kron, ...kascov]) {
+    const key = String(t.ticker || '').toUpperCase();
+    if (!key) continue;
+    const cur = map.get(key);
+    if (!cur) map.set(key, t);
+    else {
+      try {
+        if (BigInt(t.balance || '0') > BigInt(cur.balance || '0')) map.set(key, { ...cur, ...t });
+      } catch {}
+    }
+  }
+  return [...map.values()];
+}
+
+export async function fetchKcc20Portfolio(address, pubKey) {
+  const kronP = address ? fetchKronAddrHoldings(address) : Promise.resolve([]);
+  const kascovP = fetchKascovHoldings(address, pubKey);
+
+  const kron = await kronP;
+  const kascovBag = kron.length
+    ? await withTimeout(kascovP, 450, { list: [], err: null })
+    : await kascovP;
+  const kascov = kascovBag?.list || [];
+  let lastErr = kascovBag?.err || null;
+  if (kascov.length || kron.length) return mergeHoldings(kron, kascov);
 
   if (address) {
     try {

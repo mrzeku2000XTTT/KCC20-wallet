@@ -2,7 +2,7 @@
 export const SCORPION_MEMORY = `COOK desk memory
 • mainnet = KRON AMM only (kaspa:). testnet-10 = K.COM book + Scorpion launches (kaspatest:). Never quote KRON on TN10.
 • Native: import 64-hex here, PIN signs, prefix follows Network. KasWare: switchNetwork to match, signPskt, keys stay in the extension.
-• External dApps detect this PWA by loading https://kcc-20-wallet.vercel.app/sdk.js (window.kcc20). On tttz.xyz, Sign with KCC20 opens /KCC20 iframe. Iframe vault is restored from the tttz parent locker so refresh does not wipe the key. Never inject keys into TTT apps.
+• TTT in Profile is the dApp browser: tttz.xyz is iframed here (keys stay in this PWA). Any tttz.xyz app that loads sdk.js talks to this parent via postMessage. Connect/Sign shows the local Approve sheet — never store keys on TTT or a server.
 • Cook trade: unsigned PSKT → native or KasWare → broadcast on the same net. Amount is tokens. Limit rests; empty limit takes the book. Need a wrapper marketId.
 • Scorpion launched tokens with a Cook tokenId trade like K.COM (same candles, bids/asks, buy/sell).
 • Compound: one output, no dust change. sendKaspa(self, total-fee) blows storage mass.

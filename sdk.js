@@ -98,12 +98,17 @@
     return 'popup=yes,width=' + w + ',height=' + h + ',left=' + left + ',top=' + top;
   }
 
+  function inWalletBrowser() {
+    try { return window.parent && window.parent !== window; } catch (e) { return true; }
+  }
+
   function walletUrl() {
     return ORIGIN + '/index.html?dapp=1&from=' + encodeURIComponent(location.origin)
       + '&return=' + encodeURIComponent(location.href.split('#')[0]);
   }
 
   function ensureChild() {
+    if (inWalletBrowser()) return window.parent;
     if (child && !child.closed) return child;
     var url = walletUrl();
     child = window.open(url, 'kcc20-wallet', popupFeatures());
@@ -120,7 +125,9 @@
         if (done) return;
         done = true;
         window.removeEventListener('message', onMsg);
-        reject(new Error('KCC20 Wallet did not answer. Unlock the PWA at ' + ORIGIN + ' and allow popups.'));
+        reject(new Error(inWalletBrowser()
+          ? 'KCC20 Wallet did not answer. Open TTT from the wallet Profile tab and unlock the wallet.'
+          : ('KCC20 Wallet did not answer. Unlock the PWA at ' + ORIGIN + ' and allow popups.')));
       }, 45000);
       function onMsg(ev) {
         if (ev.origin !== ORIGIN) return;
@@ -136,7 +143,7 @@
       window.addEventListener('message', onMsg);
       var ping = setInterval(function () {
         if (done) { clearInterval(ping); return; }
-        if (!win || win.closed) {
+        if (!inWalletBrowser() && (!win || win.closed)) {
           clearInterval(ping);
           if (!done) {
             done = true;

@@ -24,7 +24,7 @@ import {
   newHashlockSecret, checkinHop, currentHop, parseXmssKit, p2shFromRedeemHex, spendXmssVault,
   disconnectRpc, buildDcaDrips, sendKasMany, releaseDcaDrip, cancelDcaDrip
 } from './tx.js?v=119';
-import { bootDappConnect } from './dappConnect.js?v=120';
+import { bootDappConnect, pingTttDappFrame } from './dappConnect.js?v=121';
 import { schedulePersistIframeVault, bootIframeVaultWatch } from './iframeVault.js?v=120';
 import { kronMarkets, quoteKronTrade, executeKronTrade, formatKasSompi, lookupKronTick, tradeCostLines, attachKronLogos, kronCandles } from './kronTrade.js?v=106';
 import {
@@ -46,9 +46,9 @@ import {
   rememberLaunch, loadLaunched, cookOwnerBalances, cookDeployed,
   cookTickOf, cookBookLevels
 } from './atrade.js?v=100';
-import { SCORPION_MEMORY } from './scorpionMemory.js?v=119';
+import { SCORPION_MEMORY } from './scorpionMemory.js?v=121';
 
-export const BUILD = '120';
+export const BUILD = '121';
 
 const TOKEN_FALLBACK_LOGO = 'assets/ttt.png';
 
@@ -2348,7 +2348,14 @@ function openBuildRoadmap() {
 function openTtt() {
   haptic();
   const frame = $('ttt-frame');
-  if (frame && !frame.getAttribute('src')) frame.src = 'https://tttz.xyz';
+  if (frame) {
+    if (!frame.dataset.kcc20Bound) {
+      frame.dataset.kcc20Bound = '1';
+      frame.addEventListener('load', () => pingTttDappFrame(frame));
+    }
+    if (!frame.getAttribute('src')) frame.src = 'https://tttz.xyz/?kcc20_browser=1';
+    else pingTttDappFrame(frame);
+  }
   $('ttt-screen')?.classList.remove('hidden');
   $('ttt-screen')?.setAttribute('aria-hidden', 'false');
   $('tabbar')?.classList.remove('show');

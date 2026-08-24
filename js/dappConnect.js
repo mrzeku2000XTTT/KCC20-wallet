@@ -180,8 +180,8 @@ async function handleConnect(req) {
       origin,
       approveLabel: 'Connect',
       body:
-        '<p class="muted" style="text-align:left;padding:0 0 8px;">This site wants your Kaspa address. Keys stay in this PWA. Never share your PIN or hex key.</p>'
-        + '<div class="kv"><span class="k">dApp</span><span class="v">' + esc(req.name || origin) + '</span></div>'
+        '<p class="muted" style="text-align:left;padding:0 0 8px;">This TTT app wants your Kaspa address. Keys stay in this wallet. Nothing is sent to a server.</p>'
+        + '<div class="kv"><span class="k">App</span><span class="v">' + esc(req.name || (String(origin).includes('tttz.xyz') ? 'TTT' : origin)) + '</span></div>'
         + '<div class="kv"><span class="k">Wallet</span><span class="v">' + esc(w.name || 'Wallet') + '</span></div>'
         + '<div class="kv kv-stack"><span class="k">Address</span><span class="v">' + esc(w.address) + '</span></div>'
         + '<div class="kv"><span class="k">Network</span><span class="v">' + esc(netName()) + '</span></div>'
@@ -333,10 +333,20 @@ function announce() {
   } catch {}
 }
 
+const TTT_ORIGINS = ['https://tttz.xyz', 'https://www.tttz.xyz'];
+
+export function pingTttDappFrame(frame) {
+  const win = frame && frame.contentWindow;
+  if (!win) return;
+  const payload = { type: 'host-ready', origin: location.origin, browser: 'kcc20' };
+  TTT_ORIGINS.forEach((o) => { try { postTo(win, o, payload); } catch {} });
+}
+
 export function bootDappConnect(opts) {
   hooks = opts || {};
   if (booted) {
     announce();
+    pingTttDappFrame(typeof document !== 'undefined' ? document.getElementById('ttt-frame') : null);
     return;
   }
   booted = true;

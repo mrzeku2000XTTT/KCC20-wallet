@@ -12,7 +12,7 @@
   <link rel="icon" href="assets/icon.png">
   <title>KCC20 Wallet</title>
   <meta http-equiv="Cache-Control" content="no-store, no-cache, must-revalidate">
-  <link rel="stylesheet" href="css/app.css?v=121">
+  <link rel="stylesheet" href="css/app.css?v=122">
 </head>
 <body>
   <img class="bg-poster" src="assets/bg.jpg" alt="">
@@ -215,6 +215,13 @@
               <summary>Scorpion memory</summary>
               <pre class="at-tiny" id="ag-memory" style="white-space:pre-wrap;margin-top:8px;"></pre>
             </details>
+            <p class="ag-net" id="ag-net">Network · —</p>
+            <div class="ag-preview" id="ag-preview">
+              <canvas class="at-chart" id="ag-chart" width="640" height="168" aria-label="Scorpion price"></canvas>
+              <div class="at-stats" id="ag-stats"></div>
+              <div class="at-quote" id="ag-quote">Pick a token. Live AMM quote appears here.</div>
+              <div class="ag-fills" id="ag-fills"></div>
+            </div>
             <div class="at-row">
               <label class="field grow"><span>Token</span>
                 <input id="ag-tick" placeholder="KRON" value="KRON" spellcheck="false">
@@ -684,7 +691,7 @@
   <script type="module">
     import('./js/iframeVault.js?v=121').then(function (mod) {
       return (mod.restoreIframeVault ? mod.restoreIframeVault() : Promise.resolve()).then(function () {
-        return import('./js/app.js?v=121');
+        return import('./js/app.js?v=122');
       });
     }).catch(function (err) {
       console.error(err);

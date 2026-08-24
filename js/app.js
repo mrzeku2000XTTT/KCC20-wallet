@@ -46,9 +46,9 @@ import {
   rememberLaunch, loadLaunched, cookOwnerBalances, cookDeployed,
   cookTickOf, cookBookLevels
 } from './atrade.js?v=100';
-import { SCORPION_MEMORY } from './scorpionMemory.js?v=121';
+import { SCORPION_MEMORY } from './scorpionMemory.js?v=122';
 
-export const BUILD = '121';
+export const BUILD = '122';
 
 const TOKEN_FALLBACK_LOGO = 'assets/ttt.png';
 
@@ -269,7 +269,9 @@ let atDesk = null;
 let lastCookToken = null;
 let tokPane = 'kron';
 let agentTimer = null;
+let agentPreviewTimer = null;
 let agentBusy = false;
+let agentPreview = null;
 let dcaTimer = null;
 let dcaBusy = false;
 let qrRaf = 0;
@@ -3622,7 +3624,12 @@ function setAtPane(pane) {
     if (isTestnet() && tokPane === 'kron') tokPane = 'scorpion';
     setTokPane(tokPane);
   }
-  if (agent) paintAgentStatus();
+  if (agent) {
+    paintAgentStatus();
+    startAgentPreviewLoop();
+  } else {
+    stopAgentPreviewLoop();
+  }
 }
 
 function setTokPane(pane) {
@@ -3956,8 +3963,8 @@ function paintAtAna(d, book) {
   });
 }
 
-function drawAtChart(candles) {
-  const c = $('at-chart');
+function drawAtChart(candles, canvasId = 'at-chart') {
+  const c = $(canvasId);
   if (!c) return;
   const ctx = c.getContext('2d');
   const w = c.width;
@@ -4545,6 +4552,30 @@ async function runCookGraduate() {
   });
 }
 
+function agentNetLine(job) {
+  const tn = isTestnet();
+  if (tn) return 'TN10 · K.COM / Scorpion book — not KRON AMM';
+  const mode = job?.preview?.graduated === false ? 'curve AMM' : 'pool AMM';
+  return 'Mainnet · KRON ' + mode + ' · real KAS';
+}
+
+function paintAgentFills(job) {
+  const box = $('ag-fills');
+  if (!box) return;
+  const fills = Array.isArray(job?.fills) ? job.fills.slice(-6).reverse() : [];
+  if (!fills.length) {
+    box.innerHTML = '<span>No fills this session. Waiting for price to cross your levels.</span>';
+    return;
+  }
+  box.innerHTML = fills.map(f => {
+    const cls = f.side === 'buy' ? 'up' : 'down';
+    const tx = f.txId
+      ? `<a href="${esc(explorerTx(f.txId))}" target="_blank" rel="noopener">${esc(String(f.txId).slice(0, 10))}…</a>`
+      : esc(f.note || '');
+    return `<div><span class="${cls}">${esc((f.side || '').toUpperCase())}</span> ${esc(fmtPx(f.px))} KAS · ${tx}</div>`;
+  }).join('');
+}
+
 function paintAgentStatus() {
   const mem = $('ag-memory');
   if (mem && !mem.dataset.ok) {
@@ -4553,16 +4584,102 @@ function paintAgentStatus() {
   }
   const el = $('ag-status');
   const btn = $('ag-toggle');
+  const net = $('ag-net');
   const job = loadAgentJob();
-  if (!el) return;
   const running = !!(job?.on && agentTimer);
   if (btn) btn.textContent = running ? 'Stop Scorpion agent' : 'Start Scorpion agent';
+  if (net) net.textContent = agentNetLine(job);
+  if (!el) return;
   if (!job) {
-    el.textContent = 'Agent can trade only while this wallet is unlocked. Keys never leave the device or KasWare.';
+    el.textContent = isTestnet()
+      ? 'TN10 agent uses the K.COM book. Unlock, set a token, then Start.'
+      : 'Mainnet agent buys/sells on the KRON AMM. Unlock, set levels, then Start. Keys stay here.';
+    paintAgentFills(null);
     return;
   }
   const last = job.last || 'waiting for a cross';
-  el.textContent = (running ? 'Scorpion on · ' : 'Paused · ') + job.tick + ' · spent ' + (job.spentKas || 0).toFixed(3) + '/' + Number(job.maxKas || 0) + ' KAS · ' + last;
+  el.textContent = (running ? 'Scorpion on · ' : 'Paused · ') + job.tick + ' · spent '
+    + Number(job.spentKas || 0).toFixed(3) + '/' + Number(job.maxKas || 0) + ' KAS · ' + last;
+  paintAgentFills(job);
+  const p = job.preview || agentPreview;
+  const qel = $('ag-quote');
+  const stats = $('ag-stats');
+  if (p && stats) {
+    const chg = Number(p.change24h || 0);
+    stats.innerHTML = `
+      <div class="at-stat"><b>${esc(fmtPx(p.ammPx || p.indexPx))}</b><span>AMM quote</span></div>
+      <div class="at-stat"><b>${esc(fmtPx(p.indexPx))}</b><span>Index</span></div>
+      <div class="at-stat"><b>${esc(p.tokens != null ? fmtTok(p.tokens) : '—')}</b><span>${esc(job.tick)} out</span></div>
+      <div class="at-stat"><b>${esc(fmtChg(chg))}</b><span>24h</span></div>`;
+  }
+  if (p && qel) {
+    const buy = Number(job.buyBelow || 0);
+    const sell = Number(job.sellAbove || 0);
+    const px = Number(p.ammPx || p.indexPx || 0);
+    const buyGap = buy > 0 && px > 0 ? ((px - buy) / buy) * 100 : null;
+    const sellGap = sell > 0 && px > 0 ? ((sell - px) / px) * 100 : null;
+    const bits = [];
+    if (p.tokens != null) bits.push(fmtTok(job.sizeKas) + ' KAS → ~' + fmtTok(p.tokens) + ' ' + job.tick);
+    if (buyGap != null) bits.push(buyGap > 0 ? fmtPx(buyGap) + '% above buy ' + fmtPx(buy) : 'buy level hit');
+    if (sellGap != null) bits.push(sellGap > 0 ? fmtPx(sellGap) + '% to sell ' + fmtPx(sell) : 'sell level hit');
+    qel.textContent = bits.join(' · ') || last;
+  }
+}
+
+function stopAgentPreviewLoop() {
+  if (agentPreviewTimer) { clearInterval(agentPreviewTimer); agentPreviewTimer = null; }
+}
+
+function startAgentPreviewLoop() {
+  if (agentPreviewTimer) return;
+  agentPreviewTimer = setInterval(() => { refreshAgentPreview().catch(() => {}); }, 5000);
+  refreshAgentPreview().catch(() => {});
+}
+
+async function refreshAgentPreview() {
+  if ($('at-agent')?.classList.contains('hidden')) return;
+  const job = loadAgentJob();
+  const tick = (job?.tick || $('ag-tick')?.value || '').trim().toUpperCase();
+  const sizeKas = Number(job?.sizeKas || $('ag-size')?.value || 0.15);
+  if (!tick) return;
+  if (isTestnet()) {
+    agentPreview = { indexPx: 0, ammPx: 0, tokens: null, graduated: null, change24h: 0 };
+    if ($('ag-quote')) $('ag-quote').textContent = 'TN10 preview is the K.COM book on COOK. KRON AMM is mainnet only.';
+    if ($('ag-net')) $('ag-net').textContent = agentNetLine(job);
+    return;
+  }
+  try {
+    const [info, candles] = await Promise.all([
+      lookupKronTick(tick).catch(() => null),
+      kronCandles(tick, 48).catch(() => [])
+    ]);
+    let ammPx = Number(info?.price || 0);
+    let tokens = null;
+    let graduated = !!(info?.graduated);
+    if (sizeKas > 0) {
+      try {
+        const q = await quoteKronTrade({ tick, side: 'buy', amount: String(sizeKas) });
+        ammPx = impliedKronPx(q) || ammPx;
+        tokens = Number(q.tokenOut) / (10 ** Number(q.decimals || 0));
+        graduated = !!q.graduated;
+      } catch {}
+    }
+    agentPreview = {
+      indexPx: Number(info?.price || 0),
+      ammPx,
+      tokens,
+      graduated,
+      change24h: Number(info?.change24h || 0)
+    };
+    if (job) {
+      job.preview = agentPreview;
+      saveAgentJob(job);
+    }
+    drawAtChart(candles, 'ag-chart');
+    paintAgentStatus();
+  } catch (e) {
+    if ($('ag-quote')) $('ag-quote').textContent = errText(e);
+  }
 }
 
 function stopAgentLoop() {
@@ -4580,7 +4697,8 @@ function startAgentLoop() {
   stopAgentLoop();
   const job = loadAgentJob();
   if (!job?.on) return;
-  agentTimer = setInterval(() => { tickAgent().catch(() => {}); }, 18000);
+  agentTimer = setInterval(() => { tickAgent().catch(() => {}); }, 8000);
+  startAgentPreviewLoop();
   paintAgentStatus();
   tickAgent().catch(() => {});
 }
@@ -4613,8 +4731,9 @@ async function toggleAgent() {
   saveAgentJob({
     on: true, tick, sizeKas, buyBelow, sellAbove, maxKas,
     spentKas: 0, last: 'armed', startedAt: Date.now(),
-    venue: deskUsesCook() ? 'cook' : 'kron',
-    tokenId: (atCook?.tokenId || atDesk?.tokenId || '')
+    venue: isTestnet() ? 'cook' : 'kron',
+    tokenId: isTestnet() ? (atCook?.tokenId || atDesk?.tokenId || '') : '',
+    fills: []
   });
   startAgentLoop();
   toast('Scorpion armed on ' + tick);
@@ -4658,10 +4777,28 @@ async function tickAgent() {
       return;
     }
     const info = await lookupKronTick(job.tick);
-    const px = Number(info.price || 0);
-    if (!(px > 0)) { job.last = 'no KRON price'; saveAgentJob(job); paintAgentStatus(); return; }
+    const indexPx = Number(info.price || 0);
+    let px = indexPx;
+    let qBuy = null;
+    try {
+      qBuy = await quoteKronTrade({ tick: job.tick, side: 'buy', amount: String(job.sizeKas) });
+      px = impliedKronPx(qBuy) || indexPx;
+      job.preview = {
+        indexPx,
+        ammPx: px,
+        tokens: Number(qBuy.tokenOut) / (10 ** Number(qBuy.decimals || 0)),
+        graduated: !!qBuy.graduated,
+        change24h: Number(info.change24h || 0)
+      };
+    } catch (qe) {
+      if (!(indexPx > 0)) throw qe;
+    }
+    if (!(px > 0)) { job.last = 'no KRON AMM quote'; saveAgentJob(job); paintAgentStatus(); return; }
+    const pushFill = (side, fillPx, txId, note) => {
+      job.fills = (job.fills || []).concat({ t: Date.now(), side, px: fillPx, txId: txId || '', note: note || '' }).slice(-8);
+    };
     if (job.buyBelow > 0 && px <= job.buyBelow && (job.spentKas || 0) + job.sizeKas <= job.maxKas + 1e-9) {
-      job.last = 'buying @ ' + px.toPrecision(4);
+      job.last = 'buying AMM @ ' + px.toPrecision(4);
       saveAgentJob(job);
       paintAgentStatus();
       const result = await executeKronTrade({
@@ -4674,13 +4811,14 @@ async function tickAgent() {
         onStatus: (m) => toast(m)
       });
       job.spentKas = (job.spentKas || 0) + job.sizeKas;
-      job.last = 'bought ' + job.sizeKas + ' KAS · ' + (result.txId || '').slice(0, 10);
+      job.last = 'bought AMM · ' + px.toPrecision(4);
+      pushFill('buy', px, result.txId, job.sizeKas + ' KAS');
       saveAgentJob(job);
       afterTx();
     } else if (job.sellAbove > 0 && px >= job.sellAbove) {
       const hold = holdingForTick(job.tick);
       if (!hold || !(Number(hold.balance) > 0)) {
-        job.last = 'price ' + px.toPrecision(4) + ' but no ' + job.tick;
+        job.last = fmtPx(px) + ' AMM · no ' + job.tick + ' to sell';
         saveAgentJob(job);
         paintAgentStatus();
         return;
@@ -4689,7 +4827,7 @@ async function tickAgent() {
       const want = job.sizeKas / px;
       const amt = Math.min(have, want);
       if (!(amt > 0)) { job.last = 'size too small to sell'; saveAgentJob(job); return; }
-      job.last = 'selling @ ' + px.toPrecision(4);
+      job.last = 'selling AMM @ ' + px.toPrecision(4);
       saveAgentJob(job);
       paintAgentStatus();
       const result = await executeKronTrade({
@@ -4701,11 +4839,12 @@ async function tickAgent() {
         forceKasware: kaswareEnabled(),
         onStatus: (m) => toast(m)
       });
-      job.last = 'sold · ' + (result.txId || '').slice(0, 10);
+      job.last = 'sold AMM · ' + px.toPrecision(4);
+      pushFill('sell', px, result.txId, '');
       saveAgentJob(job);
       afterTx();
     } else {
-      job.last = px.toPrecision(4) + ' KAS · waiting';
+      job.last = fmtPx(px) + ' AMM · waiting';
       saveAgentJob(job);
     }
     paintAgentStatus();
@@ -7528,6 +7667,8 @@ function bind() {
   click('at-x-go', () => connectLaunchX().catch(err => toast(errText(err))));
   click('at-grad-go', () => runCookGraduate().catch(err => toast(errText(err))));
   click('ag-toggle', () => toggleAgent().catch(err => toast(errText(err))));
+  $('ag-tick')?.addEventListener('change', () => refreshAgentPreview().catch(() => {}));
+  $('ag-size')?.addEventListener('change', () => refreshAgentPreview().catch(() => {}));
   click('boost-open', openBoost);
   $('at-cook-mkts')?.addEventListener('click', e => {
     const row = e.target.closest('[data-cook-tick]');

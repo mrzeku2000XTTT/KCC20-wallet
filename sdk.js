@@ -20,6 +20,7 @@
   }
 
   var ORIGIN = scriptOrigin();
+  var hostOrigin = ORIGIN;
   var pending = {};
   var seq = 1;
   var child = null;
@@ -70,10 +71,33 @@
     else p.resolve(msg.result);
   }
 
+  function inWalletBrowser() {
+    try { return window.parent && window.parent !== window; } catch (e) { return true; }
+  }
+
+  function isWalletOrigin(origin) {
+    if (!origin) return false;
+    if (origin === ORIGIN || origin === hostOrigin) return true;
+    try {
+      var h = new URL(origin).hostname;
+      if (h === 'kcc-20-wallet.vercel.app') return true;
+      if (h === 'localhost' || h === '127.0.0.1') return inWalletBrowser();
+    } catch (e) {}
+    return false;
+  }
+
+  function walletTarget() {
+    if (inWalletBrowser()) return hostOrigin && hostOrigin !== ORIGIN ? hostOrigin : '*';
+    return ORIGIN;
+  }
+
   window.addEventListener('message', function (ev) {
-    if (ev.origin !== ORIGIN) return;
     var msg = ev.data;
     if (!msg || msg.ns !== 'kcc20') return;
+    if (msg.type === 'host-ready' || msg.type === 'ready') {
+      if (isWalletOrigin(ev.origin) || inWalletBrowser()) hostOrigin = ev.origin;
+    }
+    if (!isWalletOrigin(ev.origin)) return;
     if (msg.type === 'res' && msg.id) finish(msg);
     if (msg.type === 'event') {
       if (msg.event === 'accountsChanged') {
@@ -96,10 +120,6 @@
     var left = Math.max(0, Math.round((screen.width - w) / 2));
     var top = Math.max(0, Math.round((screen.height - h) / 2));
     return 'popup=yes,width=' + w + ',height=' + h + ',left=' + left + ',top=' + top;
-  }
-
-  function inWalletBrowser() {
-    try { return window.parent && window.parent !== window; } catch (e) { return true; }
   }
 
   function walletUrl() {
@@ -130,9 +150,11 @@
           : ('KCC20 Wallet did not answer. Unlock the PWA at ' + ORIGIN + ' and allow popups.')));
       }, 45000);
       function onMsg(ev) {
-        if (ev.origin !== ORIGIN) return;
         var msg = ev.data;
-        if (!msg || msg.ns !== 'kcc20' || msg.type !== 'ready') return;
+        if (!msg || msg.ns !== 'kcc20') return;
+        if (msg.type !== 'ready' && msg.type !== 'host-ready') return;
+        if (!isWalletOrigin(ev.origin) && !inWalletBrowser()) return;
+        hostOrigin = ev.origin;
         if (done) return;
         done = true;
         clearTimeout(timer);
@@ -153,9 +175,9 @@
           }
           return;
         }
-        try { win.postMessage({ ns: 'kcc20', type: 'hello', from: location.origin }, ORIGIN); } catch (e) {}
+        try { win.postMessage({ ns: 'kcc20', type: 'hello', from: location.origin }, walletTarget()); } catch (e) {}
       }, 350);
-      try { win.postMessage({ ns: 'kcc20', type: 'hello', from: location.origin }, ORIGIN); } catch (e) {}
+      try { win.postMessage({ ns: 'kcc20', type: 'hello', from: location.origin }, walletTarget()); } catch (e) {}
     });
   }
 
@@ -186,8 +208,8 @@
             method: method,
             params: params || {},
             from: location.origin,
-            name: document.title || location.hostname
-          }, ORIGIN);
+            name: document.title || location.pathname || location.hostname
+          }, walletTarget());
         } catch (e) {
           delete pending[id];
           reject(e);

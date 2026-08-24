@@ -46,9 +46,9 @@ import {
   rememberLaunch, loadLaunched, cookOwnerBalances, cookDeployed,
   cookTickOf, cookBookLevels
 } from './atrade.js?v=100';
-import { SCORPION_MEMORY } from './scorpionMemory.js?v=122';
+import { SCORPION_MEMORY } from './scorpionMemory.js?v=124';
 
-export const BUILD = '123';
+export const BUILD = '124';
 
 const TOKEN_FALLBACK_LOGO = 'assets/ttt.png';
 
@@ -3626,6 +3626,7 @@ function setAtPane(pane) {
     setTokPane(tokPane);
   }
   if (agent) {
+    syncAgStratUi(loadAgentJob()?.strat || selectedAgentStrat());
     paintAgentStatus();
     startAgentPreviewLoop();
   } else {
@@ -4553,6 +4554,100 @@ async function runCookGraduate() {
   });
 }
 
+const AGENT_STRATS = {
+  range: 'Range: buy under your floor, sell over your ceiling. Uses the live AMM quote for your size.',
+  dip: 'Dip catch: buy when price is X% under the recent candle high. Optional sell-above still dumps rips.',
+  trend: 'Trend: buy when the last 3 candles close up and price is over the 8-candle average. Sell when they close down.',
+  curve: 'Curve stack: on an ungraduated KRON curve (KKDAG-style), buy dips until max KAS. Stops buying after graduation.',
+  fade: 'Fade pump: sell into green extension (X% off the recent high or hot 24h). Buy only a deep dip.'
+};
+
+function selectedAgentStrat() {
+  return $('ag-strat')?.querySelector('button.on')?.dataset.strat || 'range';
+}
+
+function syncAgStratUi(strat) {
+  const s = strat || selectedAgentStrat();
+  $('ag-strat')?.querySelectorAll('button').forEach(b => b.classList.toggle('on', b.dataset.strat === s));
+  if ($('ag-strat-help')) $('ag-strat-help').textContent = AGENT_STRATS[s] || AGENT_STRATS.range;
+  $('ag-pct-wrap')?.classList.toggle('hidden', s !== 'dip' && s !== 'fade');
+  $('ag-levels')?.classList.toggle('hidden', s === 'trend');
+}
+
+function candleHigh(candles, n = 36) {
+  const rows = (candles || []).slice(-n);
+  let h = 0;
+  for (const c of rows) h = Math.max(h, Number(c.h || c.c || 0));
+  return h;
+}
+
+function candleSma(candles, n = 8) {
+  const rows = (candles || []).slice(-n);
+  if (!rows.length) return 0;
+  return rows.reduce((a, c) => a + Number(c.c || 0), 0) / rows.length;
+}
+
+function lastClosesDir(candles, n = 3) {
+  const rows = (candles || []).slice(-n);
+  if (rows.length < n) return 0;
+  let up = true, down = true;
+  for (let i = 1; i < rows.length; i++) {
+    if (!(rows[i].c > rows[i - 1].c)) up = false;
+    if (!(rows[i].c < rows[i - 1].c)) down = false;
+  }
+  if (up) return 1;
+  if (down) return -1;
+  return 0;
+}
+
+function agentWants(job, { px, candles, graduated, change24h }) {
+  const strat = job.strat || 'range';
+  const buyCap = Number(job.buyBelow || 0);
+  const sellCap = Number(job.sellAbove || 0);
+  const pct = Math.max(1, Number(job.pct || 5)) / 100;
+  const high = candleHigh(candles, 36);
+  const sma = candleSma(candles, 8);
+  const dir = lastClosesDir(candles, 3);
+  const chg = Number(change24h || 0);
+  const chgPct = Math.abs(chg) <= 2 ? chg * 100 : chg;
+  if (strat === 'dip') {
+    const floor = high > 0 ? high * (1 - pct) : 0;
+    return {
+      buy: px > 0 && floor > 0 && px <= floor && (!buyCap || px <= buyCap),
+      sell: sellCap > 0 && px >= sellCap,
+      why: high ? ('dip trigger ' + fmtPx(floor) + ' · high ' + fmtPx(high)) : 'need candles'
+    };
+  }
+  if (strat === 'trend') {
+    return {
+      buy: dir > 0 && sma > 0 && px >= sma,
+      sell: dir < 0,
+      why: dir > 0 ? '3 green closes · SMA ' + fmtPx(sma) : (dir < 0 ? '3 red closes' : 'chop · SMA ' + fmtPx(sma))
+    };
+  }
+  if (strat === 'curve') {
+    if (graduated) {
+      return { buy: buyCap > 0 && px <= buyCap, sell: sellCap > 0 && px >= sellCap, why: 'graduated — using range caps' };
+    }
+    const floor = buyCap || (high > 0 ? high * 0.97 : 0);
+    return { buy: px > 0 && floor > 0 && px <= floor, sell: false, why: 'curve stack · buy ≤ ' + fmtPx(floor) };
+  }
+  if (strat === 'fade') {
+    const ext = high > 0 ? high * (1 - pct * 0.4) : 0;
+    const dip = high > 0 ? high * (1 - pct) : 0;
+    return {
+      buy: dip > 0 && px <= dip,
+      sell: (ext > 0 && px >= ext) || chgPct >= 8,
+      why: 'fade · dump ≥ ' + fmtPx(ext) + ' · buy ≤ ' + fmtPx(dip)
+    };
+  }
+  return {
+    buy: buyCap > 0 && px <= buyCap,
+    sell: sellCap > 0 && px >= sellCap,
+    why: 'range ' + fmtPx(buyCap) + ' / ' + fmtPx(sellCap)
+  };
+}
+
 function agentNetLine(job) {
   const tn = isTestnet();
   if (tn) return 'TN10 · K.COM / Scorpion book — not KRON AMM';
@@ -4603,6 +4698,8 @@ function paintAgentStatus() {
   if ($('ag-buy') && document.activeElement !== $('ag-buy') && job.buyBelow) $('ag-buy').value = String(job.buyBelow);
   if ($('ag-sell') && document.activeElement !== $('ag-sell') && job.sellAbove) $('ag-sell').value = String(job.sellAbove);
   if ($('ag-max') && document.activeElement !== $('ag-max') && job.maxKas) $('ag-max').value = String(job.maxKas);
+  if (job.pct && $('ag-pct') && document.activeElement !== $('ag-pct')) $('ag-pct').value = String(job.pct);
+  if (job.strat) syncAgStratUi(job.strat);
   const last = job.last || 'waiting for a cross';
   el.textContent = (running ? 'Scorpion on · ' : 'Paused · ') + job.tick + ' · spent '
     + Number(job.spentKas || 0).toFixed(3) + '/' + Number(job.maxKas || 0) + ' KAS · ' + last;
@@ -4629,6 +4726,7 @@ function paintAgentStatus() {
     if (buyGap != null) bits.push(buyGap > 0 ? fmtPx(buyGap) + '% above buy ' + fmtPx(buy) : 'buy level hit');
     if (sellGap != null) bits.push(sellGap > 0 ? fmtPx(sellGap) + '% to sell ' + fmtPx(sell) : 'sell level hit');
     qel.textContent = bits.join(' · ') || last;
+    if (p.note) qel.textContent += ' · ' + p.note;
   }
 }
 
@@ -4676,7 +4774,8 @@ async function refreshAgentPreview() {
       tokens,
       graduated,
       decimals: Number(info?.decimals ?? 0),
-      change24h: Number(info?.change24h || 0)
+      change24h: Number(info?.change24h || 0),
+      note: 'Green 1d can still print a tape of sells — close vs prior close, not “no sellers”.'
     };
     if (job) {
       job.preview = agentPreview;
@@ -4731,7 +4830,12 @@ async function toggleAgent() {
   if (!tick) { toast(isTestnet() ? 'Pick a K.COM or Scorpion token first' : 'Set a token'); return; }
   if (isTestnet() && tick === 'KRON') { toast('KRON is mainnet-only. Arm a K.COM / Scorpion token on TN10.'); return; }
   if (!(sizeKas > 0)) { toast('Set a size'); return; }
-  if (!(buyBelow > 0) && !(sellAbove > 0)) { toast('Set a buy-below and/or sell-above'); return; }
+  const strat = selectedAgentStrat();
+  const pct = Number($('ag-pct')?.value || 5);
+  if (strat === 'range' && !(buyBelow > 0) && !(sellAbove > 0)) {
+    toast('Range needs a buy-below and/or sell-above');
+    return;
+  }
   if (kaswareEnabled()) {
     toast('KasWare will pop for each fill');
   } else {
@@ -4740,7 +4844,8 @@ async function toggleAgent() {
   }
   saveAgentJob({
     on: true, tick, sizeKas, buyBelow, sellAbove, maxKas,
-    spentKas: 0, last: 'armed', startedAt: Date.now(),
+    strat, pct: Number.isFinite(pct) ? pct : 5,
+    spentKas: 0, last: 'armed ' + strat, startedAt: Date.now(),
     venue: isTestnet() ? 'cook' : 'kron',
     tokenId: isTestnet() ? (atCook?.tokenId || atDesk?.tokenId || '') : '',
     fills: []
@@ -4788,7 +4893,10 @@ async function tickAgent() {
       paintAgentStatus();
       return;
     }
-    const info = await lookupKronTick(job.tick);
+    const [info, candles] = await Promise.all([
+      lookupKronTick(job.tick),
+      kronCandles(job.tick, 48).catch(() => [])
+    ]);
     const indexPx = Number(info.price || 0);
     let px = indexPx;
     let qBuy = null;
@@ -4807,10 +4915,17 @@ async function tickAgent() {
       if (!(indexPx > 0)) throw qe;
     }
     if (!(px > 0)) { job.last = 'no KRON AMM quote'; saveAgentJob(job); paintAgentStatus(); return; }
+    drawAtChart(candles, 'ag-chart');
+    const want = agentWants(job, {
+      px,
+      candles,
+      graduated: !!(job.preview?.graduated ?? info.graduated),
+      change24h: Number(info.change24h || 0)
+    });
     const pushFill = (side, fillPx, txId, note) => {
       job.fills = (job.fills || []).concat({ t: Date.now(), side, px: fillPx, txId: txId || '', note: note || '' }).slice(-8);
     };
-    if (job.buyBelow > 0 && px <= job.buyBelow && (job.spentKas || 0) + job.sizeKas <= job.maxKas + 1e-9) {
+    if (want.buy && (job.spentKas || 0) + job.sizeKas <= job.maxKas + 1e-9) {
       job.last = 'buying AMM @ ' + px.toPrecision(4);
       saveAgentJob(job);
       paintAgentStatus();
@@ -4828,7 +4943,7 @@ async function tickAgent() {
       pushFill('buy', px, result.txId, job.sizeKas + ' KAS');
       saveAgentJob(job);
       afterTx();
-    } else if (job.sellAbove > 0 && px >= job.sellAbove) {
+    } else if (want.sell) {
       const hold = holdingForTick(job.tick);
       if (!hold || !(Number(hold.balance) > 0)) {
         job.last = fmtPx(px) + ' AMM · no ' + job.tick + ' to sell';
@@ -4838,8 +4953,8 @@ async function tickAgent() {
       }
       const dec = Number(hold.decimals ?? job.preview?.decimals ?? 0);
       const have = Number(hold.balance || 0) / (10 ** dec);
-      const want = job.sizeKas / px;
-      let amt = Math.min(have, want);
+      const wantAmt = job.sizeKas / px;
+      let amt = Math.min(have, wantAmt);
       if (dec === 0) amt = Math.floor(amt);
       if (!(amt > 0)) { job.last = 'need at least 1 ' + job.tick + ' to sell'; saveAgentJob(job); return; }
       job.last = 'selling AMM @ ' + px.toPrecision(4);
@@ -4859,7 +4974,7 @@ async function tickAgent() {
       saveAgentJob(job);
       afterTx();
     } else {
-      job.last = fmtPx(px) + ' AMM · waiting';
+      job.last = fmtPx(px) + ' AMM · ' + (want.why || 'waiting');
       saveAgentJob(job);
     }
     paintAgentStatus();
@@ -7682,6 +7797,13 @@ function bind() {
   click('at-x-go', () => connectLaunchX().catch(err => toast(errText(err))));
   click('at-grad-go', () => runCookGraduate().catch(err => toast(errText(err))));
   click('ag-toggle', () => toggleAgent().catch(err => toast(errText(err))));
+  $('ag-strat')?.addEventListener('click', e => {
+    const b = e.target.closest('[data-strat]');
+    if (!b?.dataset.strat) return;
+    haptic();
+    syncAgStratUi(b.dataset.strat);
+  });
+  syncAgStratUi('range');
   $('ag-tick')?.addEventListener('change', () => refreshAgentPreview().catch(() => {}));
   $('ag-size')?.addEventListener('change', () => refreshAgentPreview().catch(() => {}));
   click('boost-open', openBoost);

@@ -465,6 +465,9 @@ img { display: block; max-width: 100%; }
 .ag-fills a { color: var(--gold-2); }
 .ag-fills .up { color: #49eacb; }
 .ag-fills .down { color: #ff6b6b; }
+.ag-strats { flex-wrap: wrap; }
+.ag-strats button { flex: 1 1 30%; min-width: 72px; font-size: 11px; }
+#ag-pct-wrap.hidden, #ag-levels.hidden { display: none !important; }
 .boost-card {
   padding: 12px; margin-bottom: 12px;
 }

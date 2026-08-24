@@ -12,7 +12,7 @@
   <link rel="icon" href="assets/icon.png">
   <title>KCC20 Wallet</title>
   <meta http-equiv="Cache-Control" content="no-store, no-cache, must-revalidate">
-  <link rel="stylesheet" href="css/app.css?v=123">
+  <link rel="stylesheet" href="css/app.css?v=124">
 </head>
 <body>
   <img class="bg-poster" src="assets/bg.jpg" alt="">
@@ -222,6 +222,14 @@
               <div class="at-quote" id="ag-quote">Pick a token. Live AMM quote appears here.</div>
               <div class="ag-fills" id="ag-fills"></div>
             </div>
+            <div class="seg ag-strats" id="ag-strat">
+              <button class="on" data-strat="range" type="button">Range</button>
+              <button data-strat="dip" type="button">Dip catch</button>
+              <button data-strat="trend" type="button">Trend</button>
+              <button data-strat="curve" type="button">Curve stack</button>
+              <button data-strat="fade" type="button">Fade pump</button>
+            </div>
+            <p class="at-tiny" id="ag-strat-help">Range: buy under your floor, sell over your ceiling on the live AMM quote.</p>
             <div class="at-row">
               <label class="field grow"><span>Token</span>
                 <input id="ag-tick" placeholder="KRON" value="KRON" spellcheck="false">
@@ -230,7 +238,7 @@
                 <input id="ag-size" type="number" min="0.05" step="0.05" value="0.15">
               </label>
             </div>
-            <div class="at-row">
+            <div class="at-row" id="ag-levels">
               <label class="field grow"><span>Buy below</span>
                 <input id="ag-buy" placeholder="KAS per token" inputmode="decimal">
               </label>
@@ -238,6 +246,10 @@
                 <input id="ag-sell" placeholder="KAS per token" inputmode="decimal">
               </label>
             </div>
+            <label class="field" id="ag-pct-wrap">
+              <span>Dip / fade %</span>
+              <input id="ag-pct" type="number" min="1" max="40" step="1" value="5">
+            </label>
             <label class="field"><span>Max KAS this session</span>
               <input id="ag-max" type="number" min="0.15" step="0.15" value="1">
             </label>
@@ -691,7 +703,7 @@
   <script type="module">
     import('./js/iframeVault.js?v=121').then(function (mod) {
       return (mod.restoreIframeVault ? mod.restoreIframeVault() : Promise.resolve()).then(function () {
-        return import('./js/app.js?v=123');
+        return import('./js/app.js?v=124');
       });
     }).catch(function (err) {
       console.error(err);

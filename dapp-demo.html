@@ -1,0 +1,62 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>KCC20 dApp demo</title>
+  <style>
+    :root { color-scheme: dark; }
+    body { margin: 0; font: 15px/1.45 -apple-system, BlinkMacSystemFont, sans-serif; background: #0b0b0c; color: #f5f5f7; padding: 28px 18px 48px; }
+    main { max-width: 640px; margin: 0 auto; }
+    h1 { font-size: 22px; letter-spacing: -0.4px; margin: 0 0 8px; }
+    p { color: rgba(235,235,245,.7); }
+    code { font-family: ui-monospace, Menlo, monospace; font-size: 12px; background: #1c1c1e; padding: 2px 6px; border-radius: 6px; }
+    .row { display: flex; flex-wrap: wrap; gap: 8px; margin: 16px 0; }
+    button { height: 44px; padding: 0 14px; border: 0; border-radius: 12px; font-weight: 650; cursor: pointer; background: linear-gradient(180deg,#f3e2bf,#c9a36a); color: #1a140c; }
+    button.ghost { background: #1c1c1e; color: #f5f5f7; border: 1px solid rgba(255,255,255,.12); }
+    pre { white-space: pre-wrap; word-break: break-word; background: #141416; border: 1px solid rgba(255,255,255,.08); border-radius: 14px; padding: 14px; min-height: 120px; font-size: 12px; }
+    textarea { width: 100%; min-height: 90px; background: #141416; color: inherit; border: 1px solid rgba(255,255,255,.12); border-radius: 12px; padding: 10px; font: 12px/1.4 ui-monospace, Menlo, monospace; }
+  </style>
+  <script src="./sdk.js"></script>
+</head>
+<body>
+  <main>
+    <h1>KCC20 Wallet detect demo</h1>
+    <p>A real dApp adds one script from the Vercel PWA:</p>
+    <p><code>&lt;script src="https://kcc-20-wallet.vercel.app/sdk.js"&gt;&lt;/script&gt;</code></p>
+    <p>That creates <code>window.kcc20</code>. Connect opens the hosted wallet (desktop popup or mobile PWA). Keys stay in the wallet.</p>
+    <div class="row">
+      <button id="connect" type="button">Connect</button>
+      <button class="ghost" id="accounts" type="button">Accounts</button>
+      <button class="ghost" id="network" type="button">Network</button>
+      <button class="ghost" id="utxos" type="button">UTXOs</button>
+      <button class="ghost" id="bal" type="button">Balance</button>
+      <button class="ghost" id="sign" type="button">Sign PSKT</button>
+      <button class="ghost" id="disc" type="button">Disconnect</button>
+    </div>
+    <textarea id="pskt" placeholder='Paste a PSKT JSON string (txJsonString) to test signPskt'></textarea>
+    <pre id="out">sdk: waiting…</pre>
+  </main>
+  <script>
+    const out = document.getElementById('out');
+    function log(x) {
+      out.textContent = typeof x === 'string' ? x : JSON.stringify(x, null, 2);
+    }
+    function api() {
+      if (!window.kcc20) throw new Error('sdk.js did not load');
+      return window.kcc20;
+    }
+    log({ detected: !!window.kcc20, origin: window.kcc20 && window.kcc20.origin });
+    document.getElementById('connect').onclick = () => api().connect().then(log).catch(e => log(e.message));
+    document.getElementById('accounts').onclick = () => api().getAccounts().then(log).catch(e => log(e.message));
+    document.getElementById('network').onclick = () => api().getNetwork().then(log).catch(e => log(e.message));
+    document.getElementById('utxos').onclick = () => api().getUtxoEntries().then(log).catch(e => log(e.message));
+    document.getElementById('bal').onclick = () => api().getBalance().then(log).catch(e => log(e.message));
+    document.getElementById('sign').onclick = () => {
+      const json = document.getElementById('pskt').value.trim();
+      api().signPskt({ txJsonString: json, options: { signInputs: [] } }).then(log).catch(e => log(e.message));
+    };
+    document.getElementById('disc').onclick = () => api().disconnect().then(() => log('disconnected')).catch(e => log(e.message));
+  </script>
+</body>
+</html>

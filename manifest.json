@@ -9,5 +9,8 @@
   "theme_color": "#050506",
   "icons": [
     { "src": "assets/icon.png", "sizes": "1024x1024", "type": "image/png", "purpose": "any maskable" }
+  ],
+  "protocol_handlers": [
+    { "protocol": "web+kcc20", "url": "./index.html?dapp=1&handler=%s" }
   ]
 }

@@ -12,7 +12,7 @@
   <link rel="icon" href="assets/icon.png">
   <title>KCC20 Wallet</title>
   <meta http-equiv="Cache-Control" content="no-store, no-cache, must-revalidate">
-  <link rel="stylesheet" href="css/app.css?v=118">
+  <link rel="stylesheet" href="css/app.css?v=119">
 </head>
 <body>
   <img class="bg-poster" src="assets/bg.jpg" alt="">
@@ -431,6 +431,19 @@
         </div>
       </div>
 
+      <div class="sheet-overlay" id="dapp-overlay">
+        <div class="sheet" role="dialog" aria-modal="true" aria-labelledby="dapp-title">
+          <div class="grabber"></div>
+          <h3 id="dapp-title">Connect dApp</h3>
+          <p class="notice" id="dapp-origin"></p>
+          <div id="dapp-body"></div>
+          <div class="btn-row" style="margin-top:16px;">
+            <button class="btn btn-glass" id="dapp-reject" type="button">Reject</button>
+            <button class="btn btn-gold" id="dapp-approve" type="button">Approve</button>
+          </div>
+        </div>
+      </div>
+
       <div class="ttt-screen hidden" id="ttt-screen" aria-hidden="true">
         <div class="ttt-head">
           <button type="button" class="trade-x" id="ttt-close">Close</button>
@@ -669,7 +682,7 @@
     })();
   </script>
   <script type="module">
-    import('./js/app.js?v=118').catch(function (err) {
+    import('./js/app.js?v=119').catch(function (err) {
       console.error(err);
       var phone = document.getElementById('phone');
       var d = document.createElement('div');

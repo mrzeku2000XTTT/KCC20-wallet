@@ -769,6 +769,8 @@ img { display: block; max-width: 100%; }
   pointer-events: none;
 }
 .sheet-overlay.open { display: flex; pointer-events: auto; }
+#dapp-overlay { z-index: 89; }
+#dapp-origin { margin-top: 0; overflow-wrap: anywhere; word-break: break-word; }
 .sheet {
   width: 100%; max-width: 100%; max-height: 88%;
   background: #141416;

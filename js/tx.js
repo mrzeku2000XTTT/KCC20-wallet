@@ -3038,3 +3038,29 @@ function toRawLocal(human, decimals) {
   if (raw <= 0n) throw new Error('Amount must be > 0');
   return raw.toString();
 }
+
+/** Sign a dApp PSKT JSON with the native key. Never returns the private key. */
+export async function signPsktJson({ wallet, txJsonString, signInputs }) {
+  const k = await loadKaspaSdk();
+  const json = String(txJsonString || '');
+  if (!json) throw new Error('No PSKT to sign');
+  let tx;
+  try {
+    tx = k.Transaction.deserializeFromSafeJSON(json);
+  } catch {
+    throw new Error('dApp sent a PSKT this wallet cannot read');
+  }
+  const priv = privKeyFromWallet(k, wallet);
+  const n = tx.inputs.length;
+  const listed = Array.isArray(signInputs) ? signInputs : [];
+  const want = listed.length
+    ? new Set(listed.map(s => Number(s.index)))
+    : new Set([...Array(n).keys()]);
+  for (let i = 0; i < n; i++) {
+    if (!want.has(i)) continue;
+    const sig = hexish(k.createInputSignature(tx, i, priv, k.SighashType.All));
+    if (!sig || sig.length < 20) throw new Error('Empty signature on input ' + i);
+    tx.inputs[i].signatureScript = sig;
+  }
+  return tx.serializeToSafeJSON();
+}

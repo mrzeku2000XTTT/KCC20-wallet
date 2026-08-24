@@ -23,7 +23,8 @@ import {
   fetchOwnedUtxos, collectSpendableUtxos, buildSentinelChain, buildRecurringChain, buildHashlockCovenant,
   newHashlockSecret, checkinHop, currentHop, parseXmssKit, p2shFromRedeemHex, spendXmssVault,
   disconnectRpc, buildDcaDrips, sendKasMany, releaseDcaDrip, cancelDcaDrip
-} from './tx.js?v=118';
+} from './tx.js?v=119';
+import { bootDappConnect } from './dappConnect.js?v=119';
 import { kronMarkets, quoteKronTrade, executeKronTrade, formatKasSompi, lookupKronTick, tradeCostLines, attachKronLogos, kronCandles } from './kronTrade.js?v=106';
 import {
   migrateReceiveBook, ownedAddresses, markAddressUsed, currentReceive,
@@ -44,9 +45,9 @@ import {
   rememberLaunch, loadLaunched, cookOwnerBalances, cookDeployed,
   cookTickOf, cookBookLevels
 } from './atrade.js?v=100';
-import { SCORPION_MEMORY } from './scorpionMemory.js?v=100';
+import { SCORPION_MEMORY } from './scorpionMemory.js?v=119';
 
-export const BUILD = '118';
+export const BUILD = '119';
 
 const TOKEN_FALLBACK_LOGO = 'assets/ttt.png';
 
@@ -1138,6 +1139,17 @@ async function activateWallet(w, { toastMsg } = {}) {
   beginPinFlow('unlock');
 }
 
+function dappHooks() {
+  return {
+    getWallet: () => wallet,
+    sessionOpen,
+    requirePin,
+    toast,
+    applyAppNetwork,
+    hydrateNativeKey
+  };
+}
+
 async function unlockToHome() {
   if (wallet?.address) setVaultOwner(wallet.address);
   $('page-lock').classList.remove('active');
@@ -1150,6 +1162,7 @@ async function unlockToHome() {
   maybeAutoUnlock();
   resumeAgentIfAny();
   resumeDcaIfAny();
+  try { bootDappConnect(dappHooks()); } catch {}
   const pend = wallet?.address ? loadKrc20Pending(wallet.address) : null;
   if (pend) toast('Unfinished KRC-20 reveal — open Send to finish it');
 }
@@ -7859,6 +7872,7 @@ async function init() {
   try { saveWalletList(loadWalletList()); } catch {}
   try { paintLockNet(); syncAtVenues(); } catch {}
   try { bindKaswareEvents(); } catch {}
+  try { bootDappConnect(dappHooks()); } catch {}
   window.addEventListener('kcc20-kasware-net', async (ev) => {
     if (!kaswareEnabled()) return;
     const want = isTestnet() ? 'kaspa_testnet_10' : 'kaspa_mainnet';

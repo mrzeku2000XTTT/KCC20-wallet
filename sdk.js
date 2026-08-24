@@ -264,8 +264,40 @@
     },
     getPublicKey: function () {
       return rpc('getPublicKey');
+    },
+    request: function (method, params) {
+      var m = String(method || '');
+      var p = params || {};
+      if (m === 'connect') {
+        return api.connect().then(function (acc) {
+          return { address: (acc && acc[0]) || '', accounts: acc || [] };
+        });
+      }
+      if (m === 'disconnect') return api.disconnect();
+      if (m === 'getAccounts') return api.getAccounts();
+      if (m === 'getNetwork') return api.getNetwork();
+      if (m === 'switchNetwork') return api.switchNetwork(p.network || p);
+      if (m === 'getPublicKey') return api.getPublicKey();
+      if (m === 'getUtxoEntries') return api.getUtxoEntries(p.address);
+      if (m === 'getBalance') {
+        return api.getBalance(p.address).then(function (r) {
+          var sompi = typeof r === 'number' ? r : Number((r && (r.confirmed != null ? r.confirmed : r.balance)) || 0);
+          var pending = Number((r && r.unconfirmed) || 0);
+          return {
+            balanceKAS: sompi / 1e8,
+            pending: pending / 1e8,
+            address: (r && r.address) || p.address || ''
+          };
+        });
+      }
+      if (m === 'signPskt' || m === 'signPsbt') return api.signPskt(p, p.options);
+      return Promise.reject(new Error(m + ' is not supported by this KCC20 PWA build. Use connect / getBalance / signPskt.'));
     }
   };
+
+  Object.defineProperty(api, 'accounts', {
+    get: function () { return accounts.slice(); }
+  });
 
   root.kcc20 = api;
   root.kcc20wallet = api;

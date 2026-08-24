@@ -24,7 +24,8 @@ import {
   newHashlockSecret, checkinHop, currentHop, parseXmssKit, p2shFromRedeemHex, spendXmssVault,
   disconnectRpc, buildDcaDrips, sendKasMany, releaseDcaDrip, cancelDcaDrip
 } from './tx.js?v=119';
-import { bootDappConnect } from './dappConnect.js?v=119';
+import { bootDappConnect } from './dappConnect.js?v=120';
+import { schedulePersistIframeVault, bootIframeVaultWatch } from './iframeVault.js?v=120';
 import { kronMarkets, quoteKronTrade, executeKronTrade, formatKasSompi, lookupKronTick, tradeCostLines, attachKronLogos, kronCandles } from './kronTrade.js?v=106';
 import {
   migrateReceiveBook, ownedAddresses, markAddressUsed, currentReceive,
@@ -47,7 +48,7 @@ import {
 } from './atrade.js?v=100';
 import { SCORPION_MEMORY } from './scorpionMemory.js?v=119';
 
-export const BUILD = '119';
+export const BUILD = '120';
 
 const TOKEN_FALLBACK_LOGO = 'assets/ttt.png';
 
@@ -464,6 +465,7 @@ function loadWalletList() {
 function saveWalletList(list) {
   const next = dedupeWalletList(list || []);
   localStorage.setItem(WALLETS_KEY, JSON.stringify(next));
+  try { schedulePersistIframeVault(); } catch {}
 }
 
 function loadStoredWalletRaw() {
@@ -526,6 +528,7 @@ function saveWallet() {
   localStorage.setItem(STORE_KEY, JSON.stringify({
     address: wallet.address, privKey: storePriv || wallet.privKey || '', pubKey: wallet.pubKey
   }));
+  try { schedulePersistIframeVault(); } catch {}
   localStorage.setItem(ACTIVE_KEY, wallet.id);
   migrateReceiveBook(wallet);
   const row = {
@@ -7872,6 +7875,7 @@ async function init() {
   try { saveWalletList(loadWalletList()); } catch {}
   try { paintLockNet(); syncAtVenues(); } catch {}
   try { bindKaswareEvents(); } catch {}
+  try { bootIframeVaultWatch(); } catch {}
   try { bootDappConnect(dappHooks()); } catch {}
   window.addEventListener('kcc20-kasware-net', async (ev) => {
     if (!kaswareEnabled()) return;

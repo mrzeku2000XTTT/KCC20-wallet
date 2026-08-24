@@ -323,6 +323,14 @@ function announce() {
   const { from } = pageParams();
   const target = from && isHttpOrigin(from) ? from : '';
   if (window.opener && target) postTo(window.opener, target, { type: 'ready', origin: location.origin });
+  try {
+    if (window.parent && window.parent !== window) {
+      const parentOrigin = target || (document.referrer ? new URL(document.referrer).origin : '');
+      if (parentOrigin && isHttpOrigin(parentOrigin)) {
+        postTo(window.parent, parentOrigin, { type: 'ready', origin: location.origin });
+      }
+    }
+  } catch {}
 }
 
 export function bootDappConnect(opts) {

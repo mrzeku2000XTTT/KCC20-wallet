@@ -135,7 +135,7 @@ export async function lookupKronTick(tick) {
     name: token.name || entry?.name || t,
     graduated: !!(token.graduated || entry?.extensions?.graduated),
     price: Number(token.price || 0),
-    decimals: Number(entry?.decimals ?? token.dec ?? 0),
+    decimals: Number(entry?.decimals ?? token.dec ?? token.decimals ?? 0),
     change24h: Number(token.change24h || 0),
     volume24h: Number(token.volume24h || 0),
     covenantId: token.covenantId || entry?.covenantId || '',
@@ -379,14 +379,15 @@ function tokenRawFromHuman(human, decimals) {
   const d = Math.max(0, Number(decimals) || 0);
   const t = String(human || '').trim().replace(',', '.');
   if (!t) throw new Error('Enter an amount');
-  const [w, f = ''] = t.split('.');
-  if (!/^\d+$/.test(w || '0') || (f && !/^\d+$/.test(f))) throw new Error('Invalid amount');
+  const n0 = Number(t);
+  if (!Number.isFinite(n0) || n0 <= 0) throw new Error('Amount must be > 0');
   if (d === 0) {
-    if (f.replace(/0+$/, '')) throw new Error('This token has no decimals');
-    const n = BigInt(w || '0');
-    if (n <= 0n) throw new Error('Amount must be > 0');
+    const n = BigInt(Math.round(n0));
+    if (n <= 0n) throw new Error('This token is whole units only — amount rounds to 0');
     return n;
   }
+  const [w, f = ''] = t.split('.');
+  if (!/^\d+$/.test(w || '0') || (f && !/^\d+$/.test(f))) throw new Error('Invalid amount');
   const frac = (f + '0'.repeat(d)).slice(0, d);
   const n = BigInt(w || '0') * (10n ** BigInt(d)) + BigInt(frac || '0');
   if (n <= 0n) throw new Error('Amount must be > 0');
@@ -399,7 +400,7 @@ export async function quoteKronTrade({ tick, side, amount }) {
   if (!entry) throw new Error(tick + ' is not a KRON token');
   const token = await idxToken(tick);
   const graduated = !!(token.graduated || entry.extensions?.graduated);
-  const decimals = Number(entry.decimals || token.dec || 0);
+  const decimals = Number(entry.decimals ?? token.dec ?? token.decimals ?? 0);
   if (side === 'buy') {
     const kasIn = sompiFromKas(amount);
     let q;

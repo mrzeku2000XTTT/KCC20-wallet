@@ -26,7 +26,7 @@ import {
 } from './tx.js?v=119';
 import { bootDappConnect, pingTttDappFrame } from './dappConnect.js?v=121';
 import { schedulePersistIframeVault, bootIframeVaultWatch } from './iframeVault.js?v=120';
-import { kronMarkets, quoteKronTrade, executeKronTrade, formatKasSompi, lookupKronTick, tradeCostLines, attachKronLogos, kronCandles } from './kronTrade.js?v=106';
+import { kronMarkets, quoteKronTrade, executeKronTrade, formatKasSompi, lookupKronTick, tradeCostLines, attachKronLogos, kronCandles } from './kronTrade.js?v=123';
 import {
   migrateReceiveBook, ownedAddresses, markAddressUsed, currentReceive,
   deriveReceiveBatch, unusedReceiveCount, ensurePrivacyBook
@@ -48,7 +48,7 @@ import {
 } from './atrade.js?v=100';
 import { SCORPION_MEMORY } from './scorpionMemory.js?v=122';
 
-export const BUILD = '122';
+export const BUILD = '123';
 
 const TOKEN_FALLBACK_LOGO = 'assets/ttt.png';
 
@@ -1166,6 +1166,7 @@ async function unlockToHome() {
   scheduleAllFreezeWatches();
   maybeAutoUnlock();
   resumeAgentIfAny();
+  if (loadAgentJob()?.on) startAgentPreviewLoop();
   resumeDcaIfAny();
   try { bootDappConnect(dappHooks()); } catch {}
   const pend = wallet?.address ? loadKrc20Pending(wallet.address) : null;
@@ -4597,6 +4598,11 @@ function paintAgentStatus() {
     paintAgentFills(null);
     return;
   }
+  if ($('ag-tick') && document.activeElement !== $('ag-tick')) $('ag-tick').value = job.tick || '';
+  if ($('ag-size') && document.activeElement !== $('ag-size') && job.sizeKas) $('ag-size').value = String(job.sizeKas);
+  if ($('ag-buy') && document.activeElement !== $('ag-buy') && job.buyBelow) $('ag-buy').value = String(job.buyBelow);
+  if ($('ag-sell') && document.activeElement !== $('ag-sell') && job.sellAbove) $('ag-sell').value = String(job.sellAbove);
+  if ($('ag-max') && document.activeElement !== $('ag-max') && job.maxKas) $('ag-max').value = String(job.maxKas);
   const last = job.last || 'waiting for a cross';
   el.textContent = (running ? 'Scorpion on · ' : 'Paused · ') + job.tick + ' · spent '
     + Number(job.spentKas || 0).toFixed(3) + '/' + Number(job.maxKas || 0) + ' KAS · ' + last;
@@ -4669,6 +4675,7 @@ async function refreshAgentPreview() {
       ammPx,
       tokens,
       graduated,
+      decimals: Number(info?.decimals ?? 0),
       change24h: Number(info?.change24h || 0)
     };
     if (job) {
@@ -4689,8 +4696,11 @@ function stopAgentLoop() {
 
 function resumeAgentIfAny() {
   const job = loadAgentJob();
-  if (job?.on && sessionOpen()) startAgentLoop();
-  else paintAgentStatus();
+  if (job?.on && sessionOpen()) {
+    startAgentLoop();
+    startAgentPreviewLoop();
+    toast('Scorpion resumed · ' + (job.tick || '') + ' · ' + (isTestnet() ? 'TN10 book' : 'mainnet AMM'));
+  } else paintAgentStatus();
 }
 
 function startAgentLoop() {
@@ -4736,7 +4746,9 @@ async function toggleAgent() {
     fills: []
   });
   startAgentLoop();
-  toast('Scorpion armed on ' + tick);
+  startAgentPreviewLoop();
+  refreshAgentPreview().catch(() => {});
+  toast('Scorpion armed on ' + tick + (isTestnet() ? ' · TN10 book' : ' · mainnet KRON AMM'));
   paintAgentStatus();
 }
 
@@ -4788,6 +4800,7 @@ async function tickAgent() {
         ammPx: px,
         tokens: Number(qBuy.tokenOut) / (10 ** Number(qBuy.decimals || 0)),
         graduated: !!qBuy.graduated,
+        decimals: Number(qBuy.decimals || 0),
         change24h: Number(info.change24h || 0)
       };
     } catch (qe) {
@@ -4823,10 +4836,12 @@ async function tickAgent() {
         paintAgentStatus();
         return;
       }
-      const have = Number(hold.balance || 0) / (10 ** Number(hold.decimals || 0));
+      const dec = Number(hold.decimals ?? job.preview?.decimals ?? 0);
+      const have = Number(hold.balance || 0) / (10 ** dec);
       const want = job.sizeKas / px;
-      const amt = Math.min(have, want);
-      if (!(amt > 0)) { job.last = 'size too small to sell'; saveAgentJob(job); return; }
+      let amt = Math.min(have, want);
+      if (dec === 0) amt = Math.floor(amt);
+      if (!(amt > 0)) { job.last = 'need at least 1 ' + job.tick + ' to sell'; saveAgentJob(job); return; }
       job.last = 'selling AMM @ ' + px.toPrecision(4);
       saveAgentJob(job);
       paintAgentStatus();

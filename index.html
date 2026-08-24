@@ -12,7 +12,7 @@
   <link rel="icon" href="assets/icon.png">
   <title>KCC20 Wallet</title>
   <meta http-equiv="Cache-Control" content="no-store, no-cache, must-revalidate">
-  <link rel="stylesheet" href="css/app.css?v=124">
+  <link rel="stylesheet" href="css/app.css?v=125">
 </head>
 <body>
   <img class="bg-poster" src="assets/bg.jpg" alt="">
@@ -109,6 +109,7 @@
             </div>
             <button class="at-tokens-btn" id="at-kw-btn" type="button">Native</button>
             <button class="at-tokens-btn" id="at-tokens-btn" type="button">TOKENS</button>
+            <button class="at-tokens-btn bet" id="at-bet-btn" type="button">Bet</button>
           </div>
           <p class="at-note" id="at-note">Covenants hold the funds. This app never custodied them. Sign with this wallet or KasWare.</p>
 
@@ -255,6 +256,42 @@
             </label>
             <button class="btn btn-gold" id="ag-toggle" type="button">Start Scorpion agent</button>
             <p class="at-quote" id="ag-status">Agent can trade only while this wallet is unlocked. Keys never leave the device or KasWare.</p>
+          </div>
+
+          <div id="at-bet" class="hidden">
+            <p class="ag-net" id="bet-net">Mainnet oracle · KRON idx · 15m windows</p>
+            <div class="bet-clock" id="bet-clock">15:00</div>
+            <p class="at-tiny" id="bet-q">Will <b>KKDAG</b> print higher than the KRON index at this window’s open?</p>
+            <div class="bet-yn" id="bet-yn">
+              <button type="button" class="bet-yes" id="bet-yes" data-side="yes">YES<br><b id="bet-yes-c">50¢</b></button>
+              <button type="button" class="bet-no" id="bet-no" data-side="no">NO<br><b id="bet-no-c">50¢</b></button>
+            </div>
+            <div class="at-row">
+              <label class="field grow"><span>Token</span>
+                <input id="bet-tick" value="KKDAG" spellcheck="false">
+              </label>
+              <label class="field small"><span>Size KAS</span>
+                <input id="bet-size" type="number" min="0.15" step="0.05" value="0.15">
+              </label>
+            </div>
+            <p class="at-quote" id="bet-quote">Oracle is idx.kron.technology. YES buys the token on the KRON curve/pool. NO sells if you hold it. This app never holds the bet.</p>
+            <div class="section-label">Top 10 launched</div>
+            <div class="glass list" id="bet-board"></div>
+            <div class="section-label">Hire Scorpion better</div>
+            <p class="at-tiny">Pay <b>KKDAG</b> (TTT token) to the agent address. Hourly hire. PIN pre-signs AMM bets for that token until the clock ends. Subscribe (hold ≥ 1,000 KKDAG) unlocks more hours and 1 hour free.</p>
+            <div class="at-row">
+              <label class="field small"><span>Hours</span>
+                <input id="bet-hours" type="number" min="1" max="24" step="1" value="1">
+              </label>
+              <label class="field grow"><span>Hire cost</span>
+                <input id="bet-cost" value="100 KKDAG" disabled>
+              </label>
+            </div>
+            <p class="at-tiny" id="bet-pass">KCC20 pass: locked</p>
+            <button class="btn btn-gold" id="bet-hire" type="button">Hire agent with KKDAG</button>
+            <button class="btn btn-glass" id="bet-stop" type="button" style="margin-top:8px;">Stop hired agent</button>
+            <p class="at-quote" id="bet-hire-st">No hire running.</p>
+            <div class="ag-fills" id="bet-fills"></div>
           </div>
 
           <div id="at-holdings" class="hidden">
@@ -703,7 +740,7 @@
   <script type="module">
     import('./js/iframeVault.js?v=121').then(function (mod) {
       return (mod.restoreIframeVault ? mod.restoreIframeVault() : Promise.resolve()).then(function () {
-        return import('./js/app.js?v=124');
+        return import('./js/app.js?v=125');
       });
     }).catch(function (err) {
       console.error(err);

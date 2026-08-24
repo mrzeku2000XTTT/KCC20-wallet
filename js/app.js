@@ -28,6 +28,11 @@ import { bootDappConnect, pingTttDappFrame } from './dappConnect.js?v=121';
 import { schedulePersistIframeVault, bootIframeVaultWatch } from './iframeVault.js?v=120';
 import { kronMarkets, quoteKronTrade, executeKronTrade, formatKasSompi, lookupKronTick, tradeCostLines, attachKronLogos, kronCandles } from './kronTrade.js?v=123';
 import {
+  BET_AGENT_ADDR, TTT_TICK, HIRE_PER_HOUR, windowBounds, fmtRemain,
+  yesCentsFromCandles, kkdagsHeld, isKcc20Pass, hireCost, maxHireHours,
+  loadBetHire, saveBetHire, recordBet, settleOpenBets, loadBetBook
+} from './bet.js?v=125';
+import {
   migrateReceiveBook, ownedAddresses, markAddressUsed, currentReceive,
   deriveReceiveBatch, unusedReceiveCount, ensurePrivacyBook
 } from './receive.js?v=90';
@@ -48,7 +53,7 @@ import {
 } from './atrade.js?v=100';
 import { SCORPION_MEMORY } from './scorpionMemory.js?v=124';
 
-export const BUILD = '124';
+export const BUILD = '125';
 
 const TOKEN_FALLBACK_LOGO = 'assets/ttt.png';
 
@@ -272,6 +277,10 @@ let agentTimer = null;
 let agentPreviewTimer = null;
 let agentBusy = false;
 let agentPreview = null;
+let betTimer = null;
+let betHireTimer = null;
+let betBusy = false;
+let betFocus = 'KKDAG';
 let dcaTimer = null;
 let dcaBusy = false;
 let qrRaf = 0;
@@ -1167,6 +1176,7 @@ async function unlockToHome() {
   maybeAutoUnlock();
   resumeAgentIfAny();
   if (loadAgentJob()?.on) startAgentPreviewLoop();
+  resumeBetHireIfAny();
   resumeDcaIfAny();
   try { bootDappConnect(dappHooks()); } catch {}
   const pend = wallet?.address ? loadKrc20Pending(wallet.address) : null;
@@ -3594,17 +3604,20 @@ function syncAtLabels(side) {
 }
 
 function setAtPane(pane) {
-  atPane = pane === 'tokens' ? 'tokens' : (pane || 'book');
+  atPane = pane === 'tokens' ? 'tokens' : (pane === 'bet' ? 'bet' : (pane || 'book'));
   const book = atPane === 'book';
   const launch = atPane === 'launch';
   const agent = atPane === 'agent';
   const hold = atPane === 'tokens';
+  const bet = atPane === 'bet';
   $('at-book')?.classList.toggle('hidden', !book);
   $('at-launch')?.classList.toggle('hidden', !launch);
   $('at-agent')?.classList.toggle('hidden', !agent);
   $('at-holdings')?.classList.toggle('hidden', !hold);
+  $('at-bet')?.classList.toggle('hidden', !bet);
   document.querySelectorAll('#at-seg button').forEach(b => b.classList.toggle('on', b.dataset.at === atPane));
   $('at-tokens-btn')?.classList.toggle('on', hold);
+  $('at-bet-btn')?.classList.toggle('on', bet);
   syncAtKwBtn();
   syncAtNote();
   if ($('at-lnote')) {
@@ -3632,6 +3645,8 @@ function setAtPane(pane) {
   } else {
     stopAgentPreviewLoop();
   }
+  if (bet) startBetUi();
+  else stopBetClock();
 }
 
 function setTokPane(pane) {
@@ -4985,6 +5000,303 @@ async function tickAgent() {
     paintAgentStatus();
   } finally {
     agentBusy = false;
+  }
+}
+
+function betTickNow() {
+  return String($('bet-tick')?.value || betFocus || 'KKDAG').trim().toUpperCase() || 'KKDAG';
+}
+
+function paintBetHireStatus() {
+  const job = loadBetHire();
+  const el = $('bet-hire-st');
+  const pass = isKcc20Pass(kccHoldings);
+  if ($('bet-pass')) {
+    $('bet-pass').textContent = pass
+      ? 'KCC20 pass on · hold ≥ ' + SUB_HOLD_SAFE() + ' KKDAG · extra hours + 1 hour free'
+      : 'KCC20 pass locked · hold ≥ 1,000 KKDAG to unlock more hire hours';
+  }
+  paintBetCost();
+  const fills = $('bet-fills');
+  if (!job) {
+    if (el) el.textContent = 'No hire running.';
+    if (fills) fills.innerHTML = '';
+    return;
+  }
+  const left = Math.max(0, Number(job.until || 0) - Date.now());
+  if (el) {
+    el.textContent = (job.on && left > 0 ? 'Hired · ' : 'Hire ended · ') + (job.tick || '') + ' · '
+      + Math.ceil(left / 3600000) + 'h left · ' + (job.last || 'waiting next 15m');
+  }
+  if (fills) {
+    const rows = (job.fills || []).slice(-8).reverse();
+    fills.innerHTML = rows.map(f => {
+      const cls = f.side === 'yes' ? 'up' : 'down';
+      const tx = f.txId ? `<a href="${esc(explorerTx(f.txId))}" target="_blank" rel="noopener">${esc(String(f.txId).slice(0, 10))}…</a>` : '';
+      return `<div><span class="${cls}">${esc((f.side || '').toUpperCase())}</span> ${esc(fmtPx(f.px))} · ${tx}</div>`;
+    }).join('') || '';
+  }
+}
+
+function SUB_HOLD_SAFE() { return 1000; }
+
+function paintBetCost() {
+  const hours = Math.max(1, Math.round(Number($('bet-hours')?.value || 1)));
+  const sub = isKcc20Pass(kccHoldings);
+  const cap = maxHireHours(sub);
+  if (hours > cap && $('bet-hours')) $('bet-hours').value = String(cap);
+  const cost = hireCost(Math.min(hours, cap), sub);
+  if ($('bet-cost')) $('bet-cost').value = cost + ' KKDAG' + (sub ? ' · pass' : '');
+}
+
+function paintBetClock() {
+  const w = windowBounds();
+  if ($('bet-clock')) $('bet-clock').textContent = fmtRemain(w.remainMs);
+}
+
+async function paintBetBoard() {
+  const box = $('bet-board');
+  if (!box) return;
+  if (isTestnet()) {
+    box.innerHTML = '<div class="empty">Bets use the mainnet KRON oracle. Switch Network off Testnet-10.</div>';
+    return;
+  }
+  try {
+    const mkts = await kronMarkets();
+    const top = (mkts || []).filter(m => m.tick && m.tick !== '?').slice(0, 10);
+    const focus = betTickNow();
+    box.innerHTML = top.map(m => `
+      <button class="row token-row" type="button" data-bet-tick="${esc(m.tick)}">
+        <div>
+          <div class="title">${esc(m.tick)}${m.tick === focus ? ' · live' : ''}</div>
+          <div class="sub">${esc(m.graduated ? 'Pool AMM' : 'Curve')} · ${esc(fmtChg(m.change24h))}</div>
+        </div>
+        <div class="amt"><b>${esc(fmtPx(m.price))}</b><em>KAS</em></div>
+      </button>`).join('') || '<div class="empty">No KRON markets.</div>';
+  } catch (e) {
+    box.innerHTML = '<div class="empty">' + esc(errText(e)) + '</div>';
+  }
+}
+
+async function paintBetMarket() {
+  const tick = betTickNow();
+  betFocus = tick;
+  if ($('bet-q')) $('bet-q').innerHTML = `Will <b>${esc(tick)}</b> print higher on the KRON index at this 15m close than at open?`;
+  if (isTestnet()) {
+    if ($('bet-quote')) $('bet-quote').textContent = 'Switch to mainnet for real KRON oracle bets.';
+    return;
+  }
+  const candles = await kronCandles(tick, 24).catch(() => []);
+  const yes = yesCentsFromCandles(candles);
+  if ($('bet-yes-c')) $('bet-yes-c').textContent = yes + '¢';
+  if ($('bet-no-c')) $('bet-no-c').textContent = (100 - yes) + '¢';
+  const info = await lookupKronTick(tick).catch(() => null);
+  const w = windowBounds();
+  settleOpenBets(tick, info?.price, Date.now());
+  const px = Number(info?.price || 0);
+  if ($('bet-quote')) {
+    $('bet-quote').textContent = (info?.graduated ? 'Pool AMM' : 'Curve AMM') + ' · idx ' + fmtPx(px)
+      + ' KAS · implied YES ' + yes + '¢ from last candles · window ends ' + fmtRemain(w.remainMs)
+      + '. YES buys ' + tick + ' with KAS. NO sells ' + tick + ' you hold. Oracle: idx.kron.technology.';
+  }
+  paintBetHireStatus();
+}
+
+function ensureBetHireLoop() {
+  if (betHireTimer) return;
+  betHireTimer = setInterval(() => tickBetHire().catch(() => {}), 8000);
+}
+
+function startBetUi() {
+  if ($('bet-tick') && !$('bet-tick').value) $('bet-tick').value = 'KKDAG';
+  paintBetClock();
+  paintBetCost();
+  paintBetBoard().catch(() => {});
+  paintBetMarket().catch(() => {});
+  if (!betTimer) {
+    betTimer = setInterval(() => {
+      paintBetClock();
+      const w = windowBounds();
+      if (w.remainMs < 4000 || w.remainMs > WINDOW_MS - 2500) paintBetMarket().catch(() => {});
+    }, 1000);
+  }
+  ensureBetHireLoop();
+}
+
+function stopBetClock() {
+  if (betTimer) { clearInterval(betTimer); betTimer = null; }
+}
+
+function resumeBetHireIfAny() {
+  const job = loadBetHire();
+  if (job?.on && Number(job.until || 0) > Date.now() && sessionOpen()) {
+    ensureBetHireLoop();
+    tickBetHire().catch(() => {});
+    toast('Bet agent resumed · ' + (job.tick || TTT_TICK));
+  }
+}
+
+async function placeBet(side) {
+  if (isTestnet()) { toast('Bets are mainnet KRON only'); return; }
+  if (!wallet) { toast('Unlock a wallet'); return; }
+  const tick = betTickNow();
+  const sizeKas = Number($('bet-size')?.value || 0.15);
+  if (!(sizeKas > 0)) { toast('Set a size'); return; }
+  const info = await lookupKronTick(tick);
+  const w = windowBounds();
+  try { await requirePin((side === 'yes' ? 'YES' : 'NO') + ' bet ' + tick); }
+  catch (e) { if (errText(e) === 'cancelled') return; toast(errText(e)); return; }
+  toast(side === 'yes' ? 'Buying ' + tick + ' on KRON…' : 'Selling ' + tick + ' on KRON…');
+  let result;
+  if (side === 'yes') {
+    result = await executeKronTrade({
+      wallet, tick, side: 'buy', amount: String(sizeKas),
+      utxos: await fetchAddressUtxos(wallet.address).catch(() => []),
+      forceKasware: kaswareEnabled(),
+      onStatus: (m) => toast(m)
+    });
+  } else {
+    const hold = holdingForTick(tick);
+    if (!hold || !(Number(hold.balance) > 0)) throw new Error('NO sells ' + tick + ' — this wallet holds none');
+    const dec = Number(hold.decimals || info.decimals || 0);
+    const have = Number(hold.balance || 0) / (10 ** dec);
+    const px = Number(info.price || 0);
+    let amt = px > 0 ? Math.min(have, sizeKas / px) : have;
+    if (dec === 0) amt = Math.floor(amt);
+    if (!(amt > 0)) throw new Error('Need at least 1 ' + tick + ' to bet NO');
+    result = await executeKronTrade({
+      wallet, tick, side: 'sell', amount: String(amt),
+      utxos: await fetchAddressUtxos(wallet.address).catch(() => []),
+      forceKasware: kaswareEnabled(),
+      onStatus: (m) => toast(m)
+    });
+  }
+  recordBet({
+    tick, side, openPx: Number(info.price || 0), start: w.start, end: w.end,
+    sizeKas, txId: result?.txId || '', settled: false, at: Date.now()
+  });
+  afterTx();
+  toast((side === 'yes' ? 'YES' : 'NO') + ' on ' + tick + ' · ' + (result?.txId || '').slice(0, 10));
+  paintBetMarket().catch(() => {});
+}
+
+async function hireBetAgent() {
+  if (isTestnet()) { toast('Hire is mainnet KKDAG'); return; }
+  if (!wallet) { toast('Unlock a wallet'); return; }
+  const tick = betTickNow();
+  const sub = isKcc20Pass(kccHoldings);
+  let hours = Math.max(1, Math.round(Number($('bet-hours')?.value || 1)));
+  hours = Math.min(hours, maxHireHours(sub));
+  const cost = hireCost(hours, sub);
+  const sizeKas = Number($('bet-size')?.value || 0.15);
+  const held = kkdagsHeld(kccHoldings);
+  if (cost > 0 && held < cost) throw new Error('Need ' + cost + ' KKDAG to hire. This wallet has ' + Math.floor(held));
+  try { await requirePin('Hire Scorpion ' + hours + 'h on ' + tick); }
+  catch (e) { if (errText(e) === 'cancelled') return; throw e; }
+  let payTxId = '';
+  if (cost > 0) {
+    const token = holdingForTick(TTT_TICK);
+    if (!token) throw new Error('Unlock TTT token (KKDAG) in this wallet first');
+    toast('Paying ' + cost + ' KKDAG to the agent…');
+    const sent = await sendKcc20({
+      wallet,
+      dest: BET_AGENT_ADDR,
+      token,
+      amountHuman: String(cost),
+      utxos: await fetchAddressUtxos(wallet.address).catch(() => []),
+      onStatus: (m) => toast(m)
+    });
+    payTxId = sent?.txId || '';
+  }
+  saveBetHire({
+    on: true, tick, hours, sizeKas, mode: 'auto',
+    until: Date.now() + hours * 3600000,
+    paid: cost, payTxId, lastWindow: 0, last: 'hired', fills: [],
+    startedAt: Date.now(), pass: sub
+  });
+  afterTx();
+  ensureBetHireLoop();
+  startBetUi();
+  toast('Agent hired ' + hours + 'h on ' + tick);
+  paintBetHireStatus();
+  tickBetHire().catch(e => toast(errText(e)));
+}
+
+function stopBetHire() {
+  const job = loadBetHire();
+  if (job) saveBetHire({ ...job, on: false, last: 'stopped' });
+  paintBetHireStatus();
+  toast('Bet agent stopped');
+}
+
+async function tickBetHire() {
+  if (betBusy) return;
+  const job = loadBetHire();
+  if (!job?.on) return;
+  if (Date.now() >= Number(job.until || 0)) {
+    saveBetHire({ ...job, on: false, last: 'hours ended' });
+    paintBetHireStatus();
+    return;
+  }
+  if (!sessionOpen()) {
+    job.last = 'unlock to trade';
+    saveBetHire(job);
+    paintBetHireStatus();
+    return;
+  }
+  const w = windowBounds();
+  if (job.lastWindow === w.start) return;
+  betBusy = true;
+  try {
+    const info = await lookupKronTick(job.tick);
+    const candles = await kronCandles(job.tick, 8).catch(() => []);
+    const yes = yesCentsFromCandles(candles);
+    const side = job.mode === 'no' ? 'no' : (job.mode === 'yes' ? 'yes' : (yes >= 50 ? 'yes' : 'no'));
+    job.lastWindow = w.start;
+    job.last = 'window ' + side.toUpperCase() + ' · ' + yes + '¢';
+    saveBetHire(job);
+    if (side === 'yes') {
+      const result = await executeKronTrade({
+        wallet, tick: job.tick, side: 'buy', amount: String(job.sizeKas || 0.15),
+        utxos: await fetchAddressUtxos(wallet.address).catch(() => []),
+        forceKasware: kaswareEnabled(),
+        onStatus: (m) => toast(m)
+      });
+      job.fills = (job.fills || []).concat({ t: Date.now(), side: 'yes', px: info.price, txId: result.txId }).slice(-12);
+      job.last = 'YES bought · ' + (result.txId || '').slice(0, 10);
+    } else {
+      const hold = holdingForTick(job.tick);
+      if (!hold || !(Number(hold.balance) > 0)) {
+        job.last = 'NO skipped · no ' + job.tick;
+        saveBetHire(job);
+        paintBetHireStatus();
+        return;
+      }
+      const dec = Number(hold.decimals || 0);
+      const have = Number(hold.balance || 0) / (10 ** dec);
+      const px = Number(info.price || 0);
+      let amt = px > 0 ? Math.min(have, Number(job.sizeKas || 0.15) / px) : have;
+      if (dec === 0) amt = Math.floor(amt);
+      if (!(amt > 0)) { job.last = 'NO skipped · dust'; saveBetHire(job); return; }
+      const result = await executeKronTrade({
+        wallet, tick: job.tick, side: 'sell', amount: String(amt),
+        utxos: await fetchAddressUtxos(wallet.address).catch(() => []),
+        forceKasware: kaswareEnabled(),
+        onStatus: (m) => toast(m)
+      });
+      job.fills = (job.fills || []).concat({ t: Date.now(), side: 'no', px: info.price, txId: result.txId }).slice(-12);
+      job.last = 'NO sold · ' + (result.txId || '').slice(0, 10);
+    }
+    saveBetHire(job);
+    afterTx();
+    paintBetHireStatus();
+  } catch (e) {
+    const j = loadBetHire() || job;
+    j.last = errText(e);
+    saveBetHire(j);
+    paintBetHireStatus();
+  } finally {
+    betBusy = false;
   }
 }
 
@@ -7774,6 +8086,22 @@ function bind() {
     setAtPane(b.dataset.at);
   });
   click('at-tokens-btn', () => { haptic(); setAtPane(atPane === 'tokens' ? 'book' : 'tokens'); });
+  click('at-bet-btn', () => { haptic(); setAtPane(atPane === 'bet' ? 'book' : 'bet'); });
+  click('bet-yes', () => placeBet('yes').catch(err => toast(errText(err))));
+  click('bet-no', () => placeBet('no').catch(err => toast(errText(err))));
+  click('bet-hire', () => hireBetAgent().catch(err => toast(errText(err))));
+  click('bet-stop', () => stopBetHire());
+  $('bet-hours')?.addEventListener('input', paintBetCost);
+  $('bet-tick')?.addEventListener('change', () => paintBetMarket().catch(() => {}));
+  $('bet-board')?.addEventListener('click', e => {
+    const row = e.target.closest('[data-bet-tick]');
+    if (!row?.dataset.betTick) return;
+    haptic();
+    betFocus = row.dataset.betTick;
+    if ($('bet-tick')) $('bet-tick').value = betFocus;
+    paintBetMarket().catch(() => {});
+    paintBetBoard().catch(() => {});
+  });
   $('tok-seg')?.addEventListener('click', e => {
     const b = e.target.closest('[data-tok]');
     if (b?.dataset.tok) { haptic(); setTokPane(b.dataset.tok); }

@@ -1814,6 +1814,59 @@ function spendEntriesFrom(utxos, wallet, opts = {}) {
   }).filter(e => e && e.outpoint?.transactionId && e.amount > 0n && (allowWatch || e.privKey));
 }
 
+function compoundEntryCount(tx) {
+  try { return [...(tx.inputs || [])].length; } catch { return 0; }
+}
+
+function compoundOutputCount(tx) {
+  try { return [...(tx.outputs || [])].length; } catch { return 0; }
+}
+
+async function buildSingleOutputCompound(k, entries, dest, rpc) {
+  const net = networkId();
+  const total = entries.reduce((a, e) => a + e.amount, 0n);
+  const finish = (tx) => {
+    tx.version = 1;
+    prepInputs(tx, { sigOpCount: 0, computeBudget: 10 });
+    try { k.updateTransactionMass(net, tx); } catch {}
+    return tx;
+  };
+  try {
+    const feeRate = await nodeFeeRate(rpc);
+    const built = await k.createTransactions({
+      entries,
+      outputs: [],
+      changeAddress: dest,
+      priorityFee: 0n,
+      feeRate,
+      networkId: net
+    });
+    const pending = (built.transactions || [])[0];
+    const tx = pending?.transaction;
+    if (tx && compoundOutputCount(tx) === 1 && compoundEntryCount(tx) === entries.length) {
+      return finish(tx);
+    }
+  } catch {}
+  let fee = BigInt(Math.min(3_000_000, 550_000 + entries.length * 25_000));
+  if (total <= fee + 10_000n) throw new Error('Balance too small to cover the compound fee');
+  for (let i = 0; i < 8; i++) {
+    const send = total - fee;
+    if (send <= 10_000n) throw new Error('Fee would consume the whole merge');
+    let tx = k.createTransaction(entries, [{ address: dest, amount: send }], 0n, undefined, 1);
+    tx = finish(tx);
+    const nOut = compoundOutputCount(tx);
+    if (nOut === 1) return tx;
+    const kept = [...tx.outputs].reduce((a, o) => a + BigInt(o.value), 0n);
+    fee = total - kept;
+    if (fee < 400_000n) fee += 50_000n;
+    else fee += 50_000n;
+    tx = k.createTransaction(entries, [{ address: dest, amount: total - fee }], 0n, undefined, 1);
+    tx = finish(tx);
+    if (compoundOutputCount(tx) === 1) return tx;
+  }
+  throw new Error('Could not build a one-output merge. Retry Compound.');
+}
+
 export async function compoundUtxos({ wallet, utxos, signWithKasware = false }) {
   const k = await loadKaspaSdk();
   const external = !!(signWithKasware || (kaswareSigning(wallet) && !wallet?.privKey));
@@ -1827,33 +1880,11 @@ export async function compoundUtxos({ wallet, utxos, signWithKasware = false }) 
   });
   if (entries.length < 2) throw new Error('Already one UTXO — nothing to compound');
   entries = [...entries].sort((a, b) => (a.amount < b.amount ? 1 : -1));
-  const total = entries.reduce((a, e) => a + e.amount, 0n);
   const { rpc, url } = await connectPublicNode();
-  const net = networkId();
-  let fee = BigInt(Math.min(2_500_000, 450_000 + entries.length * 20_000));
-  if (total <= fee + 10_000n) throw new Error('Balance too small to cover the compound fee');
-
-  const assemble = (feeAmt) => {
-    const send = total - feeAmt;
-    if (send <= 0n) throw new Error('Fee would consume the whole merge');
-    const tx = k.createTransaction(
-      entries,
-      [{ address: wallet.address, amount: send }],
-      0n,
-      undefined,
-      1
-    );
-    tx.version = 1;
-    prepInputs(tx, { sigOpCount: 0, computeBudget: 10 });
-    try { k.updateTransactionMass(net, tx); } catch {}
-    if (tx.outputs.length !== 1) {
-      throw new Error('Compound must be a single output — retry');
-    }
-    return tx;
-  };
-
-  let tx = assemble(fee);
-  const inAmts = entries.map(e => e.amount);
+  let tx = await buildSingleOutputCompound(k, entries, wallet.address, rpc);
+  if (compoundOutputCount(tx) !== 1) {
+    throw new Error('Compound must be a single output — retry');
+  }
   const priv = wallet.privKey && !external ? new k.PrivateKey(wallet.privKey) : null;
   let txId = null;
 
@@ -1862,6 +1893,9 @@ export async function compoundUtxos({ wallet, utxos, signWithKasware = false }) 
     const signInputs = [...tx.inputs].map((_, i) => ({ index: i, sighashType: 1 }));
     const signedJson = await signPsktWithKasware(json, signInputs);
     const signed = k.Transaction.deserializeFromSafeJSON(signedJson);
+    if (compoundOutputCount(signed) !== 1) {
+      throw new Error('KasWare added a leftover coin. Reject that popup and tap Compound again — merge must stay one UTXO.');
+    }
     txId = await submitSignedRpc(k, rpc, url, signed, {
       sigOpCount: 0,
       computeBudget: 10,
@@ -1871,7 +1905,7 @@ export async function compoundUtxos({ wallet, utxos, signWithKasware = false }) 
   } else {
     if (!priv) throw new Error('Need Native key or KasWare to compound');
     let scripts = meetToccataFee(k, tx, priv, entries, 0n, 0);
-    if (tx.outputs.length !== 1) throw new Error('Compound must be a single output — retry');
+    if (compoundOutputCount(tx) !== 1) throw new Error('Compound must be a single output — retry');
     try {
       txId = await submitSignedRpc(k, rpc, url, tx, {
         sigOpCount: 0,
@@ -1883,8 +1917,13 @@ export async function compoundUtxos({ wallet, utxos, signWithKasware = false }) 
       const need = requiredFeeFromError(e);
       const paid = txInputSum(tx, entries) - txOutputSum(tx);
       if (need && need > paid) {
-        fee = need + 50_000n;
-        tx = assemble(fee);
+        const total = entries.reduce((a, e) => a + e.amount, 0n);
+        const fee = need + 50_000n;
+        tx = k.createTransaction(entries, [{ address: wallet.address, amount: total - fee }], 0n, undefined, 1);
+        tx.version = 1;
+        prepInputs(tx, { sigOpCount: 0, computeBudget: 10 });
+        try { k.updateTransactionMass(networkId(), tx); } catch {}
+        if (compoundOutputCount(tx) !== 1) throw e;
         scripts = signP2pkInputs(k, tx, priv, entries);
         txId = await submitSignedRpc(k, rpc, url, tx, {
           sigOpCount: 0,
@@ -1897,9 +1936,8 @@ export async function compoundUtxos({ wallet, utxos, signWithKasware = false }) 
       }
     }
   }
-  const outAmts = [...tx.outputs].map(o => BigInt(o.value));
-  if (outAmts.length > 1 && !storageMassOk(k, inAmts, outAmts)) {
-    throw new Error('Compound would leave a dust change and blow storage mass. Retry — this merge must be a single output.');
+  if (compoundOutputCount(tx) > 1) {
+    throw new Error('Compound would leave a leftover UTXO. Not broadcast. Tap Compound again.');
   }
   if (!txId) throw new Error('Compound broadcast failed');
   const paidFee = txInputSum(tx, entries) - txOutputSum(tx);

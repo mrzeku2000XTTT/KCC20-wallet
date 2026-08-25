@@ -23,7 +23,7 @@ import {
   fetchOwnedUtxos, collectSpendableUtxos, buildSentinelChain, buildRecurringChain, buildHashlockCovenant,
   newHashlockSecret, checkinHop, currentHop, parseXmssKit, p2shFromRedeemHex, spendXmssVault,
   disconnectRpc, buildDcaDrips, sendKasMany, releaseDcaDrip, cancelDcaDrip, isMassError
-} from './tx.js?v=144';
+} from './tx.js?v=158';
 import { bootDappConnect, pingTttDappFrame, TTT_TREASURY } from './dappConnect.js?v=157';
 import { schedulePersistIframeVault, bootIframeVaultWatch } from './iframeVault.js?v=120';
 import { kronMarkets, quoteKronTrade, executeKronTrade, formatKasSompi, lookupKronTick, liveQuote, tradeCostLines, attachKronLogos, kronCandles, kronLogoFor, quoteKcc20Bridge, executeKcc20Bridge, formatTokenRaw } from './kronTrade.js?v=140';
@@ -58,7 +58,7 @@ import {
 } from './atrade.js?v=100';
 import { SCORPION_MEMORY } from './scorpionMemory.js?v=152';
 
-export const BUILD = '157';
+export const BUILD = '158';
 
 const TOKEN_FALLBACK_LOGO = 'assets/ttt.png';
 
@@ -7310,7 +7310,7 @@ function openCompound() {
     <div class="kv"><span class="k">UTXOs now</span><span class="v">${n}</span></div>
     <div class="kv"><span class="k">Balance</span><span class="v">${formatAmount(balanceSompi)} KAS</span></div>
     <div class="kv"><span class="k">Network fee</span><span class="v">~${feeEst.toFixed(4)} KAS</span></div>
-    <p class="muted" style="text-align:left;">Merges <b>every spendable coin in this wallet</b> into <b>one</b> UTXO (no leftover dust). ${kw ? 'KasWare signs a PSKT.' : 'Native PIN signs.'} Same for Wallet 2, WalletX, and KasWare.</p>
+    <p class="muted" style="text-align:left;">Merges <b>every spendable KAS coin</b> into <b>one</b> UTXO. No leftover change coin (that is what left you on 2 UTXOs). ${kw ? 'Approve the PSKT in KasWare — it must show one output.' : 'Native PIN signs.'}</p>
   `, { confirm: kw ? 'Pay with KasWare' : 'Compound now', gold: true, onConfirm: () => runCompound() });
 }
 

@@ -710,7 +710,7 @@ img { display: block; max-width: 100%; }
   -webkit-overflow-scrolling: touch;
 }
 #page-home.home-fit #holdings .row {
-  padding: 8px 12px; min-height: 48px;
+  padding: 8px 12px; min-height: 58px;
   border-radius: 16px;
   background: rgba(255,255,255,0.06);
   border: 0.5px solid var(--hairline);
@@ -721,10 +721,12 @@ img { display: block; max-width: 100%; }
 #page-home.home-fit #holdings .sub { font-size: 11px; }
 #page-home.home-fit #holdings .amt b { font-size: 13px; }
 #page-home.home-fit #holdings .amt em { display: none; }
-#page-home.home-fit #holdings .amt em.pnl {
+#page-home.home-fit #holdings .amt em.pnl,
+#page-home.home-fit #holdings .amt em.pnl-val {
   display: block; font-size: 10px; font-weight: 700; margin-top: 1px;
   font-variant-numeric: tabular-nums;
 }
+#page-home.home-fit #holdings .amt em.pnl-val { color: var(--label-2); font-weight: 600; }
 #page-home.home-fit #holdings .amt em.pnl.up { color: #49eacb; }
 #page-home.home-fit #holdings .amt em.pnl.down { color: #ff6b6b; }
 

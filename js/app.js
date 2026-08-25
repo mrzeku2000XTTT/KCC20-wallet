@@ -26,7 +26,7 @@ import {
 } from './tx.js?v=135';
 import { bootDappConnect, pingTttDappFrame } from './dappConnect.js?v=121';
 import { schedulePersistIframeVault, bootIframeVaultWatch } from './iframeVault.js?v=120';
-import { kronMarkets, quoteKronTrade, executeKronTrade, formatKasSompi, lookupKronTick, tradeCostLines, attachKronLogos, kronCandles, quoteKcc20Bridge, executeKcc20Bridge, formatTokenRaw } from './kronTrade.js?v=138';
+import { kronMarkets, quoteKronTrade, executeKronTrade, formatKasSompi, lookupKronTick, liveQuote, tradeCostLines, attachKronLogos, kronCandles, quoteKcc20Bridge, executeKcc20Bridge, formatTokenRaw } from './kronTrade.js?v=140';
 import {
   BET_AGENT_ADDR, TTT_TICK, WINDOW_MS, windowBounds, fmtRemain,
   kkdagsHeld, isKcc20Pass, hireCost, maxHireHours,
@@ -56,9 +56,9 @@ import {
   rememberLaunch, loadLaunched, cookOwnerBalances, cookDeployed,
   cookTickOf, cookBookLevels
 } from './atrade.js?v=100';
-import { SCORPION_MEMORY } from './scorpionMemory.js?v=139';
+import { SCORPION_MEMORY } from './scorpionMemory.js?v=140';
 
-export const BUILD = '139';
+export const BUILD = '140';
 
 const TOKEN_FALLBACK_LOGO = 'assets/ttt.png';
 
@@ -254,6 +254,7 @@ const freezeTimers = new Map();
 let kccHoldings = [];
 let krcHoldings = [];
 let kronPx = {};
+let kronTradeBasis = {};
 const BASIS_KEY = 'kcc20_basis_v1';
 let tokenLoadErr = '';
 let lastTokenFetch = 0;
@@ -1607,16 +1608,55 @@ function noteKronFill(q) {
     addBasis(tick, Number(q.net || q.kasOut || 0) / 1e8, Number(q.tokenIn || 0) / (10 ** dec), 'sell');
   }
 }
-function markHoldingIfNew(tick, have, px) {
-  const t = String(tick || '').toUpperCase();
-  if (!t || !(have > 0) || !(px > 0)) return;
-  const map = loadBasis();
-  const row = map[t] || { kasIn: 0, tokIn: 0, kasOut: 0, tokOut: 0, markKas: 0 };
-  if (row.kasIn > 0 || row.markKas > 0) return;
-  row.markKas = px;
-  map[t] = row;
-  saveBasis(map);
+function fmtPct(n) {
+  const x = Number(n);
+  if (!Number.isFinite(x)) return '0.00%';
+  return (x > 0 ? '+' : '') + x.toFixed(2) + '%';
 }
+
+function rebuildKronTradeBasis(rows) {
+  const map = {};
+  const sorted = [...(rows || [])].sort((a, b) => Number(a.ts || a.time || 0) - Number(b.ts || b.time || 0));
+  for (const t of sorted) {
+    const tick = String(t.tick || t.ticker || '').toUpperCase();
+    const side = String(t.side || '').toLowerCase();
+    const vol = Number(t.volume ?? t.amount ?? t.tokenAmount ?? 0);
+    const px = Number(t.price ?? t.priceKas ?? 0);
+    if (!tick || !(vol > 0) || !(px > 0)) continue;
+    const kas = vol * px;
+    const row = map[tick] || { kasIn: 0, tokIn: 0, kasOut: 0, tokOut: 0 };
+    if (side === 'sell') {
+      row.kasOut += kas;
+      row.tokOut += vol;
+    } else if (side === 'buy') {
+      row.kasIn += kas;
+      row.tokIn += vol;
+    }
+    map[tick] = row;
+  }
+  kronTradeBasis = map;
+}
+
+async function hydrateKronPnl(addr) {
+  if (!addr || isTestnet()) return;
+  const addrs = (typeof ownedAddresses === 'function' ? ownedAddresses(wallet) : [addr]).filter(Boolean).slice(0, 6);
+  const bags = await Promise.all(addrs.map(a => fetchKronAddrTrades(a, 200).catch(() => [])));
+  rebuildKronTradeBasis(bags.flat());
+}
+
+function holdingCost(tick, have) {
+  const traded = kronTradeBasis[tick];
+  const local = loadBasis()[tick];
+  const b = (traded?.tokIn > 0 ? traded : null) || (local?.tokIn > 0 ? local : null);
+  if (!b || !(b.tokIn > 0) || !(have > 0)) return null;
+  const netTok = b.tokIn - (b.tokOut || 0);
+  const netKas = b.kasIn - (b.kasOut || 0);
+  const avg = netTok > 0 && netKas > 0 ? netKas / netTok : (b.kasIn / b.tokIn);
+  if (!(avg > 0)) return null;
+  const cost = avg * have;
+  return { cost, avg };
+}
+
 function holdingPnl(t) {
   if (t?.native) return null;
   const tick = String(t.ticker || '').toUpperCase();
@@ -1624,43 +1664,32 @@ function holdingPnl(t) {
   const have = Number(t.balance || 0) / (10 ** dec);
   const live = kronPx[tick] || {};
   const px = Number(live.price || t.priceKas || 0);
-  const chg24 = Number(live.change24h);
-  const value = have * px;
-  markHoldingIfNew(tick, have, px);
-  const b = loadBasis()[tick] || {};
-  if (b.tokIn > 0 && b.kasIn > 0) {
-    const avg = b.kasIn / b.tokIn;
-    const cost = avg * have;
-    const pnl = value - cost;
-    const pct = cost > 0 ? (pnl / cost) * 100 : 0;
-    return { px, value, cost, pnl, pct, mode: 'cost', chg24 };
+  const chg24 = Number.isFinite(Number(live.change24h)) ? Number(live.change24h) : 0;
+  const value = have * (px > 0 ? px : 0);
+  const c = holdingCost(tick, have);
+  if (c && value > 0) {
+    const pnl = value - c.cost;
+    const pct = c.cost > 0 ? (pnl / c.cost) * 100 : 0;
+    return { px, value, cost: c.cost, pnl, pct, mode: 'cost', chg24 };
   }
-  if (b.markKas > 0 && px > 0) {
-    const cost = b.markKas * have;
-    const pnl = value - cost;
-    const pct = ((px - b.markKas) / b.markKas) * 100;
-    return { px, value, cost, pnl, pct, mode: 'mark', chg24 };
-  }
-  if (Number.isFinite(chg24)) return { px, value, cost: 0, pnl: 0, pct: chg24, mode: '24h', chg24 };
-  return { px, value, cost: 0, pnl: 0, pct: 0, mode: 'none', chg24: 0 };
+  return { px, value, cost: 0, pnl: 0, pct: chg24, mode: '24h', chg24 };
 }
 
 function tokenRow(t, extra = '') {
   const proto = t.protocol === 'krc20' ? 'KRC-20' : (t.native ? 'Native' : 'KCC20');
   const amt = t.native ? formatAmount(t.sompi) : formatTokenUnits(t.balance, t.decimals);
   const pnl = t.native ? null : holdingPnl(t);
-  let em = t.native ? (t.usd || '') : proto;
-  let emClass = '';
-  if (pnl && (pnl.mode === 'cost' || pnl.mode === 'mark')) {
-    const sign = pnl.pct >= 0 ? '+' : '';
-    em = sign + pnl.pct.toFixed(1) + '% · ' + (pnl.pnl >= 0 ? '+' : '') + formatKasSompi(Math.round(pnl.pnl * 1e8)) + ' KAS';
-    emClass = 'pnl ' + (pnl.pct >= 0 ? 'up' : 'down');
-  } else if (pnl && pnl.mode === '24h') {
-    const sign = pnl.pct >= 0 ? '+' : '';
-    em = '24h ' + sign + pnl.pct.toFixed(1) + '%';
-    emClass = 'pnl ' + (pnl.pct >= 0 ? 'up' : 'down');
+  let amtMeta = `<em>${esc(t.native ? (t.usd || '') : proto)}</em>`;
+  if (pnl && pnl.px > 0) {
+    const bits = [];
+    if (pnl.value > 0) bits.push(`<em class="pnl-val">${esc(formatKasSompi(Math.round(pnl.value * 1e8)) + ' KAS')}</em>`);
+    bits.push(`<em class="pnl ${pnl.chg24 >= 0 ? 'up' : 'down'}">24h ${esc(fmtPct(pnl.chg24))}</em>`);
+    if (pnl.mode === 'cost' && Number.isFinite(pnl.pct)) {
+      bits.push(`<em class="pnl ${pnl.pct >= 0 ? 'up' : 'down'}">P&amp;L ${esc(fmtPct(pnl.pct))}</em>`);
+    }
+    amtMeta = bits.join('');
   } else if (Number(t.priceKas) && price) {
-    em = usd(Number(t.balance) / (10 ** (t.decimals || 0)) * t.priceKas);
+    amtMeta = `<em>${esc(usd(Number(t.balance) / (10 ** (t.decimals || 0)) * t.priceKas))}</em>`;
   }
   const key = `${t.protocol || 'watch'}:${t.ticker}`;
   const sub = t.native
@@ -1675,7 +1704,7 @@ function tokenRow(t, extra = '') {
       </div>
       <div class="amt">
         <b>${esc(amt)}</b>
-        <em class="${esc(emClass)}">${esc(em)}</em>
+        ${amtMeta}
       </div>
     </button>`;
 }
@@ -1706,7 +1735,7 @@ function renderHoldings() {
   const rows = [kasRow, ...kccRows, ...krcRows, ...lockRows];
   const pnlKey = kccHoldings.map(t => {
     const p = holdingPnl(t);
-    return `${t.ticker}:${p?.pct?.toFixed?.(1) || ''}:${p?.mode || ''}`;
+    return `${t.ticker}:${p?.value?.toFixed?.(4) || ''}:${p?.chg24?.toFixed?.(2) || ''}:${p?.pct?.toFixed?.(2) || ''}:${p?.mode || ''}`;
   }).join(',');
   const key = `${balanceSompi}|${kccHoldings.map(t => `${t.ticker}:${t.balance}:${t.image || ''}`).join(',')}|${krcHoldings.map(t => `${t.ticker}:${t.balance}`).join(',')}|${locked.map(v => v.address + ':' + (v.fundedSompi || 0)).join(',')}|${pnlKey}`;
   const box = $('holdings');
@@ -3558,12 +3587,30 @@ async function refreshTokenHoldings() {
       const withLogos = await attachKronLogos(kcc.value);
       kccHoldings = mergeFreshHoldings(kccHoldings, withLogos);
       try {
-        const mkts = await kronMarkets();
-        const map = {};
-        for (const m of mkts || []) {
-          map[String(m.tick || '').toUpperCase()] = { price: Number(m.price || 0), change24h: Number(m.change24h || 0) };
-        }
+        const map = { ...kronPx };
+        try {
+          const mkts = await kronMarkets();
+          for (const m of mkts || []) {
+            const tick = String(m.tick || '').toUpperCase();
+            if (!tick) continue;
+            const q = liveQuote(m);
+            map[tick] = { price: q.price, change24h: q.change24h };
+          }
+        } catch {}
+        const ticks = [...new Set((kccHoldings || []).map(t => String(t.ticker || '').toUpperCase()).filter(Boolean))].slice(0, 16);
+        await Promise.all(ticks.map(async tick => {
+          try {
+            const info = await lookupKronTick(tick);
+            const prev = map[tick] || {};
+            const q = liveQuote(info);
+            map[tick] = {
+              price: q.price || prev.price || 0,
+              change24h: Number.isFinite(Number(info.change24h)) ? Number(info.change24h) : Number(prev.change24h || 0)
+            };
+          } catch {}
+        }));
         kronPx = map;
+        await hydrateKronPnl(addr).catch(() => {});
       } catch {}
     }
     if (krc.status === 'fulfilled') krcHoldings = mergeFreshHoldings(krcHoldings, krc.value);

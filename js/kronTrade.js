@@ -60,32 +60,61 @@ export async function kronTokenlist() {
   return listCache;
 }
 
+export function liveQuote(row = {}) {
+  const price = Number(row.price ?? row.priceKas ?? row.px ?? 0);
+  const chg = Number(row.change24h ?? row.change ?? row.chg24h);
+  return {
+    price: Number.isFinite(price) ? price : 0,
+    change24h: Number.isFinite(chg) ? chg : 0
+  };
+}
+
 export async function kronMarkets() {
   const [list, mkts] = await Promise.all([
-    kronTokenlist(),
+    kronTokenlist().catch(() => ({ tokens: [] })),
     idx('/markets').catch(() => [])
   ]);
   const live = new Map();
   for (const m of (Array.isArray(mkts) ? mkts : [])) {
     live.set(String(m.tick || '').toUpperCase(), m);
   }
-  return (list.tokens || []).map(e => {
+  const fromList = (list.tokens || []).map(e => {
     const tick = String(e.symbol || '').toUpperCase();
     const row = live.get(tick) || {};
+    const q = liveQuote(row);
     return {
       tick,
       name: e.name || tick,
       decimals: Number(e.decimals || 0),
       logo: e.logoURI || '',
       graduated: !!(e.extensions?.graduated || row.graduated),
-      price: Number(row.price || 0),
-      change24h: Number(row.change24h || 0),
+      price: q.price,
+      change24h: q.change24h,
       volume24h: Number(row.volume24h || 0),
       tvl: Number(row.tvl || 0),
       covenantId: e.covenantId,
       entry: e
     };
-  }).sort((a, b) => (b.volume24h || 0) - (a.volume24h || 0));
+  });
+  const seen = new Set(fromList.map(x => x.tick));
+  for (const [tick, row] of live) {
+    if (!tick || seen.has(tick)) continue;
+    const q = liveQuote(row);
+    fromList.push({
+      tick,
+      name: row.name || tick,
+      decimals: Number(row.dec ?? row.decimals ?? 0),
+      logo: '',
+      graduated: !!row.graduated,
+      price: q.price,
+      change24h: q.change24h,
+      volume24h: Number(row.volume24h || 0),
+      tvl: Number(row.tvl || 0),
+      covenantId: row.covenantId,
+      entry: null
+    });
+  }
+  return fromList.sort((a, b) => (b.volume24h || 0) - (a.volume24h || 0));
 }
 
 export function findKronEntry(tick) {
@@ -127,16 +156,17 @@ export async function kronCandles(tick, limit = 72) {
 export async function lookupKronTick(tick) {
   const t = String(tick || '').trim().toUpperCase();
   if (!/^[A-Z0-9]{2,12}$/.test(t)) throw new Error('Enter a ticker like KRON or KKDAG');
-  await kronTokenlist();
+  try { await kronTokenlist(); } catch {}
   const token = await idxToken(t);
   const entry = findKronEntry(t);
+  const q = liveQuote(token);
   return {
     tick: t,
     name: token.name || entry?.name || t,
     graduated: !!(token.graduated || entry?.extensions?.graduated),
-    price: Number(token.price || 0),
+    price: q.price,
     decimals: Number(entry?.decimals ?? token.dec ?? token.decimals ?? 0),
-    change24h: Number(token.change24h || 0),
+    change24h: q.change24h,
     volume24h: Number(token.volume24h || 0),
     covenantId: token.covenantId || entry?.covenantId || '',
     entry

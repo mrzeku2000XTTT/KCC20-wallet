@@ -9,7 +9,7 @@ const NS = 'kcc20';
 const HOST_METHODS = [
   'connect', 'requestAccounts', 'disconnect', 'getAccounts', 'getNetwork', 'getPublicKey',
   'switchNetwork', 'signPskt', 'signPsbt', 'pushTx', 'getUtxoEntries', 'getBalance',
-  'getTokenBalance', 'getHoldings', 'sendToken', 'sendKcc20', 'payToken', 'payKcc20', 'fundCredits'
+  'getTokenBalance', 'getHoldings', 'getState', 'sendToken', 'sendKcc20', 'payToken', 'payKcc20', 'fundCredits'
 ];
 
 let hooks = null;
@@ -211,11 +211,40 @@ async function handleConnect(req) {
     rememberOrigin(origin, req.name);
   }
   try { hooks?.rememberDappAccount?.(w.address); } catch {}
+  return walletSnapshot(w);
+}
+
+async function walletSnapshot(w) {
+  const sompi = await fetchAddressBalance(w.address).catch(() => 0);
+  let holdings = [];
+  try {
+    if (typeof hooks.getHoldings === 'function') holdings = (await hooks.getHoldings()) || [];
+  } catch {}
+  const rows = (holdings || []).map(serializeHolding).filter(Boolean);
+  const kkd = rows.find(h => h.tick === 'KKDAG') || null;
+  const kas = rows.find(h => h.tick === 'KAS' || h.protocol === 'kas') || null;
   return {
     accounts: [w.address],
+    address: w.address,
     network: netName(),
-    publicKey: w.pubKey || ''
+    publicKey: w.pubKey || '',
+    name: w.name || 'Wallet',
+    balance: {
+      confirmed: Number(sompi || 0),
+      unconfirmed: 0,
+      address: w.address,
+      kas: Number(sompi || 0) / 1e8
+    },
+    holdings: rows,
+    kas: kas ? Number(kas.balance || sompi / 1e8) : Number(sompi || 0) / 1e8,
+    kkdags: kkd ? Number(kkd.balance || 0) : 0
   };
+}
+
+async function handleGetState(req) {
+  const w = await ensureUnlocked();
+  if (!originAllowed(req.origin)) return handleConnect(req);
+  return walletSnapshot(w);
 }
 
 async function handleSign(req) {
@@ -420,6 +449,7 @@ async function dispatch(req) {
   if (method === 'getUtxoEntries') return handleGetUtxos(req);
   if (method === 'getBalance') return handleGetBalance(req);
   if (method === 'getHoldings' || method === 'getKcc20Holdings') return handleHoldings(req);
+  if (method === 'getState') return handleGetState(req);
   if (method === 'getTokenBalance' || method === 'getKcc20Balance') return handleTokenBalance(req);
   if (method === 'sendToken' || method === 'sendKcc20' || method === 'payToken' || method === 'payKcc20' || method === 'fundCredits') {
     return handleSendToken(req);

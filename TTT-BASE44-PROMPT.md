@@ -1,66 +1,26 @@
-# Base44 prompt — App Store v2 header: Connect KCC20 (all screens)
+# Base44 prompt — App Store v2 Connect buttons: KCC20 balance + Sign
 
-Paste this into the **tttz.xyz Base44 agent**. Do **not** change the marketing landing page. Work **only** on **App Store v2** (`appstorev2`).
+Paste into the **tttz.xyz Base44 agent**. App Store v2 only (not the marketing landing page).
 
-This is **KCC20 Wallet connect**, not Reown/WalletConnect, not a Chrome extension.
+KCC20 Wallet (BUILD 155+) already returns **live balance + holdings** on connect and signs PSKTs. Wire **existing Connect wallet buttons** to it.
 
 SDK: https://kcc-20-wallet.vercel.app/sdk.js  
-Wallet: https://kcc-20-wallet.vercel.app  
-Demo: https://kcc-20-wallet.vercel.app/dapp-demo.html
+Wallet: https://kcc-20-wallet.vercel.app
 
 ---
 
-## What to build
+## What “done” looks like
 
-On the **App Store v2 top bar, top-right**, add a **Connect KCC20** button that fits **phone, tablet, and desktop**.
-
-Flow:
-
-1. User taps **Connect KCC20**.
-2. A **wallet popup** opens (`kcc.connect()`).
-   - If TTT is inside KCC20 Wallet iframe (`?kcc20_browser=1`): the **parent PWA** shows Connect / Sign (no extra popup).
-   - If TTT is a normal tab: `sdk.js` opens a **popup window** to https://kcc-20-wallet.vercel.app
-3. User Approves in KCC20, unlocks PIN if asked.
-4. Header shows the short `kaspa:q…` address. Session is shared with **every App Store v2 app**.
-5. When an app needs a signature (fund, pay, swap, play), call `signPskt` — **same popup/parent Sign sheet**. User taps Sign. TTT never sees the key.
+1. App Store v2 header **Connect KCC20** (top right, all screen sizes).
+2. Tap → wallet popup (standalone) **or** parent Sign/Connect sheet (iframe `?kcc20_browser=1`).
+3. After connect, TTT **shows this wallet’s balances** (KAS + KKDAG + other KCC20 from `getState` / `getHoldings`). Not a fake 0, not a pasted address.
+4. Any app action that spends (Fund, pay, swap, tip) opens the wallet **Sign** sheet. User Approves. TTT never holds the key.
 
 ---
 
-## Header UI (must fit all screens)
+## Detect KCC20 first (every Connect button)
 
-Put it in the existing App Store v2 **top header, right side** (same row as title / search / menu). Do not put it on the marketing landing page.
-
-**Disconnected**
-
-- Button label:
-  - width ≥ 420px: `Connect KCC20`
-  - width < 420px: `KCC20` (still tappable, min height 36px, min width 44px)
-- Gold / TTT style, one line, no wrap, `flex-shrink: 0`
-- Header is `display:flex; align-items:center`. Title/search `min-width:0; flex:1`. Button stays **right** and never drops under the title or overflows off-screen.
-- `padding-right` includes safe-area (`env(safe-area-inset-right)`).
-
-**Connected**
-
-- Chip: `q…` + last 4 of address (e.g. `qrtf…sax6`)
-- Tiny network dot if not mainnet
-- Tap chip → small menu: **Copy address**, **Disconnect**
-- On very narrow screens the chip may replace the long button; still top-right.
-
-**Busy**
-
-- Button disabled, text `Connecting…` / `Sign in wallet…` while the popup/parent sheet is open.
-
-Copy if popup blocked:
-
-`Allow popups for tttz.xyz, or open App Store from KCC20 Wallet → Profile → TTT.`
-
-Copy if TN10:
-
-`Switch off TN10 in KCC20 (You → Network).`
-
----
-
-## SDK (load once in App Store v2 shell)
+Load once in the App Store v2 shell:
 
 ```html
 <script src="https://kcc-20-wallet.vercel.app/sdk.js"></script>
@@ -68,73 +28,103 @@ Copy if TN10:
 
 If `window.kcc20` is missing, inject that script and wait for `kcc20#initialized`.
 
+**Prefer `window.kcc20` over KasWare.** When TTT is iframed in KCC20, sdk.js also shims `window.kasware` to the parent wallet so old KasWare-only buttons still hit KCC20.
+
 ```js
-function kcc() {
-  const w = window.kcc20;
-  if (!w || !w.isKcc20) throw new Error('KCC20 Wallet SDK not loaded');
-  return w;
+function wallet() {
+  if (window.kcc20 && window.kcc20.isKcc20) return window.kcc20;
+  if (window.kasware) return window.kasware;
+  throw new Error('Open App Store from KCC20 Wallet, or allow the KCC20 popup');
 }
 
-async function connectKcc20() {
-  const accounts = await kcc().connect(); // OPENS the wallet popup / parent sheet
-  return accounts[0];
-}
-
-async function signKcc20(unsignedSafeJson, signInputs) {
-  return kcc().signPskt({
-    txJsonString: unsignedSafeJson,
-    options: {
-      signInputs: (signInputs || []).map((i) =>
-        typeof i === 'number' ? { index: i, sighashType: 1 } : i
-      )
-    }
-  });
+async function connectAndRead() {
+  const w = wallet();
+  const accounts = await (w.connect || w.requestAccounts)();
+  const address = (Array.isArray(accounts) ? accounts[0] : (accounts && accounts.address)) || '';
+  let state = null;
+  if (w.getState) state = await w.getState();
+  else if (w.getHoldings) {
+    const h = await w.getHoldings();
+    const bal = w.getBalance ? await w.getBalance(address) : null;
+    state = { address, holdings: h && h.holdings ? h.holdings : h, balance: bal };
+  }
+  return { address, state };
 }
 ```
 
-On App Store v2 mount: `getAccounts()` **silently** to restore the chip. Do **not** auto-open the popup until they tap **Connect KCC20**.
+After connect, paint:
 
-Listen `kcc().on('accountsChanged', …)` and `disconnect` to update the header.
+- Address chip (short `kaspa:q…`)
+- **KAS** = `state.kas` or `state.balance.kas` or `state.balance.confirmed / 1e8`
+- **KKDAG** = `state.kkdags` or holdings row `tick === 'KKDAG'`
+- Other ticks from `state.holdings`
 
-KasWare: do **not** call `window.kasware` from App Store v2 when `kcc().isEmbedded()`. Default is always `window.kcc20`.
+Poll `getState()` every 8s while the App Store or DDWallet sheet is open so the bag matches Home.
+
+If `getNetwork()` is not `kaspa_mainnet`: banner “Switch off TN10 in KCC20 (You → Network).”
 
 ---
 
-## Sign (all App Store v2 apps)
+## Sign (do not invent a mint)
 
-Any Fund / pay / swap / tip / play that needs a chain tx:
+**Simple KCC20 pay / Fund DD**
 
-- Simple KCC20 pay (DD Fund):  
-  `await kcc().sendToken({ tick: 'KKDAG', amount, dest: 'kaspa:qq5yhvly6338dspa9mm24g8q6chvy6v0jww3k4dgqywh0lju5mmm5pj334ews' })`  
-  Full `kaspa:q`. Parent/popup **Sign** sheet. No fake mint.
-- Anything else you already build as rusty-kaspa Safe JSON:  
-  `await signKcc20(json, userP2pkIndexes)` then optional `kcc().pushTx(signed)`.
+```js
+await wallet().sendToken({
+  tick: 'KKDAG',
+  amount: String(amount),
+  dest: 'kaspa:qq5yhvly6338dspa9mm24g8q6chvy6v0jww3k4dgqywh0lju5mmm5pj334ews'
+});
+```
 
-`signInputs`: **only** this wallet’s P2PK input indexes, `sighashType: 1`. Never covenant / KRON curve / pool inputs.
+Full `kaspa:q`. Parent/popup Sign sheet. Credit once per `txId`. No fake “Add 1000 KKDAG”.
 
-On Reject: show the error, re-enable the button. No retry loop.
+**Any other tx you already built as rusty-kaspa Safe JSON**
+
+```js
+const signed = await wallet().signPskt({
+  txJsonString: unsignedSafeJson,
+  options: { signInputs: userP2pkIndexes.map(i => ({ index: i, sighashType: 1 })) }
+});
+await wallet().pushTx(signed); // optional if you broadcast yourself
+```
+
+`signInputs` = only this address’s P2PK indexes. Never covenant / KRON / pool inputs. `sighashType` must be `1`.
+
+On Reject: show the wallet error. Re-enable the button.
+
+---
+
+## Header (all screens)
+
+Top-right of App Store v2 header, `flex-shrink: 0`, never in a hamburger.
+
+- ≥420px: **Connect KCC20**
+- <420px: **KCC20** (min 44×36)
+- Connected: short address chip → Copy / Disconnect
+- Busy: **Connecting…** / **Sign in wallet…**
+- Popup blocked: “Allow popups, or open TTT from KCC20 Wallet → Profile → TTT.”
+
+Silent restore on load: `getAccounts()` then `getState()`. Do not auto-popup until they tap Connect.
 
 ---
 
 ## Do not
 
 - Do not edit the marketing landing page.
-- Do not add Reown / WalletConnect QR.
-- Do not require a Chrome extension.
+- Do not use Reown/WalletConnect QR.
+- Do not call KasWare when `kcc20.isEmbedded()`.
 - Do not store keys, PINs, or `x-access-token`.
 - Do not break `?kcc20_browser=1`.
-- Do not hide the button behind a hamburger on mobile — it stays top-right.
 
 ---
 
 ## Test
 
-1. Phone width (~375): header one row, **KCC20** button top-right, not clipped.
-2. Desktop: **Connect KCC20** top-right.
-3. Standalone App Store v2: tap button → **popup** wallet → Approve → chip shows address.
-4. Inside KCC20 iframe: tap button → **parent** Connect sheet (no second window) → same chip.
-5. Open any App Store v2 app → still connected. An action that signs → Sign sheet → success.
-6. Disconnect from the chip menu → apps see disconnected.
-7. DD Fund still uses `sendToken` + real Sign, no fake 1000 KKDAG.
+1. KCC20 Wallet (unlocked, has KAS + KKDAG) → Profile → TTT → App Store v2 → Connect KCC20 → parent Connect → header shows address **and** the same KAS/KKDAG as Home.
+2. Fund / pay → parent **Sign** → PIN → txId. Balances update.
+3. Standalone App Store v2 tab → Connect → **popup** to kcc-20-wallet.vercel.app → same balances → Sign works.
+4. Phone width: button stays top-right.
+5. Disconnect: balances clear.
 
-Ship the header button + shared connect/sign. That is the whole task.
+Ship Connect + live KCC20 balances + Sign. That is the whole task.

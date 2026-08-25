@@ -26,6 +26,7 @@
   var child = null;
   var accounts = [];
   var network = '';
+  var lastState = null;
   var listeners = {};
 
   function on(ev, fn) {
@@ -240,11 +241,13 @@
       return rpc('connect').then(function (r) {
         accounts = (r && r.accounts) || [];
         network = (r && r.network) || '';
+        lastState = r || {};
         emit('accountsChanged', accounts);
         if (network) {
           emit('networkChanged', network);
           emit('chainChanged', network);
         }
+        if (r && r.balance) emit('balanceChanged', r);
         return accounts;
       });
     },
@@ -301,6 +304,25 @@
     getHoldings: function () {
       return rpc('getHoldings');
     },
+    getState: function () {
+      return rpc('getState').then(function (r) {
+        lastState = r || lastState;
+        if (r && r.accounts) accounts = r.accounts;
+        if (r && r.network) network = r.network;
+        return r;
+      });
+    },
+    detect: function () {
+      return {
+        available: true,
+        isKcc20: true,
+        name: 'KCC20 Wallet',
+        embedded: inWalletBrowser(),
+        origin: ORIGIN,
+        accounts: accounts.slice(),
+        network: network
+      };
+    },
     getTokenBalance: function (tick) {
       return rpc('getTokenBalance', { tick: tick || 'KKDAG' });
     },
@@ -325,11 +347,22 @@
     request: function (method, params) {
       var m = String(method || '');
       var p = params || {};
-      if (m === 'connect') {
+      if (m === 'connect' || m === 'requestAccounts') {
         return api.connect().then(function (acc) {
-          return { address: (acc && acc[0]) || '', accounts: acc || [] };
+          var s = lastState || {};
+          return {
+            address: (acc && acc[0]) || s.address || '',
+            accounts: acc || s.accounts || [],
+            network: s.network || network,
+            publicKey: s.publicKey || '',
+            balance: s.balance || null,
+            holdings: s.holdings || [],
+            kas: s.kas,
+            kkdags: s.kkdags
+          };
         });
       }
+      if (m === 'getState') return api.getState();
       if (m === 'disconnect') return api.disconnect();
       if (m === 'getAccounts') return api.getAccounts();
       if (m === 'getNetwork') return api.getNetwork();
@@ -368,6 +401,42 @@
   try {
     root.dispatchEvent(new CustomEvent('kcc20#initialized', { detail: api }));
   } catch (e) {}
+
+  /* TTT Connect buttons often look for window.kasware. When this page is
+     inside the KCC20 iframe — or KasWare is not installed — route those
+     calls to the PWA so they see this wallet’s balance and Sign sheet. */
+  var shimKasware = {
+    isKcc20Shim: true,
+    requestAccounts: function () { return api.connect(); },
+    getAccounts: function () { return api.getAccounts(); },
+    getNetwork: function () { return api.getNetwork(); },
+    getPublicKey: function () { return api.getPublicKey(); },
+    getBalance: function () {
+      return api.getState().then(function (s) {
+        var sompi = Number((s && s.balance && s.balance.confirmed) || 0);
+        return {
+          confirmed: sompi,
+          unconfirmed: 0,
+          total: sompi,
+          address: (s && s.address) || '',
+          balanceKAS: sompi / 1e8,
+          holdings: (s && s.holdings) || [],
+          kkdags: (s && s.kkdags) || 0
+        };
+      });
+    },
+    signPskt: function (a, b) { return api.signPskt(a, b); },
+    signPsbt: function (a, b) { return api.signPskt(a, b); },
+    pushTx: function (json) { return api.pushTx(json); },
+    sendKaspa: function () {
+      return Promise.reject(new Error('Use KCC20 sendToken / signPskt. This shim does not send KAS blindly.'));
+    },
+    on: on,
+    removeListener: off
+  };
+  if (inWalletBrowser() || !root.kasware) {
+    root.kasware = shimKasware;
+  }
 
   var kipUuid = (function () {
     try {

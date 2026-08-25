@@ -22,6 +22,15 @@ export function betProtocolFee(stakeKas) {
   return Math.round(fee * 1e8) / 1e8;
 }
 
+/** Public ticket id = truncated kaspa:p covenant address. Never a key. */
+export function betIdFromAddr(addr) {
+  const s = String(addr || '').trim().toLowerCase();
+  const i = s.indexOf(':');
+  const body = i >= 0 ? s.slice(i + 1) : s;
+  if (body.length < 12) return '';
+  return '#' + body.slice(0, 6) + body.slice(-4);
+}
+
 const HIRE_KEY = 'kcc20_bet_hire_v1';
 const BOOK_KEY = 'kcc20_bet_book_v1';
 const POOL_KEY = 'kcc20_bet_pool_v1';

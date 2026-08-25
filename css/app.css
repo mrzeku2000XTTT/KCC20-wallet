@@ -360,6 +360,15 @@ img { display: block; max-width: 100%; }
   margin: 0 0 8px;
 }
 .bet-how { margin-bottom: 12px; }
+.bet-ticket {
+  display: block; width: 100%; text-align: left;
+  background: none; border: 0; color: inherit;
+  font: inherit; padding: 6px 0; cursor: pointer;
+}
+.bet-ticket .bet-id {
+  display: inline-block; margin-right: 6px;
+  color: var(--gold-2); font-weight: 800; font-variant-numeric: tabular-nums;
+}
 #tok-seg { margin: 0 0 8px; flex-shrink: 0; }
 #tok-kron, #tok-kcom, #tok-scorpion {
   flex: 1; min-height: 0; overflow-y: auto; display: flex; flex-direction: column;

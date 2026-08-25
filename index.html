@@ -12,7 +12,7 @@
   <link rel="icon" href="assets/icon.png">
   <title>KCC20 Wallet</title>
   <meta http-equiv="Cache-Control" content="no-store, no-cache, must-revalidate">
-  <link rel="stylesheet" href="css/app.css?v=127">
+  <link rel="stylesheet" href="css/app.css?v=128">
 </head>
 <body>
   <img class="bg-poster" src="assets/bg.jpg" alt="">
@@ -280,8 +280,8 @@
                 <input id="bet-size" type="number" min="0.15" step="0.05" value="0.15">
               </label>
             </div>
-            <p class="bet-pool" id="bet-fee">New escrow for this ticket · 0.02 KAS fee to KCC20. Stake never sits on that address.</p>
-            <p class="bet-how" id="bet-how">Tap YES or NO. Each bet creates a fresh kaspa:p escrow for you — not the KCC20 fee address. A small protocol fee goes to KCC20 (ax6). More YES raises YES ¢; more NO raises NO ¢. No opponent needed: unmatched KAS returns to you. Matched: losers’ escrow pays winners after KRON idx close. Offline settler: reclaim after the grace timer.</p>
+            <p class="bet-pool" id="bet-fee">Tap YES or NO → new covenant++ escrow. Bet #id is that kaspa:p, truncated. Keys stay in this wallet.</p>
+            <p class="bet-how" id="bet-how">The escrow is the bet. Tapping YES or NO (starts 50/50) auto-builds a covenant++ lock and funds it. Ticket id is the truncated kaspa:p address — no keys, no redeem script on screen. Protocol fee goes to KCC20 (ax6); the stake stays in that lock. Unmatched tickets refund. Matched losers pay winners after KRON idx close. Tap a ticket to copy its covenant address.</p>
             <div class="section-label">Top 10 launched</div>
             <div class="glass list" id="bet-board"></div>
             <div class="section-label">Your tickets</div>
@@ -748,7 +748,7 @@
   <script type="module">
     import('./js/iframeVault.js?v=121').then(function (mod) {
       return (mod.restoreIframeVault ? mod.restoreIframeVault() : Promise.resolve()).then(function () {
-        return import('./js/app.js?v=127');
+        return import('./js/app.js?v=128');
       });
     }).catch(function (err) {
       console.error(err);

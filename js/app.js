@@ -33,8 +33,8 @@ import {
   loadBetHire, saveBetHire, recordBet, settleOpenBets, loadBetBook,
   loadPool, addPoolStake, yesCentsFromPool, hasOpponent, agentPubHex, isEscrowAgent,
   refundMinutesFromNow, refundAtMs, dueBetGroups, patchBet, winSideFromPrices,
-  betProtocolFee, BET_FEE_BPS
-} from './bet.js?v=127';
+  betProtocolFee, BET_FEE_BPS, betIdFromAddr
+} from './bet.js?v=128';
 import {
   migrateReceiveBook, ownedAddresses, markAddressUsed, currentReceive,
   deriveReceiveBatch, unusedReceiveCount, ensurePrivacyBook
@@ -54,9 +54,9 @@ import {
   rememberLaunch, loadLaunched, cookOwnerBalances, cookDeployed,
   cookTickOf, cookBookLevels
 } from './atrade.js?v=100';
-import { SCORPION_MEMORY } from './scorpionMemory.js?v=127';
+import { SCORPION_MEMORY } from './scorpionMemory.js?v=128';
 
-export const BUILD = '127';
+export const BUILD = '128';
 
 const TOKEN_FALLBACK_LOGO = 'assets/ttt.png';
 
@@ -3593,7 +3593,7 @@ function syncAtNote() {
   } else if (atPane === 'tokens') {
     el.textContent = 'Holdings. KRON / K.COM / Scorpion live in COOK. ' + kw;
   } else if (atPane === 'bet') {
-    el.textContent = 'Bet: each ticket mints a new kaspa:p escrow. Stake stays there. Protocol fee goes to KCC20 (ax6), not the pot. ' + kw;
+    el.textContent = 'Bet: tap YES or NO and a covenant++ escrow is born. Ticket id is that kaspa:p, truncated. Keys never shown. ' + kw;
   } else {
     el.textContent = 'COOK: KRON AMM · K.COM order book · Scorpion launches. Tap a token for chart, book, and swap. ' + kw;
   }
@@ -5043,10 +5043,14 @@ function paintBetFills() {
     const st = f.paidTxId
       ? (f.won ? 'paid' : (f.refunded ? 'refund' : 'settled'))
       : (f.pending ? (f.won ? 'waiting escrow' : 'lost · escrow') : 'locked');
-    const tx = f.txId ? `<a href="${esc(explorerTx(f.txId))}" target="_blank" rel="noopener">${esc(String(f.txId).slice(0, 10))}…</a>` : '';
-    const vault = f.vaultAddr ? esc(shortAddr(f.vaultAddr, 8, 4)) : '';
-    return `<div><span class="${cls}">${esc((f.side || '').toUpperCase())}</span> ${esc(f.tick || '')} · ${esc(String(f.sizeKas || ''))} KAS · ${esc(st)}${vault ? ' · ' + vault : ''} · ${tx}</div>`;
-  }).join('') || '<div>No tickets yet. Tap YES or NO — you do not need an opponent.</div>';
+    const id = f.betId || betIdFromAddr(f.vaultAddr);
+    const tx = f.txId ? `<a href="${esc(explorerTx(f.txId))}" target="_blank" rel="noopener">tx</a>` : '';
+    return `<button class="bet-ticket" type="button" data-bet-addr="${esc(f.vaultAddr || '')}" title="Copy covenant address">
+      <b class="bet-id">${esc(id || 'Bet')}</b>
+      <span class="${cls}">${esc((f.side || '').toUpperCase())}</span>
+      ${esc(f.tick || '')} · ${esc(String(f.sizeKas || ''))} KAS · ${esc(st)} ${tx}
+    </button>`;
+  }).join('') || '<div>No tickets yet. Tap YES or NO — a covenant++ escrow is created for that bet.</div>';
 }
 
 function SUB_HOLD_SAFE() { return 1000; }
@@ -5061,8 +5065,8 @@ function paintBetCost() {
   const stake = Number($('bet-size')?.value || 0.15);
   const fee = betProtocolFee(stake);
   if ($('bet-fee')) {
-    $('bet-fee').textContent = 'New escrow for this ticket · ' + fee.toFixed(2)
-      + ' KAS fee (' + (BET_FEE_BPS / 100) + '%, min 0.02) to KCC20. Stake never sits on that address.';
+    $('bet-fee').textContent = 'Tap YES or NO → new covenant++ escrow. Bet #id is that kaspa:p, truncated. '
+      + fee.toFixed(2) + ' KAS fee (' + (BET_FEE_BPS / 100) + '%, min 0.02) to KCC20. Keys stay in this wallet.';
   }
 }
 
@@ -5203,16 +5207,17 @@ async function placeBet(side, opts = {}) {
   });
   const openPx = Number(info?.price || 0);
   addPoolStake(tick, w.start, side, sizeKas, openPx);
+  const betId = betIdFromAddr(built.address);
   const row = {
-    tick, side, openPx, start: w.start, end: w.end, sizeKas, feeKas,
+    tick, side, openPx, start: w.start, end: w.end, sizeKas, feeKas, betId,
     txId: result?.txId || '', vaultAddr: built.address, redeemHex: built.redeemHex,
-    unlockDaa: built.unlockDaa, userAddr: wallet.address, userPub: wallet.pubKey,
+    unlockDaa: built.unlockDaa, userAddr: wallet.address,
     settled: false, at: Date.now()
   };
   recordBet(row);
   saveVault({
     type: 'betescrow',
-    name: 'Bet ' + side.toUpperCase() + ' ' + tick,
+    name: 'Bet ' + betId + ' ' + side.toUpperCase() + ' ' + tick,
     address: built.address,
     scriptHex: built.redeemHex,
     redeemHex: built.redeemHex,
@@ -5220,15 +5225,15 @@ async function placeBet(side, opts = {}) {
     unlockDaa: built.unlockDaa,
     unlockAt: Date.now() + refundMinutesFromNow(w.end) * 60000,
     params: {
-      tick, side, start: w.start, end: w.end, amountKas: sizeKas, feeKas,
-      userAddr: wallet.address, agentAddr: BET_AGENT_ADDR, feeAddr: BET_AGENT_ADDR
+      tick, side, start: w.start, end: w.end, amountKas: sizeKas, feeKas, betId,
+      userAddr: wallet.address, feeAddr: BET_AGENT_ADDR
     },
     status: 'locked',
     fundedSompi: String(Math.round(sizeKas * 1e8)),
     fundTxId: result?.txId || ''
   });
   afterTx();
-  toast((side === 'yes' ? 'YES' : 'NO') + ' ' + tick + ' locked · ' + (result?.txId || '').slice(0, 10));
+  toast((side === 'yes' ? 'YES' : 'NO') + ' ' + tick + ' · Bet ' + betId);
   paintBetMarket().catch(() => {});
   return row;
 }
@@ -7769,8 +7774,8 @@ function openLockTimer(vault) {
   else if (isXmss) help = 'Paste the witness JSON from xmss_sign.py (offline). Spend uses ~0.32 KAS from this wallet as the fee input.';
   else if (isHash && locked) help = 'Claim with the secret, or wait for the refund timer.';
   else if (isHash) help = 'Refund timer ended. Sweep returns KAS to the sender.';
-  else if (isBetEscrow && locked) help = 'Bet escrow. The hired escrow agent can pay the winner after the 15m KRON close. If the agent is offline, Sweep returns your KAS when this timer ends.';
-  else if (isBetEscrow) help = 'Refund window is open. Sweep returns your locked KAS. If you won and someone bet the other side, the escrow agent should already have paid you.';
+  else if (isBetEscrow && locked) help = 'This ticket is the covenant++ escrow. Id is the kaspa:p lock, not a key. After KRON idx close the settler can pay the winner. If they are offline, Sweep returns your KAS when this timer ends.';
+  else if (isBetEscrow) help = 'Refund window is open. Sweep returns this ticket’s KAS to you. Keys were never shown.';
   else if (vault.unlockDaa && locked) help = 'Still frozen on-chain. When this timer hits zero, Sweep returns the KAS automatically.';
   else if (vault.unlockDaa) help = 'Lock has expired. Sweep now, or wait — auto-return is on.';
   else if (isEscrow && iAmBuyer) help = 'You are the buyer. Release sends the KAS to this wallet.';
@@ -7787,8 +7792,8 @@ function openLockTimer(vault) {
     <div class="kv"><span class="k">Returns</span><span class="v" id="lock-timer-utc">${esc(vault.unlockAt ? formatUtc(vault.unlockAt) : unlockAtUtc(sec))}</span></div>
     ${vault.unlockDaa ? `<div class="kv"><span class="k">Unlock DAA</span><span class="v">${esc(vault.unlockDaa)} (now ${esc(lastDaa || '—')})</span></div>` : ''}` : ''}
     ${isEscrow ? `<div class="kv"><span class="k">Buyer</span><span class="v">${esc(shortAddr(vault.params?.buyerAddress || '', 10, 6))}</span></div>` : ''}
-    ${isBetEscrow ? `<div class="kv"><span class="k">Side</span><span class="v">${esc((vault.params?.side || '').toUpperCase())} ${esc(vault.params?.tick || '')}</span></div>
-    <div class="kv"><span class="k">Escrow agent</span><span class="v">${esc(shortAddr(vault.params?.agentAddr || BET_AGENT_ADDR, 10, 6))}</span></div>` : ''}
+    ${isBetEscrow ? `<div class="kv"><span class="k">Bet</span><span class="v">${esc(vault.params?.betId || betIdFromAddr(vault.address))}</span></div>
+    <div class="kv"><span class="k">Side</span><span class="v">${esc((vault.params?.side || '').toUpperCase())} ${esc(vault.params?.tick || '')}</span></div>` : ''}
     ${isMsig ? `<div class="kv"><span class="k">Counterparty</span><span class="v">${esc(shortAddr(vault.params?.counterparty || '', 10, 6))}</span></div>` : ''}
     ${hop ? `<div class="kv"><span class="k">Hop</span><span class="v">${hopI + 1} / ${hopN}</span></div>` : ''}
     ${vault.params?.beneficiary ? `<div class="kv"><span class="k">Beneficiary</span><span class="v">${esc(shortAddr(vault.params.beneficiary, 10, 6))}</span></div>` : ''}
@@ -8232,6 +8237,13 @@ function bind() {
   $('bet-hours')?.addEventListener('input', paintBetCost);
   $('bet-size')?.addEventListener('input', paintBetCost);
   $('bet-tick')?.addEventListener('change', () => paintBetMarket().catch(() => {}));
+  $('bet-fills')?.addEventListener('click', e => {
+    if (e.target.closest('a')) return;
+    const row = e.target.closest('[data-bet-addr]');
+    if (!row?.dataset.betAddr) return;
+    haptic();
+    copyText(row.dataset.betAddr).then(() => toast('Copied Bet ' + betIdFromAddr(row.dataset.betAddr))).catch(() => {});
+  });
   $('bet-board')?.addEventListener('click', e => {
     const row = e.target.closest('[data-bet-tick]');
     if (!row?.dataset.betTick) return;

@@ -128,17 +128,43 @@
       + '&return=' + encodeURIComponent(location.href.split('#')[0]);
   }
 
+  function grabNamedWallet() {
+    if (inWalletBrowser()) return window.parent;
+    if (child && !child.closed) return child;
+    var w = null;
+    try { w = window.open('', 'kcc20-wallet'); } catch (e) {}
+    if (!w || w.closed || w === window) return null;
+    try {
+      var href = String(w.location.href || '');
+      if (!href || href === 'about:blank') {
+        try { w.close(); } catch (e2) {}
+        return null;
+      }
+    } catch (e) {
+      /* cross-origin: this is the KCC20 popup we opened */
+    }
+    return w;
+  }
+
+  function closeWalletWindow() {
+    if (inWalletBrowser()) return;
+    var w = grabNamedWallet();
+    if (w && w !== window) {
+      try { w.close(); } catch (e) {}
+    }
+    if (child && !child.closed && child !== window) {
+      try { child.close(); } catch (e) {}
+    }
+    child = null;
+  }
+
   function raiseWalletWindow(reopen) {
     if (inWalletBrowser()) return window.parent;
     var url = walletUrl();
-    if (reopen && child && !child.closed) {
-      try { child.close(); } catch (e) {}
-      child = null;
-    }
+    if (reopen) closeWalletWindow();
     var w = null;
     try {
-      // Same window name + user click brings an existing popup to the front (Chrome/Edge).
-      w = window.open((child && !child.closed) ? '' : url, 'kcc20-wallet', popupFeatures());
+      w = window.open(url, 'kcc20-wallet', popupFeatures());
     } catch (e) {}
     if (!w) {
       try { w = window.open(url, 'kcc20-wallet'); } catch (e) {}
@@ -272,22 +298,32 @@
       });
     },
     disconnect: function () {
-      return rpc('disconnect').then(function () {
-        accounts = [];
-        lastState = null;
-        emit('disconnect');
-        if (!inWalletBrowser() && child && !child.closed) {
-          try { child.close(); } catch (e) {}
+      return new Promise(function (resolve) {
+        var finish = function () {
+          accounts = [];
+          lastState = null;
+          emit('disconnect');
+          resolve();
+        };
+        if (inWalletBrowser()) {
+          rpc('disconnect').then(finish).catch(finish);
+          return;
         }
-        child = null;
-      }).catch(function () {
-        accounts = [];
-        lastState = null;
-        emit('disconnect');
-        if (!inWalletBrowser() && child && !child.closed) {
-          try { child.close(); } catch (e) {}
+        var win = grabNamedWallet();
+        if (win && win !== window) {
+          try {
+            win.postMessage({
+              ns: 'kcc20',
+              type: 'req',
+              id: uid(),
+              method: 'disconnect',
+              params: {},
+              from: location.origin
+            }, '*');
+          } catch (e) {}
         }
-        child = null;
+        closeWalletWindow();
+        finish();
       });
     },
     getAccounts: function () {

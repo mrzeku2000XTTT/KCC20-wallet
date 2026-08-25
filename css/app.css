@@ -721,6 +721,12 @@ img { display: block; max-width: 100%; }
 #page-home.home-fit #holdings .sub { font-size: 11px; }
 #page-home.home-fit #holdings .amt b { font-size: 13px; }
 #page-home.home-fit #holdings .amt em { display: none; }
+#page-home.home-fit #holdings .amt em.pnl {
+  display: block; font-size: 10px; font-weight: 700; margin-top: 1px;
+  font-variant-numeric: tabular-nums;
+}
+#page-home.home-fit #holdings .amt em.pnl.up { color: #49eacb; }
+#page-home.home-fit #holdings .amt em.pnl.down { color: #ff6b6b; }
 
 .tabbar {
   position: absolute; left: 0; right: 0; bottom: 0;

@@ -12,7 +12,7 @@
   <link rel="icon" href="assets/icon.png">
   <title>KCC20 Wallet</title>
   <meta http-equiv="Cache-Control" content="no-store, no-cache, must-revalidate">
-  <link rel="stylesheet" href="css/app.css?v=138">
+  <link rel="stylesheet" href="css/app.css?v=139">
 </head>
 <body>
   <img class="bg-poster" src="assets/bg.jpg" alt="">
@@ -95,7 +95,7 @@
             <span id="utxo-count">0 UTXOs</span>
             <span class="utxo-go">Compound</span>
           </button>
-          <div class="section-label">Holdings</div>
+          <div class="section-label">Holdings · live P&amp;L</div>
           <div class="holdings-pills" id="holdings"></div>
         </section>
 
@@ -787,7 +787,7 @@
   <script type="module">
     import('./js/iframeVault.js?v=121').then(function (mod) {
       return (mod.restoreIframeVault ? mod.restoreIframeVault() : Promise.resolve()).then(function () {
-        return import('./js/app.js?v=138');
+        return import('./js/app.js?v=139');
       });
     }).catch(function (err) {
       console.error(err);

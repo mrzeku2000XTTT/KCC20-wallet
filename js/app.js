@@ -56,9 +56,9 @@ import {
   rememberLaunch, loadLaunched, cookOwnerBalances, cookDeployed,
   cookTickOf, cookBookLevels
 } from './atrade.js?v=100';
-import { SCORPION_MEMORY } from './scorpionMemory.js?v=138';
+import { SCORPION_MEMORY } from './scorpionMemory.js?v=139';
 
-export const BUILD = '138';
+export const BUILD = '139';
 
 const TOKEN_FALLBACK_LOGO = 'assets/ttt.png';
 
@@ -253,6 +253,8 @@ const autoSweepTriedAt = new Map();
 const freezeTimers = new Map();
 let kccHoldings = [];
 let krcHoldings = [];
+let kronPx = {};
+const BASIS_KEY = 'kcc20_basis_v1';
 let tokenLoadErr = '';
 let lastTokenFetch = 0;
 let tokenBusy = false;
@@ -1574,21 +1576,106 @@ function pickLaunchLogo(file) {
   img.src = url;
 }
 
+function loadBasis() {
+  try { return JSON.parse(localStorage.getItem(BASIS_KEY) || '{}') || {}; } catch { return {}; }
+}
+function saveBasis(map) {
+  localStorage.setItem(BASIS_KEY, JSON.stringify(map || {}));
+}
+function addBasis(tick, kas, tok, side) {
+  const t = String(tick || '').toUpperCase();
+  if (!t || !(Number(tok) > 0)) return;
+  const map = loadBasis();
+  const row = map[t] || { kasIn: 0, tokIn: 0, kasOut: 0, tokOut: 0, markKas: 0 };
+  if (side === 'sell') {
+    row.kasOut += Math.max(0, Number(kas) || 0);
+    row.tokOut += Number(tok);
+  } else {
+    row.kasIn += Math.max(0, Number(kas) || 0);
+    row.tokIn += Number(tok);
+  }
+  map[t] = row;
+  saveBasis(map);
+}
+function noteKronFill(q) {
+  if (!q?.tick || !q.side) return;
+  const tick = String(q.tick).toUpperCase();
+  const dec = Number(q.decimals || 0);
+  if (q.side === 'buy') {
+    addBasis(tick, Number(q.kasIn || 0) / 1e8, Number(q.tokenOut || 0) / (10 ** dec), 'buy');
+  } else {
+    addBasis(tick, Number(q.net || q.kasOut || 0) / 1e8, Number(q.tokenIn || 0) / (10 ** dec), 'sell');
+  }
+}
+function markHoldingIfNew(tick, have, px) {
+  const t = String(tick || '').toUpperCase();
+  if (!t || !(have > 0) || !(px > 0)) return;
+  const map = loadBasis();
+  const row = map[t] || { kasIn: 0, tokIn: 0, kasOut: 0, tokOut: 0, markKas: 0 };
+  if (row.kasIn > 0 || row.markKas > 0) return;
+  row.markKas = px;
+  map[t] = row;
+  saveBasis(map);
+}
+function holdingPnl(t) {
+  if (t?.native) return null;
+  const tick = String(t.ticker || '').toUpperCase();
+  const dec = Number(t.decimals || 0);
+  const have = Number(t.balance || 0) / (10 ** dec);
+  const live = kronPx[tick] || {};
+  const px = Number(live.price || t.priceKas || 0);
+  const chg24 = Number(live.change24h);
+  const value = have * px;
+  markHoldingIfNew(tick, have, px);
+  const b = loadBasis()[tick] || {};
+  if (b.tokIn > 0 && b.kasIn > 0) {
+    const avg = b.kasIn / b.tokIn;
+    const cost = avg * have;
+    const pnl = value - cost;
+    const pct = cost > 0 ? (pnl / cost) * 100 : 0;
+    return { px, value, cost, pnl, pct, mode: 'cost', chg24 };
+  }
+  if (b.markKas > 0 && px > 0) {
+    const cost = b.markKas * have;
+    const pnl = value - cost;
+    const pct = ((px - b.markKas) / b.markKas) * 100;
+    return { px, value, cost, pnl, pct, mode: 'mark', chg24 };
+  }
+  if (Number.isFinite(chg24)) return { px, value, cost: 0, pnl: 0, pct: chg24, mode: '24h', chg24 };
+  return { px, value, cost: 0, pnl: 0, pct: 0, mode: 'none', chg24: 0 };
+}
+
 function tokenRow(t, extra = '') {
   const proto = t.protocol === 'krc20' ? 'KRC-20' : (t.native ? 'Native' : 'KCC20');
   const amt = t.native ? formatAmount(t.sompi) : formatTokenUnits(t.balance, t.decimals);
-  const em = t.native ? (t.usd || '') : (Number(t.priceKas) && price ? usd(Number(t.balance) / (10 ** (t.decimals || 0)) * t.priceKas) : proto);
+  const pnl = t.native ? null : holdingPnl(t);
+  let em = t.native ? (t.usd || '') : proto;
+  let emClass = '';
+  if (pnl && (pnl.mode === 'cost' || pnl.mode === 'mark')) {
+    const sign = pnl.pct >= 0 ? '+' : '';
+    em = sign + pnl.pct.toFixed(1) + '% · ' + (pnl.pnl >= 0 ? '+' : '') + formatKasSompi(Math.round(pnl.pnl * 1e8)) + ' KAS';
+    emClass = 'pnl ' + (pnl.pct >= 0 ? 'up' : 'down');
+  } else if (pnl && pnl.mode === '24h') {
+    const sign = pnl.pct >= 0 ? '+' : '';
+    em = '24h ' + sign + pnl.pct.toFixed(1) + '%';
+    emClass = 'pnl ' + (pnl.pct >= 0 ? 'up' : 'down');
+  } else if (Number(t.priceKas) && price) {
+    em = usd(Number(t.balance) / (10 ** (t.decimals || 0)) * t.priceKas);
+  }
   const key = `${t.protocol || 'watch'}:${t.ticker}`;
+  const sub = t.native
+    ? (esc(t.ticker) + ' · ' + esc(proto))
+    : (esc(t.ticker) + ' · ' + (pnl?.px ? (pnl.px >= 0.0001 ? pnl.px.toPrecision(4) : pnl.px.toExponential(2)) + ' KAS' : proto));
   return `
     <button class="row token-row" data-token-key="${esc(key)}" ${extra}>
       ${tokenDot(t)}
       <div>
         <div class="title">${esc(t.name || t.ticker)}</div>
-        <div class="sub">${esc(t.ticker)} · ${esc(proto)}</div>
+        <div class="sub">${sub}</div>
       </div>
       <div class="amt">
         <b>${esc(amt)}</b>
-        <em>${esc(em)}</em>
+        <em class="${esc(emClass)}">${esc(em)}</em>
       </div>
     </button>`;
 }
@@ -1617,7 +1704,11 @@ function renderHoldings() {
     </button>`;
   });
   const rows = [kasRow, ...kccRows, ...krcRows, ...lockRows];
-  const key = `${balanceSompi}|${kccHoldings.map(t => `${t.ticker}:${t.balance}:${t.image || ''}`).join(',')}|${krcHoldings.map(t => `${t.ticker}:${t.balance}`).join(',')}|${locked.map(v => v.address + ':' + (v.fundedSompi || 0)).join(',')}`;
+  const pnlKey = kccHoldings.map(t => {
+    const p = holdingPnl(t);
+    return `${t.ticker}:${p?.pct?.toFixed?.(1) || ''}:${p?.mode || ''}`;
+  }).join(',');
+  const key = `${balanceSompi}|${kccHoldings.map(t => `${t.ticker}:${t.balance}:${t.image || ''}`).join(',')}|${krcHoldings.map(t => `${t.ticker}:${t.balance}`).join(',')}|${locked.map(v => v.address + ':' + (v.fundedSompi || 0)).join(',')}|${pnlKey}`;
   const box = $('holdings');
   paintUtxoCount();
   if (box?.dataset.key === key) return;
@@ -1867,6 +1958,8 @@ async function runBridge() {
       + ' · Buy '
       + (isRealTxId(buyId) ? `<a href="${esc(explorerTx(buyId))}" target="_blank" rel="noopener">${esc(buyId.slice(0, 10))}…</a>` : '');
   }
+  noteKronFill(res?.sell?.quote);
+  noteKronFill(res?.buy?.quote);
   const got = res?.receivedHuman ? ' Received ' + res.receivedHuman + ' ' + to + '.' : '';
   toast(from + ' → ' + to + ' bridged.' + got);
   if (got && $('br-st')) $('br-st').innerHTML += got;
@@ -3464,6 +3557,14 @@ async function refreshTokenHoldings() {
     if (kcc.status === 'fulfilled') {
       const withLogos = await attachKronLogos(kcc.value);
       kccHoldings = mergeFreshHoldings(kccHoldings, withLogos);
+      try {
+        const mkts = await kronMarkets();
+        const map = {};
+        for (const m of mkts || []) {
+          map[String(m.tick || '').toUpperCase()] = { price: Number(m.price || 0), change24h: Number(m.change24h || 0) };
+        }
+        kronPx = map;
+      } catch {}
     }
     if (krc.status === 'fulfilled') krcHoldings = mergeFreshHoldings(krcHoldings, krc.value);
     tokenLoadErr = kcc.status === 'rejected' ? 'KCC20 indexer unreachable — retrying…' : '';
@@ -5065,6 +5166,7 @@ async function tickAgent() {
       });
       job.spentKas = (job.spentKas || 0) + job.sizeKas;
       job.last = 'bought AMM · ' + px.toPrecision(4);
+      noteKronFill(result.quote);
       pushFill('buy', px, result.txId, job.sizeKas + ' KAS');
       saveAgentJob(job);
       afterTx();
@@ -5095,6 +5197,7 @@ async function tickAgent() {
         onStatus: (m) => toast(m)
       });
       job.last = 'sold AMM · ' + px.toPrecision(4);
+      noteKronFill(result.quote);
       pushFill('sell', px, result.txId, '');
       saveAgentJob(job);
       afterTx();
@@ -6084,7 +6187,7 @@ async function startDcaFromForm() {
   }
   toast('Buying first ' + slice + ' KAS of ' + tick + '…');
   const q = paintDcaPlan._q || await quoteKronTrade({ tick, side: 'buy', amount: String(slice) });
-  await executeKronTrade({
+  const dcaFill = await executeKronTrade({
     wallet,
     tick,
     side: 'buy',
@@ -6093,6 +6196,7 @@ async function startDcaFromForm() {
     forceKasware: kaswareEnabled(),
     onStatus: (m) => toast(m)
   });
+  noteKronFill(dcaFill?.quote);
   afterTx();
   const later = Math.max(0, n - 1);
   const leave = BigInt(q.netGone || q.nativeLeave || kasToSompi(String(slice + 1)));
@@ -6539,6 +6643,7 @@ async function runTrade({ tick, side, amount, quote, forceKasware = false }) {
     });
     hideTradeScreen();
     const q = result.quote || quote;
+    noteKronFill(q);
     if (q?.side === 'buy' && q.tokenOut != null) {
       const tickU = String(q.tick || tick).toUpperCase();
       const row = kccHoldings.find(t => String(t.ticker).toUpperCase() === tickU);

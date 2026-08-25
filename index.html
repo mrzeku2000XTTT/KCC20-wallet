@@ -12,7 +12,7 @@
   <link rel="icon" href="assets/icon.png">
   <title>KCC20 Wallet</title>
   <meta http-equiv="Cache-Control" content="no-store, no-cache, must-revalidate">
-  <link rel="stylesheet" href="css/app.css?v=151">
+  <link rel="stylesheet" href="css/app.css?v=152">
 </head>
 <body>
   <img class="bg-poster" src="assets/bg.jpg" alt="">
@@ -136,7 +136,7 @@
               <div class="at-ticket">
                 <div class="at-row">
                   <label class="field grow"><span>Ticker</span>
-                    <input id="at-tick" placeholder="KRON / KKDAG" value="KRON" spellcheck="false">
+                    <input id="at-tick" placeholder="KKDAG / KRON" value="KKDAG" spellcheck="false">
                   </label>
                   <label class="field small"><span>Slip %</span>
                     <input id="at-slip" type="number" min="0.1" max="15" step="0.1" value="1">
@@ -239,13 +239,14 @@
             <div class="ag-picks" id="ag-picks"></div>
             <div class="at-row">
               <label class="field grow"><span>Token</span>
-                <input id="ag-tick" list="ag-tick-list" placeholder="KRON / KKDAG / IFWEN…" value="KRON" spellcheck="false" autocomplete="off">
+                <input id="ag-tick" list="ag-tick-list" placeholder="KKDAG / KRON / IFWEN…" value="KKDAG" spellcheck="false" autocomplete="off">
                 <datalist id="ag-tick-list"></datalist>
               </label>
-              <label class="field small"><span>Size KAS</span>
+              <label class="field small"><span>Size KAS / buy</span>
                 <input id="ag-size" type="number" min="0.05" step="0.05" value="0.15">
               </label>
             </div>
+            <p class="at-tiny" id="ag-size-help">Size KAS is native Kaspa spent on <b>each buy fill</b> — not token units. 0.15 Size KAS means one buy pays 0.15 KAS of this wallet into the selected token. Sells use that same KAS size at the live price to size how many tokens to dump.</p>
             <div class="at-row" id="ag-levels">
               <label class="field grow"><span>Buy below</span>
                 <input id="ag-buy" placeholder="KAS per token" inputmode="decimal">
@@ -256,11 +257,12 @@
             </div>
             <label class="field" id="ag-pct-wrap">
               <span>Dip / fade %</span>
-              <input id="ag-pct" type="number" min="1" max="40" step="1" value="5">
+              <input id="ag-pct" type="number" min="1" max="40" step="1" value="8">
             </label>
             <label class="field"><span>Max KAS this session</span>
               <input id="ag-max" type="number" min="0.15" step="0.15" value="1">
             </label>
+            <p class="at-tiny">Max KAS this session is the <b>buy budget only</b>. Example: Max 1.15 and Size 0.15 → about 7 buys, then Scorpion stops buying. It can still sell tokens it already holds. Spent resets when you Start a new session.</p>
             <button class="btn btn-gold" id="ag-toggle" type="button">Start Scorpion agent</button>
             <p class="at-quote" id="ag-status">Scorpion signs on this device. It keeps ticking in the background while the PWA stays unlocked. If the phone kills the app, reopen to resume.</p>
           </div>
@@ -683,7 +685,7 @@
         </div>
         <div class="field"><label>Ticker</label>
           <div class="dest-row">
-            <input id="trade-ticker" placeholder="KRON, KROSHI, KKDAG…" maxlength="12" spellcheck="false" autocomplete="off">
+            <input id="trade-ticker" placeholder="KKDAG, KRON, KROSHI…" maxlength="12" spellcheck="false" autocomplete="off">
             <button class="scan-btn" id="trade-lookup" type="button">Go</button>
           </div>
         </div>
@@ -797,7 +799,7 @@
   <script type="module">
     import('./js/iframeVault.js?v=121').then(function (mod) {
       return (mod.restoreIframeVault ? mod.restoreIframeVault() : Promise.resolve()).then(function () {
-        return import('./js/app.js?v=151');
+        return import('./js/app.js?v=152');
       });
     }).catch(function (err) {
       console.error(err);

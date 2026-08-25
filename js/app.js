@@ -26,7 +26,7 @@ import {
 } from './tx.js?v=144';
 import { bootDappConnect, pingTttDappFrame, TTT_TREASURY } from './dappConnect.js?v=150';
 import { schedulePersistIframeVault, bootIframeVaultWatch } from './iframeVault.js?v=120';
-import { kronMarkets, quoteKronTrade, executeKronTrade, formatKasSompi, lookupKronTick, liveQuote, tradeCostLines, attachKronLogos, kronCandles, quoteKcc20Bridge, executeKcc20Bridge, formatTokenRaw } from './kronTrade.js?v=140';
+import { kronMarkets, quoteKronTrade, executeKronTrade, formatKasSompi, lookupKronTick, liveQuote, tradeCostLines, attachKronLogos, kronCandles, kronLogoFor, quoteKcc20Bridge, executeKcc20Bridge, formatTokenRaw } from './kronTrade.js?v=140';
 import {
   BET_AGENT_ADDR, TTT_TICK, WINDOW_MS, windowBounds, fmtRemain,
   kkdagsHeld, isKcc20Pass, hireCost, maxHireHours,
@@ -56,9 +56,9 @@ import {
   rememberLaunch, loadLaunched, cookOwnerBalances, cookDeployed,
   cookTickOf, cookBookLevels
 } from './atrade.js?v=100';
-import { SCORPION_MEMORY } from './scorpionMemory.js?v=151';
+import { SCORPION_MEMORY } from './scorpionMemory.js?v=152';
 
-export const BUILD = '151';
+export const BUILD = '152';
 
 const TOKEN_FALLBACK_LOGO = 'assets/ttt.png';
 
@@ -1633,6 +1633,18 @@ function tokenDot(t) {
   return `<div class="dot${fallback ? ' ttt-dot' : ''}"><img alt="" src="${esc(src)}" data-tick="${esc(t.ticker || '')}" data-proto="${esc(t.protocol || 'kcc20')}" data-fb="${fb}" referrerpolicy="no-referrer" decoding="async"></div>`;
 }
 
+function activityTickLogo(tick, protocol, image) {
+  const t = String(tick || 'KAS').toUpperCase();
+  const proto = protocol || (t === 'KAS' ? 'kas' : 'kcc20');
+  if (t === 'KAS' || proto === 'kas') return tokenDot({ ticker: 'KAS', protocol: 'kas', native: true });
+  const hold = (kccHoldings || []).find(h => String(h.ticker || '').toUpperCase() === t);
+  return tokenDot({
+    ticker: t,
+    protocol: proto,
+    image: image || hold?.image || kronLogoFor(t)
+  });
+}
+
 function launchLogoData() {
   const src = $('at-logo-prev')?.src || '';
   if (!src || /ttt\.png/i.test(src)) return TOKEN_FALLBACK_LOGO;
@@ -1728,6 +1740,27 @@ function noteKronFill(q) {
   } else {
     addBasis(tick, Number(q.net || q.kasOut || 0) / 1e8, Number(q.tokenIn || 0) / (10 ** dec), 'sell');
   }
+}
+
+function noteATradeActivity(job, side, px, result) {
+  const tick = String(job?.tick || result?.quote?.tick || '').toUpperCase();
+  if (!tick) return;
+  const q = result?.quote || {};
+  const dec = Number(q.decimals ?? job?.preview?.decimals ?? 0);
+  const buy = side === 'buy';
+  const amt = buy ? (q.tokenOut ?? '') : (q.tokenIn ?? '');
+  pushTokenActivity({
+    dir: buy ? 'in' : 'out',
+    tick,
+    protocol: 'kcc20',
+    amount: String(amt || ''),
+    decimals: dec,
+    txId: result?.txId || '',
+    label: buy ? 'A-Trade buy' : 'A-Trade sell',
+    kind: 'atrade',
+    note: fmtPx(px) + ' KAS · Scorpion ' + tick,
+    image: kronLogoFor(tick)
+  });
 }
 function fmtPct(n) {
   const x = Number(n);
@@ -2357,6 +2390,8 @@ function pushTokenActivity(ev, addr) {
     label: ev.label || (ev.dir === 'out' ? 'Sent' : 'Received'),
     note: ev.note || '',
     until: ev.until || '',
+    kind: ev.kind || '',
+    image: ev.image || kronLogoFor(ev.tick) || '',
     wallet: loadWalletList().find(w => w.address === use)?.name || ''
   };
   const dup = list.find(x => {
@@ -2370,6 +2405,8 @@ function pushTokenActivity(ev, addr) {
     let dirty = false;
     if (row.txId && !dup.txId) { dup.txId = row.txId; dirty = true; }
     if (row.note && !dup.note) { dup.note = row.note; dirty = true; }
+    if (row.kind && !dup.kind) { dup.kind = row.kind; dirty = true; }
+    if (row.image && !dup.image) { dup.image = row.image; dirty = true; }
     if (ev.time && Number(ev.time) > Number(dup.time || 0)) { dup.time = Number(ev.time); dirty = true; }
     if (dirty) saveTokenActivity(list, use);
     scheduleActivityPaint();
@@ -2630,18 +2667,24 @@ function rowsForWallet(addr, txs, walletName) {
       if (isVaultActivityLabel(tok.label)) {
         row.label = tok.tick && tok.tick !== 'KAS' ? `${tok.label} ${tok.tick}` : tok.label;
         if (tok.tick && tok.tick !== 'KAS') row.tokenLabel = activityVal(tok);
+      } else if (tok.kind === 'atrade') {
+        row.label = (tok.label || (tok.dir === 'in' ? 'A-Trade buy' : 'A-Trade sell')) + (tok.tick ? ' ' + tok.tick : '');
+        row.tokenLabel = activityVal(tok);
       } else {
         row.label = (tok.dir === 'in' ? 'Received ' : 'Sent ') + tok.tick;
         row.tokenLabel = activityVal(tok);
       }
     }
     const expl = explainTransaction(tx, { address: addr, vaults: loadVaults() });
+    const tickForLogo = tok?.tick || (row.tokenLabel ? '' : 'KAS');
     rows.push({
       kind: 'chain',
       id,
       time: Number(tx.block_time || tx.blockTime || 0),
       dir: row.dir,
       title: tag + row.label,
+      badge: tok?.kind === 'atrade' ? 'A-Trade' : '',
+      logo: activityTickLogo(tickForLogo || tok?.tick || 'KAS', tok?.protocol, tok?.image),
       sub: [tok ? (tok.protocol === 'krc20' ? 'KRC-20' : (tok.protocol === 'kas' ? 'KAS' : 'KCC20')) : expl.title, tok?.note || '', id ? id.slice(0, 10) + '…' : '', new Date(tx.block_time || Date.now()).toLocaleString()].filter(Boolean).join(' · '),
       val: row.tokenLabel || ((row.dir === 'in' ? '+' : '−') + formatAmount(row.amount || 0)),
       feeLine: (tok && tok.protocol !== 'kas' && tok.tick !== 'KAS')
@@ -2665,6 +2708,8 @@ function rowsForWallet(addr, txs, walletName) {
       time: Number(a.time || 0),
       dir: a.dir,
       title: tag + titleCore,
+      badge: a.kind === 'atrade' ? 'A-Trade' : '',
+      logo: activityTickLogo(a.tick, a.protocol, a.image),
       sub: [proto, a.note || '', a.txId ? a.txId.slice(0, 10) + '…' : (vaultish ? 'this device' : 'live credit'), new Date(a.time || Date.now()).toLocaleString()].filter(Boolean).join(' · '),
       val: activityVal(a),
       feeLine: a.note || (a.txId ? '' : (vaultish ? 'Saved on this device' : 'Indexed to this wallet')),
@@ -2700,9 +2745,9 @@ function renderActivity(txs = []) {
   }
   box.innerHTML = rows.slice(0, 40).map(r => `
       <button class="tx" type="button" ${r.id ? `data-txid="${esc(r.id)}"` : ''} ${r.tokId ? `data-token-act="${esc(r.tokId)}"` : ''}>
-        <div class="dir">${r.dir === 'in' ? '↓' : '↑'}</div>
+        <div class="dir">${r.logo || (r.dir === 'in' ? '↓' : '↑')}</div>
         <div class="meta">
-          <b>${esc(r.title)}</b>
+          <b>${esc(r.title)}${r.badge ? ` <span class="act-badge">${esc(r.badge)}</span>` : ''}</b>
           <span>${esc(r.sub)}</span>
         </div>
         <div class="val ${r.dir === 'in' ? 'in' : 'out'}">${esc(r.val)}${r.feeLine ? `<small>${esc(r.feeLine)}</small>` : ''}
@@ -4181,7 +4226,7 @@ function jumpToAtTrade(tick, side) {
   showPage('tokens');
   setAtPane('book');
   setAtSrc('kron');
-  openAtDesk({ venue: 'kron', tick: String(tick || 'KRON').toUpperCase() });
+  openAtDesk({ venue: 'kron', tick: String(tick || 'KKDAG').toUpperCase() });
   syncAtLabels(side);
 }
 
@@ -4261,7 +4306,7 @@ function setAtPane(pane) {
     paintAgentStatus();
     startAgentPreviewLoop();
     fillAgentMarkets().catch(() => {});
-    const t = ($('ag-tick')?.value || loadAgentJob()?.tick || 'KRON').trim().toUpperCase();
+    const t = ($('ag-tick')?.value || loadAgentJob()?.tick || 'KKDAG').trim().toUpperCase();
     if (t && !loadAgentJob()?.on) {
       const needPrefill = !($('ag-buy')?.value && $('ag-sell')?.value);
       applyAgentTick(t, { prefill: needPrefill }).catch(() => {});
@@ -4829,7 +4874,7 @@ async function confirmAtSign(title, body, run) {
 
 async function reviewAtTrade(side) {
   const amount = ($('at-amt')?.value || '').trim();
-  const tick = ($('at-tick')?.value || 'KRON').trim().toUpperCase();
+  const tick = ($('at-tick')?.value || 'KKDAG').trim().toUpperCase();
   const limit = atLimitKas();
   const slip = atSlipPct();
   if (!amount) { toast('Enter an amount'); return; }
@@ -4965,7 +5010,7 @@ async function runCookOrder({ side, amount, id, wrapped, rest, quote, limit, sli
       unitPriceSompi: String(f.unitPriceSompi || quote.unitPriceSompi)
     });
   }
-  await signCookBuild(build, 'Cook ' + side);
+  return signCookBuild(build, 'Cook ' + side);
 }
 
 async function signCookBuild(build, label) {
@@ -5001,6 +5046,7 @@ async function signCookBuild(build, label) {
     <div class="kv"><span class="k">Ticker</span><span class="v">${esc(tick || '—')}</span></div>
     ${txidBlock(txId)}
   `, { confirm: 'View in TOKENS', cancel: false, onConfirm: () => { closeSheet(); setAtPane('tokens'); setTokPane('scorpion'); refreshAll(); } });
+  return { txId, quote: build };
 }
 
 async function applyAppNetwork(id) {
@@ -5218,13 +5264,20 @@ async function fillAgentMarkets() {
   const list = $('ag-tick-list');
   try {
     const mkts = await kronMarkets();
-    const rows = (mkts || []).filter(m => validTick(m.tick)).slice(0, 24);
-    const top = rows.slice(0, 10);
+    const rows = (mkts || []).filter(m => validTick(m.tick));
+    const byTick = new Map(rows.map(m => [m.tick, m]));
+    const featured = ['KKDAG', 'KRON', 'IFWEN', 'KASCOV', 'KASDIA', 'PEPE', 'NACHO', 'ANSEM', 'MACH', 'KROSHI'];
+    const top = [];
+    for (const t of featured) if (byTick.has(t)) top.push(byTick.get(t));
+    for (const m of rows) {
+      if (top.length >= 10) break;
+      if (!top.some(x => x.tick === m.tick)) top.push(m);
+    }
     if (list) {
-      list.innerHTML = rows.map(m => `<option value="${esc(m.tick)}">${esc(m.tick)}</option>`).join('');
+      list.innerHTML = rows.slice(0, 40).map(m => `<option value="${esc(m.tick)}">${esc(m.tick)}</option>`).join('');
     }
     if (box) {
-      const cur = ($('ag-tick')?.value || '').trim().toUpperCase();
+      const cur = ($('ag-tick')?.value || 'KKDAG').trim().toUpperCase();
       box.innerHTML = top.map(m =>
         `<button type="button" data-ag-pick="${esc(m.tick)}" class="${m.tick === cur ? 'on' : ''}">${esc(m.tick)}</button>`
       ).join('');
@@ -5235,8 +5288,19 @@ async function fillAgentMarkets() {
 function prefillAgentLevels(px) {
   const p = Number(px || 0);
   if (!(p > 0)) return;
-  if ($('ag-buy') && document.activeElement !== $('ag-buy')) $('ag-buy').value = Number(p * 0.96).toPrecision(4);
-  if ($('ag-sell') && document.activeElement !== $('ag-sell')) $('ag-sell').value = Number(p * 1.05).toPrecision(4);
+  // Buy on a dip (~14%), sell for a real spread after AMM fees (~24%) — not a 1–2% scalp.
+  if ($('ag-buy') && document.activeElement !== $('ag-buy')) $('ag-buy').value = Number(p * 0.86).toPrecision(4);
+  if ($('ag-sell') && document.activeElement !== $('ag-sell')) $('ag-sell').value = Number(p * 1.24).toPrecision(4);
+}
+
+async function agentLiveInfo(tick) {
+  const t = String(tick || '').toUpperCase();
+  let info = await lookupKronTick(t).catch(() => null);
+  if (!(Number(info?.price) > 0)) {
+    const mk = ((await kronMarkets().catch(() => [])) || []).find(m => m.tick === t);
+    if (mk) info = { tick: t, price: mk.price, change24h: mk.change24h, graduated: mk.graduated, decimals: mk.decimals };
+  }
+  return info;
 }
 
 async function applyAgentTick(tick, { prefill = true } = {}) {
@@ -5253,14 +5317,24 @@ async function applyAgentTick(tick, { prefill = true } = {}) {
   document.querySelectorAll('#ag-picks [data-ag-pick]').forEach(b => b.classList.toggle('on', b.dataset.agPick === t));
   if (!isTestnet() && prefill) {
     try {
-      const info = await lookupKronTick(t);
-      const px = Number(info.price || 0);
+      const info = await agentLiveInfo(t);
+      const px = Number(info?.price || 0);
       if (px > 0) {
         if ($('ag-now')) $('ag-now').textContent = t + ' now ' + fmtPx(px) + ' KAS · 24h ' + fmtChg(info.change24h);
         prefillAgentLevels(px);
+        const paused = loadAgentJob();
+        if (paused && !paused.on) {
+          saveAgentJob({
+            ...paused,
+            tick: t,
+            buyBelow: Number($('ag-buy')?.value || 0),
+            sellAbove: Number($('ag-sell')?.value || 0),
+            preview: { tick: t, indexPx: px, ammPx: px, change24h: Number(info.change24h || 0), graduated: !!info.graduated }
+          });
+        }
       }
     } catch (e) {
-      if ($('ag-now')) $('ag-now').textContent = errText(e);
+      if ($('ag-now')) $('ag-now').textContent = t + ' · ' + agentSoftErr(e, t);
     }
   }
   await refreshAgentPreview();
@@ -5350,17 +5424,19 @@ function agentNetLine(job) {
 function paintAgentFills(job) {
   const box = $('ag-fills');
   if (!box) return;
-  const fills = Array.isArray(job?.fills) ? job.fills.slice(-6).reverse() : [];
+  const fills = Array.isArray(job?.fills) ? job.fills.slice(-12).reverse() : [];
   if (!fills.length) {
-    box.innerHTML = '<span>No fills this session. Waiting for price to cross your levels.</span>';
+    box.innerHTML = '<span>No Scorpion fills this session. Buys and sells print here and on Activity with an A-Trade badge.</span>';
     return;
   }
-  box.innerHTML = fills.map(f => {
+  const tick = job?.tick || '';
+  box.innerHTML = '<div class="ag-fills-h">Scorpion fills</div>' + fills.map(f => {
     const cls = f.side === 'buy' ? 'up' : 'down';
+    const when = f.t ? new Date(f.t).toLocaleTimeString() : '';
     const tx = f.txId
       ? `<a href="${esc(explorerTx(f.txId))}" target="_blank" rel="noopener">${esc(String(f.txId).slice(0, 10))}…</a>`
       : esc(f.note || '');
-    return `<div><span class="${cls}">${esc((f.side || '').toUpperCase())}</span> ${esc(fmtPx(f.px))} KAS · ${tx}</div>`;
+    return `<div class="ag-fill">${tokenDot({ ticker: f.tick || tick, protocol: 'kcc20', image: kronLogoFor(f.tick || tick) })}<span class="${cls}">${esc((f.side || '').toUpperCase())}</span> ${esc(f.tick || tick)} @ ${esc(fmtPx(f.px))} KAS · ${esc(when)} · ${tx}</div>`;
   }).join('');
 }
 
@@ -5385,44 +5461,56 @@ function paintAgentStatus() {
     paintAgentFills(null);
     return;
   }
-  if (job.on && $('ag-tick') && document.activeElement !== $('ag-tick')) $('ag-tick').value = job.tick || '';
-  if ($('ag-size') && document.activeElement !== $('ag-size') && job.sizeKas) $('ag-size').value = String(job.sizeKas);
-  if ($('ag-buy') && document.activeElement !== $('ag-buy') && job.buyBelow) $('ag-buy').value = String(job.buyBelow);
-  if ($('ag-sell') && document.activeElement !== $('ag-sell') && job.sellAbove) $('ag-sell').value = String(job.sellAbove);
-  if ($('ag-max') && document.activeElement !== $('ag-max') && job.maxKas) $('ag-max').value = String(job.maxKas);
-  if (job.pct && $('ag-pct') && document.activeElement !== $('ag-pct')) $('ag-pct').value = String(job.pct);
+  const viewTick = (job.on ? job.tick : ($('ag-tick')?.value || job.tick || 'KKDAG')).trim().toUpperCase();
+  if (job.on && $('ag-tick') && document.activeElement !== $('ag-tick')) $('ag-tick').value = viewTick;
+  if (job.on && $('ag-size') && document.activeElement !== $('ag-size') && job.sizeKas) $('ag-size').value = String(job.sizeKas);
+  if (job.on && $('ag-buy') && document.activeElement !== $('ag-buy') && job.buyBelow) $('ag-buy').value = String(job.buyBelow);
+  if (job.on && $('ag-sell') && document.activeElement !== $('ag-sell') && job.sellAbove) $('ag-sell').value = String(job.sellAbove);
+  if (job.on && $('ag-max') && document.activeElement !== $('ag-max') && job.maxKas) $('ag-max').value = String(job.maxKas);
+  if (job.on && job.pct && $('ag-pct') && document.activeElement !== $('ag-pct')) $('ag-pct').value = String(job.pct);
   if (job.strat) syncAgStratUi(job.strat);
+  document.querySelectorAll('#ag-picks [data-ag-pick]').forEach(b => b.classList.toggle('on', b.dataset.agPick === viewTick));
   const last = job.last || 'waiting for a cross';
-  el.textContent = (running ? 'Scorpion on · ' : 'Paused · ') + job.tick + ' · spent '
-    + Number(job.spentKas || 0).toFixed(3) + '/' + Number(job.maxKas || 0) + ' KAS · ' + last;
+  const spent = Number(job.spentKas || 0);
+  const cap = Number(job.maxKas || 0);
+  el.textContent = (running ? 'Scorpion on · ' : 'Paused · ') + viewTick + ' · bought '
+    + spent.toFixed(3) + '/' + cap + ' KAS'
+    + (spent >= cap - 1e-9 && cap > 0 ? ' · buy cap hit, sells still on' : '')
+    + ' · ' + last;
   paintAgentFills(job);
-  const p = job.preview || agentPreview;
+  const p = (job.preview?.tick === viewTick ? job.preview : null)
+    || (agentPreview?.tick === viewTick ? agentPreview : null);
   const qel = $('ag-quote');
   const stats = $('ag-stats');
   const nowPx = Number(p?.ammPx || p?.indexPx || 0);
-  if ($('ag-now') && nowPx > 0) {
-    $('ag-now').textContent = (job.tick || '') + ' now ' + fmtPx(nowPx) + ' KAS · 24h ' + fmtChg(p.change24h);
+  if ($('ag-now')) {
+    $('ag-now').textContent = nowPx > 0
+      ? viewTick + ' now ' + fmtPx(nowPx) + ' KAS · 24h ' + fmtChg(p.change24h)
+      : viewTick + ' · loading quote';
   }
   if (p && stats) {
     const chg = Number(p.change24h || 0);
     stats.innerHTML = `
       <div class="at-stat"><b>${esc(fmtPx(p.ammPx || p.indexPx))}</b><span>Now AMM</span></div>
       <div class="at-stat"><b>${esc(fmtPx(p.indexPx))}</b><span>Index</span></div>
-      <div class="at-stat"><b>${esc(p.tokens != null ? fmtTok(p.tokens) : '—')}</b><span>${esc(job.tick)} out</span></div>
+      <div class="at-stat"><b>${esc(p.tokens != null ? fmtTok(p.tokens) : '—')}</b><span>${esc(viewTick)} out</span></div>
       <div class="at-stat"><b>${esc(fmtChg(chg))}</b><span>24h</span></div>`;
+  } else if (stats) {
+    stats.innerHTML = '';
   }
   if (p && qel) {
-    const buy = Number(job.buyBelow || 0);
-    const sell = Number(job.sellAbove || 0);
+    const buy = Number((job.on ? job.buyBelow : $('ag-buy')?.value) || job.buyBelow || 0);
+    const sell = Number((job.on ? job.sellAbove : $('ag-sell')?.value) || job.sellAbove || 0);
     const px = Number(p.ammPx || p.indexPx || 0);
     const buyGap = buy > 0 && px > 0 ? ((px - buy) / buy) * 100 : null;
     const sellGap = sell > 0 && px > 0 ? ((sell - px) / px) * 100 : null;
     const bits = [];
-    if (p.tokens != null) bits.push(fmtTok(job.sizeKas) + ' KAS → ~' + fmtTok(p.tokens) + ' ' + job.tick);
-    if (buyGap != null) bits.push(buyGap > 0 ? fmtPx(buyGap) + '% above buy ' + fmtPx(buy) : 'buy level hit');
-    if (sellGap != null) bits.push(sellGap > 0 ? fmtPx(sellGap) + '% to sell ' + fmtPx(sell) : 'sell level hit');
+    if (p.tokens != null) bits.push(fmtTok(job.sizeKas || $('ag-size')?.value) + ' KAS → ~' + fmtTok(p.tokens) + ' ' + viewTick);
+    if (buyGap != null) bits.push(buyGap > 0 ? fmtPx(buyGap) + '% above buy ' + fmtPx(buy) : 'at buy ' + fmtPx(buy));
+    if (sellGap != null) bits.push(sellGap > 0 ? fmtPx(sellGap) + '% to sell ' + fmtPx(sell) : 'at sell ' + fmtPx(sell));
     qel.textContent = bits.join(' · ') || last;
-    if (p.note) qel.textContent += ' · ' + p.note;
+  } else if (qel) {
+    qel.textContent = last;
   }
 }
 
@@ -5441,18 +5529,18 @@ async function refreshAgentPreview() {
   const job = loadAgentJob();
   const onAgent = !$('at-agent')?.classList.contains('hidden');
   if (!onAgent && !job?.on) return;
-  const tick = ((job?.on ? job.tick : null) || $('ag-tick')?.value || '').trim().toUpperCase();
+  const tick = ((job?.on ? job.tick : null) || $('ag-tick')?.value || 'KKDAG').trim().toUpperCase();
   const sizeKas = Number(job?.sizeKas || $('ag-size')?.value || 0.15);
   if (!tick) return;
   if (isTestnet()) {
-    agentPreview = { indexPx: 0, ammPx: 0, tokens: null, graduated: null, change24h: 0 };
+    agentPreview = { tick, indexPx: 0, ammPx: 0, tokens: null, graduated: null, change24h: 0 };
     if ($('ag-quote')) $('ag-quote').textContent = 'TN10 preview is the K.COM book on COOK. KRON AMM is mainnet only.';
     if ($('ag-net')) $('ag-net').textContent = agentNetLine(job);
     return;
   }
   try {
     const [info, candles] = await Promise.all([
-      lookupKronTick(tick).catch(() => null),
+      agentLiveInfo(tick),
       kronCandles(tick, 48).catch(() => [])
     ]);
     let ammPx = Number(info?.price || 0);
@@ -5466,7 +5554,14 @@ async function refreshAgentPreview() {
         graduated = !!q.graduated;
       } catch {}
     }
+    if (!(ammPx > 0) && !(Number(info?.price) > 0)) {
+      agentPreview = { tick, indexPx: 0, ammPx: 0, tokens: null, graduated, change24h: Number(info?.change24h || 0) };
+      if ($('ag-quote')) $('ag-quote').textContent = tick + ' quote retry';
+      paintAgentStatus();
+      return;
+    }
     agentPreview = {
+      tick,
       indexPx: Number(info?.price || 0),
       ammPx,
       tokens,
@@ -5475,14 +5570,15 @@ async function refreshAgentPreview() {
       change24h: Number(info?.change24h || 0),
       note: 'Green 1d can still print a tape of sells — close vs prior close, not “no sellers”.'
     };
-    if (job) {
+    if (job && (!job.on || String(job.tick).toUpperCase() === tick)) {
       job.preview = agentPreview;
       saveAgentJob(job);
     }
     if (onAgent) drawAtChart(candles, 'ag-chart');
     paintAgentStatus();
   } catch (e) {
-    if ($('ag-quote')) $('ag-quote').textContent = errText(e);
+    const msg = /fail(ed)? to fetch|network|HTTP/i.test(errText(e)) ? (tick + ' quote retry') : errText(e);
+    if ($('ag-quote')) $('ag-quote').textContent = msg;
   }
 }
 
@@ -5532,14 +5628,15 @@ async function toggleAgent() {
     return;
   }
   if (!wallet) { toast('Unlock a wallet'); return; }
-  const tick = ($('ag-tick')?.value || (isTestnet() ? '' : 'KRON')).trim().toUpperCase();
+  const tick = ($('ag-tick')?.value || (isTestnet() ? '' : 'KKDAG')).trim().toUpperCase();
   const sizeKas = Number($('ag-size')?.value || 0.15);
   const buyBelow = Number($('ag-buy')?.value || 0);
   const sellAbove = Number($('ag-sell')?.value || 0);
   const maxKas = Number($('ag-max')?.value || 1);
   if (!tick) { toast(isTestnet() ? 'Pick a K.COM or Scorpion token first' : 'Set a token'); return; }
   if (isTestnet() && tick === 'KRON') { toast('KRON is mainnet-only. Arm a K.COM / Scorpion token on TN10.'); return; }
-  if (!(sizeKas > 0)) { toast('Set a size'); return; }
+  if (!(sizeKas > 0)) { toast('Set Size KAS (native Kaspa per buy)'); return; }
+  if (!(maxKas > 0)) { toast('Set Max KAS (session buy budget)'); return; }
   const strat = selectedAgentStrat();
   const pct = Number($('ag-pct')?.value || 5);
   if (strat === 'range' && !(buyBelow > 0) && !(sellAbove > 0)) {
@@ -5552,19 +5649,37 @@ async function toggleAgent() {
     try { await requirePin('Start Scorpion on ' + tick); }
     catch (e) { if (errText(e) === 'cancelled') return; toast(errText(e)); return; }
   }
+  const prev = Array.isArray(job?.fills) ? job.fills : [];
   saveAgentJob({
     on: true, tick, sizeKas, buyBelow, sellAbove, maxKas,
     strat, pct: Number.isFinite(pct) ? pct : 5,
-    spentKas: 0, last: 'armed ' + strat, startedAt: Date.now(),
+    spentKas: 0, last: 'armed ' + strat + ' · buy cap ' + maxKas + ' KAS', startedAt: Date.now(),
     venue: isTestnet() ? 'cook' : 'kron',
     tokenId: isTestnet() ? (atCook?.tokenId || atDesk?.tokenId || '') : '',
-    fills: []
+    fills: prev.slice(-12)
   });
   startAgentLoop();
   startAgentPreviewLoop();
   refreshAgentPreview().catch(() => {});
   toast('Scorpion armed on ' + tick + (isTestnet() ? ' · TN10 book' : ' · mainnet KRON AMM'));
   paintAgentStatus();
+}
+
+function agentSoftErr(e, tick) {
+  const msg = errText(e);
+  if (/fail(ed)? to fetch|network|HTTP|indexer/i.test(msg)) return (tick || 'token') + ' idx retry';
+  return msg;
+}
+
+function pushAgentFill(job, side, fillPx, txId, note) {
+  job.fills = (job.fills || []).concat({
+    t: Date.now(),
+    side,
+    tick: job.tick,
+    px: fillPx,
+    txId: txId || '',
+    note: note || ''
+  }).slice(-12);
 }
 
 async function tickAgent() {
@@ -5581,61 +5696,68 @@ async function tickAgent() {
       const q = await cookQuote(job.tokenId, { side: 'buy', amount: String(job.sizeKas), mode: 'market' });
       const px = sompiToKas(q?.averageUnitPriceSompi || q?.unitPriceSompi);
       if (!(px > 0) || !q?.valid) { job.last = 'no K.COM fill'; saveAgentJob(job); paintAgentStatus(); return; }
-      if (job.buyBelow > 0 && px <= job.buyBelow && (job.spentKas || 0) + job.sizeKas <= job.maxKas + 1e-9) {
+      const canBuy = (job.spentKas || 0) + job.sizeKas <= job.maxKas + 1e-9;
+      if (job.buyBelow > 0 && px <= job.buyBelow && canBuy) {
         job.last = 'buying @ ' + px.toPrecision(4);
         saveAgentJob(job);
         paintAgentStatus();
         const wrappers = await cookWrappers(job.tokenId);
         const wrapped = pickWrappedMarketId(wrappers);
         if (!wrapped) { job.last = 'no wrapper'; saveAgentJob(job); paintAgentStatus(); return; }
-        await runCookOrder({
+        const result = await runCookOrder({
           side: 'buy', amount: String(job.sizeKas), id: job.tokenId, wrapped,
           rest: false, quote: q, limit: job.buyBelow, slip: 2
         });
         job.spentKas = (job.spentKas || 0) + job.sizeKas;
         job.last = 'bought cook · ' + px.toPrecision(4);
+        pushAgentFill(job, 'buy', px, result?.txId, job.sizeKas + ' KAS');
+        noteATradeActivity(job, 'buy', px, result || {});
         saveAgentJob(job);
         afterTx();
       } else {
-        job.last = px.toPrecision(4) + ' KAS · waiting';
+        job.last = (!canBuy ? 'buy cap hit, sells still on · ' : '') + px.toPrecision(4) + ' KAS · waiting';
         saveAgentJob(job);
       }
       paintAgentStatus();
       return;
     }
     const [info, candles] = await Promise.all([
-      lookupKronTick(job.tick),
+      agentLiveInfo(job.tick),
       kronCandles(job.tick, 48).catch(() => [])
     ]);
-    const indexPx = Number(info.price || 0);
+    const indexPx = Number(info?.price || 0);
     let px = indexPx;
     let qBuy = null;
     try {
       qBuy = await quoteKronTrade({ tick: job.tick, side: 'buy', amount: String(job.sizeKas) });
       px = impliedKronPx(qBuy) || indexPx;
       job.preview = {
+        tick: job.tick,
         indexPx,
         ammPx: px,
         tokens: Number(qBuy.tokenOut) / (10 ** Number(qBuy.decimals || 0)),
         graduated: !!qBuy.graduated,
         decimals: Number(qBuy.decimals || 0),
-        change24h: Number(info.change24h || 0)
+        change24h: Number(info?.change24h || 0)
       };
     } catch (qe) {
-      if (!(indexPx > 0)) throw qe;
+      if (!(indexPx > 0)) {
+        job.last = agentSoftErr(qe, job.tick);
+        saveAgentJob(job);
+        paintAgentStatus();
+        return;
+      }
     }
-    if (!(px > 0)) { job.last = 'no KRON AMM quote'; saveAgentJob(job); paintAgentStatus(); return; }
+    if (!(px > 0)) { job.last = job.tick + ' idx retry'; saveAgentJob(job); paintAgentStatus(); return; }
     drawAtChart(candles, 'ag-chart');
     const want = agentWants(job, {
       px,
       candles,
-      graduated: !!(job.preview?.graduated ?? info.graduated),
-      change24h: Number(info.change24h || 0)
+      graduated: !!(job.preview?.graduated ?? info?.graduated),
+      change24h: Number(info?.change24h || 0)
     });
-    const pushFill = (side, fillPx, txId, note) => {
-      job.fills = (job.fills || []).concat({ t: Date.now(), side, px: fillPx, txId: txId || '', note: note || '' }).slice(-8);
-    };
-    if (want.buy && (job.spentKas || 0) + job.sizeKas <= job.maxKas + 1e-9) {
+    const canBuy = (job.spentKas || 0) + job.sizeKas <= Number(job.maxKas || 0) + 1e-9;
+    if (want.buy && canBuy) {
       job.last = 'buying AMM @ ' + px.toPrecision(4);
       saveAgentJob(job);
       paintAgentStatus();
@@ -5651,7 +5773,8 @@ async function tickAgent() {
       job.spentKas = (job.spentKas || 0) + job.sizeKas;
       job.last = 'bought AMM · ' + px.toPrecision(4);
       noteKronFill(result.quote);
-      pushFill('buy', px, result.txId, job.sizeKas + ' KAS');
+      noteATradeActivity(job, 'buy', px, result);
+      pushAgentFill(job, 'buy', px, result.txId, job.sizeKas + ' KAS');
       saveAgentJob(job);
       afterTx();
     } else if (want.sell) {
@@ -5682,17 +5805,19 @@ async function tickAgent() {
       });
       job.last = 'sold AMM · ' + px.toPrecision(4);
       noteKronFill(result.quote);
-      pushFill('sell', px, result.txId, '');
+      noteATradeActivity(job, 'sell', px, result);
+      pushAgentFill(job, 'sell', px, result.txId, '');
       saveAgentJob(job);
       afterTx();
     } else {
-      job.last = fmtPx(px) + ' AMM · ' + (want.why || 'waiting');
+      const capNote = (!canBuy ? 'buy cap hit, sells still on · ' : '');
+      job.last = capNote + fmtPx(px) + ' AMM · ' + (want.why || 'waiting');
       saveAgentJob(job);
     }
     paintAgentStatus();
   } catch (e) {
     const job2 = loadAgentJob() || job;
-    job2.last = errText(e);
+    job2.last = agentSoftErr(e, job.tick);
     saveAgentJob(job2);
     paintAgentStatus();
   } finally {
@@ -6375,7 +6500,7 @@ function openBoost() {
   haptic();
   openSheet('Boost a token', `
     <label class="field"><span>Ticker</span>
-      <input id="boost-tick" maxlength="12" placeholder="KRON" spellcheck="false" value="${esc(($('at-tick')?.value || 'KRON').toUpperCase())}">
+      <input id="boost-tick" maxlength="12" placeholder="KKDAG" spellcheck="false" value="${esc(($('at-tick')?.value || 'KKDAG').toUpperCase())}">
     </label>
     <p class="muted" style="text-align:left;">Sends ${BOOST_KAS} KAS to this same wallet. Features the ticker here for 24h. Points stack. We never take the KAS.</p>
   `, {
@@ -6921,7 +7046,7 @@ function openTrade(prefill = {}) {
   if (!screen) return;
   screen.classList.remove('hidden');
   screen.setAttribute('aria-hidden', 'false');
-  const tick0 = String(prefill.tick || 'KRON').toUpperCase();
+  const tick0 = String(prefill.tick || 'KKDAG').toUpperCase();
   const side0 = prefill.side === 'sell' ? 'sell' : (prefill.side === 'dca' ? 'dca' : 'buy');
   if ($('trade-ticker')) $('trade-ticker').value = tick0;
   if ($('trade-amount')) $('trade-amount').value = prefill.amount || '';
@@ -6999,7 +7124,7 @@ function syncTradeLabel() {
 async function quoteTradePreview() {
   const box = $('trade-quote');
   const amount = $('trade-amount')?.value.trim();
-  const tick = ($('trade-ticker')?.value || 'KRON').toUpperCase();
+  const tick = ($('trade-ticker')?.value || 'KKDAG').toUpperCase();
   const side = $('trade-side')?.querySelector('.on')?.dataset.side || 'buy';
   if (!box || !amount) return;
   box.innerHTML = `<p class="muted" style="text-align:left;padding:0;">Quoting…</p>`;
@@ -7029,7 +7154,7 @@ async function quoteTradePreview() {
 async function reviewTrade() {
   const go = $('trade-go');
   const amount = $('trade-amount')?.value.trim();
-  const tick = ($('trade-ticker')?.value || 'KRON').toUpperCase();
+  const tick = ($('trade-ticker')?.value || 'KKDAG').toUpperCase();
   const side = $('trade-side')?.querySelector('.on')?.dataset.side || 'buy';
   if (side === 'dca') {
     const job = loadDcaJob();
@@ -7148,7 +7273,8 @@ async function runTrade({ tick, side, amount, quote, forceKasware = false }) {
         amount: String(q.tokenOut),
         decimals: q.decimals || 0,
         txId: result.txId || '',
-        label: 'Bought'
+        label: 'Bought',
+        image: kronLogoFor(q.tick || tick)
       });
     } else if (q?.side === 'sell') {
       pushTokenActivity({
@@ -7158,7 +7284,8 @@ async function runTrade({ tick, side, amount, quote, forceKasware = false }) {
         amount: String(q.tokenIn || amount || ''),
         decimals: q.decimals || 0,
         txId: result.txId || '',
-        label: 'Sold'
+        label: 'Sold',
+        image: kronLogoFor(q.tick || tick)
       });
     }
     renderHome();
@@ -9078,8 +9205,8 @@ function bind() {
   });
   click('btn-send', openSend);
   click('btn-receive', openReceive);
-  click('btn-trade', () => openTrade({ tick: 'KRON', side: 'buy' }));
-  click('btn-trade-tokens', () => openTrade({ tick: 'KRON', side: 'buy' }));
+  click('btn-trade', () => openTrade({ tick: 'KKDAG', side: 'buy' }));
+  click('btn-trade-tokens', () => openTrade({ tick: 'KKDAG', side: 'buy' }));
   click('trade-close', hideTradeScreen);
   click('trade-lookup', lookupTradeTicker);
   click('trade-go', () => reviewTrade());

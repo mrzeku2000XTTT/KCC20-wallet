@@ -894,6 +894,28 @@ img { display: block; max-width: 100%; }
 .sheet-overlay.open { display: flex; pointer-events: auto; }
 #dapp-overlay { z-index: 89; }
 #dapp-origin { margin-top: 0; overflow-wrap: anywhere; word-break: break-word; }
+.dapp-wallets {
+  display: flex; flex-wrap: wrap; gap: 8px;
+  margin: 8px 0 12px;
+}
+.dapp-wallets.hidden { display: none !important; }
+.dapp-wallets-lab {
+  flex: 1 1 100%;
+  font-size: 11px; color: var(--label-2); margin: 0;
+}
+.dapp-wchip {
+  text-align: left;
+  padding: 8px 10px; border-radius: 12px;
+  background: rgba(255,255,255,.06);
+  border: 0.5px solid var(--hairline);
+  min-width: 104px; max-width: 100%;
+}
+.dapp-wchip.on {
+  border-color: rgba(212,176,122,.7);
+  background: rgba(212,176,122,.16);
+}
+.dapp-wchip b { display: block; font-size: 13px; }
+.dapp-wchip span { display: block; font-size: 11px; color: var(--label-2); }
 .sheet {
   width: 100%; max-width: 100%; max-height: 88%;
   background: #141416;

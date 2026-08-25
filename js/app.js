@@ -24,7 +24,7 @@ import {
   newHashlockSecret, checkinHop, currentHop, parseXmssKit, p2shFromRedeemHex, spendXmssVault,
   disconnectRpc, buildDcaDrips, sendKasMany, releaseDcaDrip, cancelDcaDrip, isMassError
 } from './tx.js?v=158';
-import { bootDappConnect, pingTttDappFrame, TTT_TREASURY } from './dappConnect.js?v=157';
+import { bootDappConnect, pingTttDappFrame, TTT_TREASURY } from './dappConnect.js?v=160';
 import { schedulePersistIframeVault, bootIframeVaultWatch } from './iframeVault.js?v=120';
 import { kronMarkets, quoteKronTrade, executeKronTrade, formatKasSompi, lookupKronTick, liveQuote, tradeCostLines, attachKronLogos, kronCandles, kronLogoFor, quoteKcc20Bridge, executeKcc20Bridge, formatTokenRaw } from './kronTrade.js?v=140';
 import {
@@ -58,7 +58,7 @@ import {
 } from './atrade.js?v=100';
 import { SCORPION_MEMORY } from './scorpionMemory.js?v=152';
 
-export const BUILD = '159';
+export const BUILD = '160';
 
 const TOKEN_FALLBACK_LOGO = 'assets/ttt.png';
 
@@ -1303,9 +1303,35 @@ async function dappSendToken({ tick, amount, dest }) {
   };
 }
 
+async function switchDappWallet(id) {
+  const w = loadWalletList().find(x => x.id === id);
+  if (!w) throw new Error('Add that wallet in KCC20 first (You → wallets)');
+  if (wallet?.id === w.id) return wallet;
+  wallet = migrateReceiveBook(migratePinOnto({ ...w }));
+  hydrateNativeKey(wallet);
+  applyWalletNetwork(wallet);
+  saveWallet();
+  setVaultOwner(w.address);
+  hydrateFromSnap(w.address);
+  rememberDappAccount(w.address);
+  if (walletIsKaswareChip(wallet)) {
+    try { await autoArmKaswareForWallet(wallet); } catch {}
+  }
+  try { await refreshTokenHoldings(); } catch {}
+  if (currentTab === 'home') renderHome();
+  return wallet;
+}
+
 function dappHooks() {
   return {
     getWallet: () => wallet,
+    listWallets: () => loadWalletList().map(w => ({
+      id: w.id,
+      name: w.name || 'Wallet',
+      address: w.address,
+      kasware: !!w.kasware
+    })),
+    switchDappWallet,
     rememberDappAccount,
     payerLabel: () => (wallet?.name || 'Wallet') + ' · ' + (wallet?.address || ''),
     isTreasuryPayer: () => !!(wallet?.address && sameAddrPayload(wallet.address, TTT_TREASURY)),
@@ -1321,9 +1347,7 @@ function dappHooks() {
       return dappHoldingsList();
     },
     getTokenBalance: async (tick) => {
-      if (Date.now() - lastTokenFetch > 8000) {
-        try { await refreshTokenHoldings(); } catch {}
-      }
+      try { await refreshTokenHoldings(); } catch {}
       return dappHoldingRow(tick);
     },
     sendToken: dappSendToken,

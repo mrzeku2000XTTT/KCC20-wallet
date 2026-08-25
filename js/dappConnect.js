@@ -156,7 +156,30 @@ function summarizePskt(json) {
   }
 }
 
-function showOverlay({ title, origin, body, approveLabel }) {
+function briefAddr(a) {
+  const s = String(a || '');
+  if (s.length < 18) return s;
+  return s.slice(0, 10) + '…' + s.slice(-6);
+}
+
+function paintDappWallets() {
+  const box = $('dapp-wallets');
+  if (!box) return;
+  const list = typeof hooks?.listWallets === 'function' ? (hooks.listWallets() || []) : [];
+  const cur = hooks?.getWallet?.();
+  if (list.length < 2) {
+    box.classList.add('hidden');
+    box.innerHTML = '';
+    return;
+  }
+  box.classList.remove('hidden');
+  box.innerHTML = '<p class="dapp-wallets-lab">Sign with a wallet you already added</p>' + list.map(w => {
+    const on = !!(cur && (w.id === cur.id || String(w.address) === String(cur.address)));
+    return `<button type="button" class="dapp-wchip${on ? ' on' : ''}" data-dapp-wid="${esc(w.id)}"><b>${esc(w.name || 'Wallet')}</b><span>${esc(briefAddr(w.address))}${w.kasware ? ' · KasWare' : ''}</span></button>`;
+  }).join('');
+}
+
+function showOverlay({ title, origin, body, approveLabel, onWalletChange }) {
   return new Promise((resolve, reject) => {
     const overlay = $('dapp-overlay');
     if (!overlay) {
@@ -168,16 +191,32 @@ function showOverlay({ title, origin, body, approveLabel }) {
     if (originEl) originEl.textContent = origin || '';
     const bodyEl = $('dapp-body');
     if (bodyEl) bodyEl.innerHTML = body || '';
+    paintDappWallets();
     const ok = $('dapp-approve');
     const no = $('dapp-reject');
+    const chips = $('dapp-wallets');
     if (ok) ok.textContent = approveLabel || 'Approve';
     overlay.classList.add('open');
     const done = (fn) => {
       overlay.classList.remove('open');
       ok.onclick = null;
       no.onclick = null;
+      if (chips) chips.onclick = null;
       fn();
     };
+    if (chips) {
+      chips.onclick = async (e) => {
+        const b = e.target.closest('[data-dapp-wid]');
+        if (!b?.dataset.dappWid || !hooks?.switchDappWallet) return;
+        try {
+          await hooks.switchDappWallet(b.dataset.dappWid);
+          paintDappWallets();
+          if (typeof onWalletChange === 'function') await onWalletChange(hooks.getWallet?.());
+        } catch (err) {
+          try { hooks.toast?.(err && err.message ? err.message : String(err)); } catch {}
+        }
+      };
+    }
     ok.onclick = () => done(() => resolve(true));
     no.onclick = () => done(() => reject(new Error('User rejected')));
   });
@@ -193,22 +232,32 @@ async function ensureUnlocked() {
   return w;
 }
 
+function connectBody(w, req, origin) {
+  return '<p class="muted" style="text-align:left;padding:0 0 8px;">This dApp wants a Kaspa address. Pick which of your added wallets to use. Keys stay here.</p>'
+    + '<div class="kv"><span class="k">App</span><span class="v">' + esc(req.name || (String(origin).includes('tttz.xyz') ? 'TTT' : origin)) + '</span></div>'
+    + '<div class="kv"><span class="k">Wallet</span><span class="v">' + esc(w?.name || 'Wallet') + '</span></div>'
+    + '<div class="kv kv-stack"><span class="k">Address</span><span class="v">' + esc(w?.address || '') + '</span></div>'
+    + '<div class="kv"><span class="k">Network</span><span class="v">' + esc(netName()) + '</span></div>';
+}
+
 async function handleConnect(req) {
-  const w = await ensureUnlocked();
+  let w = await ensureUnlocked();
   const origin = req.origin;
-  if (!originAllowed(origin)) {
+  const many = (typeof hooks.listWallets === 'function' ? hooks.listWallets() : []).length > 1;
+  if (!originAllowed(origin) || many) {
+    const fill = () => {
+      const live = hooks.getWallet?.() || w;
+      if ($('dapp-body')) $('dapp-body').innerHTML = connectBody(live, req, origin);
+    };
     await showOverlay({
       title: 'Connect dApp',
       origin,
       approveLabel: 'Connect',
-      body:
-        '<p class="muted" style="text-align:left;padding:0 0 8px;">This dApp wants your Kaspa address. Keys stay in this wallet. Nothing is sent to a server.</p>'
-        + '<div class="kv"><span class="k">App</span><span class="v">' + esc(req.name || (String(origin).includes('tttz.xyz') ? 'TTT' : origin)) + '</span></div>'
-        + '<div class="kv"><span class="k">Wallet</span><span class="v">' + esc(w.name || 'Wallet') + '</span></div>'
-        + '<div class="kv kv-stack"><span class="k">Address</span><span class="v">' + esc(w.address) + '</span></div>'
-        + '<div class="kv"><span class="k">Network</span><span class="v">' + esc(netName()) + '</span></div>'
+      body: connectBody(w, req, origin),
+      onWalletChange: fill
     });
     rememberOrigin(origin, req.name);
+    w = hooks.getWallet?.() || w;
   }
   try { hooks?.rememberDappAccount?.(w.address); } catch {}
   return walletSnapshot(w);
@@ -256,17 +305,24 @@ async function handleSign(req) {
   const json = String(req.params?.txJsonString || '');
   if (!json) throw new Error('dApp sent an empty PSKT');
   const inputs = Array.isArray(req.params?.signInputs) ? req.params.signInputs : [];
+  const signBody = () => {
+    const live = hooks.getWallet?.() || w;
+    return '<p class="muted" style="text-align:left;padding:0 0 8px;">Review this PSKT. Pick a wallet you added, then Sign. The dApp never sees your key.</p>'
+      + '<div class="kv"><span class="k">dApp</span><span class="v">' + esc(req.name || origin) + '</span></div>'
+      + '<div class="kv"><span class="k">Wallet</span><span class="v">' + esc(live?.name || 'Wallet') + '</span></div>'
+      + '<div class="kv kv-stack"><span class="k">Address</span><span class="v">' + esc(live?.address || '') + '</span></div>'
+      + '<div class="kv"><span class="k">Network</span><span class="v">' + esc(netName()) + '</span></div>'
+      + '<div class="kv"><span class="k">PSKT</span><span class="v">' + esc(summarizePskt(json)) + '</span></div>';
+  };
   await showOverlay({
     title: 'Sign transaction',
     origin,
     approveLabel: 'Sign',
-    body:
-      '<p class="muted" style="text-align:left;padding:0 0 8px;">Review this PSKT. Signing happens on this device. The dApp never sees your key. Covenant inputs stay unsigned.</p>'
-      + '<div class="kv"><span class="k">dApp</span><span class="v">' + esc(req.name || origin) + '</span></div>'
-      + '<div class="kv"><span class="k">Wallet</span><span class="v">' + esc(w.address) + '</span></div>'
-      + '<div class="kv"><span class="k">Network</span><span class="v">' + esc(netName()) + '</span></div>'
-      + '<div class="kv"><span class="k">PSKT</span><span class="v">' + esc(summarizePskt(json)) + '</span></div>'
+    body: signBody(),
+    onWalletChange: () => { if ($('dapp-body')) $('dapp-body').innerHTML = signBody(); }
   });
+  w = hooks.getWallet?.() || w;
+  if (typeof hooks.hydrateNativeKey === 'function') hooks.hydrateNativeKey(w);
   if (typeof hooks.requirePin === 'function' && !kaswareSigning(w)) {
     await hooks.requirePin('Sign dApp PSKT');
   }
@@ -406,29 +462,44 @@ async function handleSendToken(req) {
   }
   dest = dest.toLowerCase();
   const toTreasury = destIsTreasury(dest);
-  if (toTreasury && typeof hooks.isTreasuryPayer === 'function' && hooks.isTreasuryPayer()) {
-    throw new Error('Home chip is ews (treasury). Switch to Wallet 1 (ax6) on Home, then Fund. Treasury never pays.');
-  }
-  const hold = typeof hooks.getTokenBalance === 'function' ? await hooks.getTokenBalance(tick) : null;
-  const have = Number(serializeHolding(hold)?.balance || 0);
-  if (!(have > 0)) {
-    throw new Error('This wallet has 0 ' + tick + '. Switch Home to the chip that holds ' + tick + ' (Wallet 2), then Connect again.');
-  }
-  if (Number(amount) > have + 1e-9) {
-    throw new Error('Need ' + amount + ' ' + tick + '. This wallet holds ' + have);
-  }
-  const payerLine = (typeof hooks.payerLabel === 'function' && hooks.payerLabel()) || (w.name || 'Wallet') + ' · ' + (w.address || '');
+  const payBody = async () => {
+    const live = hooks.getWallet?.() || w;
+    const hold = typeof hooks.getTokenBalance === 'function' ? await hooks.getTokenBalance(tick) : null;
+    const have = Number(serializeHolding(hold)?.balance || 0);
+    const payerLine = (typeof hooks.payerLabel === 'function' && hooks.payerLabel()) || (live?.name || 'Wallet') + ' · ' + (live?.address || '');
+    return {
+      have,
+      html:
+        '<p class="muted" style="text-align:left;padding:0 0 8px;"><b>Pick the wallet that holds ' + esc(tick) + '.</b> Keys stay here.</p>'
+        + '<div class="kv kv-stack"><span class="k">PAYING FROM</span><span class="v">' + esc(payerLine) + '</span></div>'
+        + '<div class="kv"><span class="k">This bag holds</span><span class="v">' + esc(String(have)) + ' ' + esc(tick) + '</span></div>'
+        + '<div class="kv"><span class="k">Send</span><span class="v">' + esc(amount) + ' ' + esc(tick) + '</span></div>'
+        + '<div class="kv kv-stack"><span class="k">' + (toTreasury ? 'TO treasury (ews)' : 'TO') + '</span><span class="v">' + esc(dest) + '</span></div>'
+    };
+  };
+  let view = await payBody();
   await showOverlay({
     title: 'Sign ' + amount + ' ' + tick,
     origin,
     approveLabel: 'Sign ' + amount + ' ' + tick,
-    body:
-      '<p class="muted" style="text-align:left;padding:0 0 8px;"><b>Review this pay.</b> Keys stay in this wallet. The dApp never sees them.</p>'
-      + '<div class="kv kv-stack"><span class="k">PAYING FROM</span><span class="v">' + esc(payerLine) + '</span></div>'
-      + '<div class="kv"><span class="k">This bag holds</span><span class="v">' + esc(String(have)) + ' ' + esc(tick) + '</span></div>'
-      + '<div class="kv"><span class="k">Send</span><span class="v">' + esc(amount) + ' ' + esc(tick) + '</span></div>'
-      + '<div class="kv kv-stack"><span class="k">' + (toTreasury ? 'TO treasury (ews)' : 'TO') + '</span><span class="v">' + esc(dest) + '</span></div>'
+    body: view.html,
+    onWalletChange: async () => {
+      view = await payBody();
+      if ($('dapp-body')) $('dapp-body').innerHTML = view.html;
+    }
   });
+  w = hooks.getWallet?.() || w;
+  if (toTreasury && typeof hooks.isTreasuryPayer === 'function' && hooks.isTreasuryPayer()) {
+    throw new Error('This chip is ews (treasury). Switch to another wallet on the sheet, then Sign.');
+  }
+  view = await payBody();
+  if (!(view.have > 0)) {
+    throw new Error('This wallet has 0 ' + tick + '. Tap another chip (Wallet 2) on the sheet, then Sign.');
+  }
+  if (Number(amount) > view.have + 1e-9) {
+    throw new Error('Need ' + amount + ' ' + tick + '. This wallet holds ' + view.have);
+  }
+  if (typeof hooks.hydrateNativeKey === 'function') hooks.hydrateNativeKey(w);
   if (typeof hooks.requirePin === 'function' && !kaswareSigning(w)) {
     await hooks.requirePin('Sign ' + amount + ' ' + tick);
   }

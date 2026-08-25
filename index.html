@@ -12,7 +12,7 @@
   <link rel="icon" href="assets/icon.png">
   <title>KCC20 Wallet</title>
   <meta http-equiv="Cache-Control" content="no-store, no-cache, must-revalidate">
-  <link rel="stylesheet" href="css/app.css?v=125">
+  <link rel="stylesheet" href="css/app.css?v=126">
 </head>
 <body>
   <img class="bg-poster" src="assets/bg.jpg" alt="">
@@ -259,26 +259,34 @@
           </div>
 
           <div id="at-bet" class="hidden">
-            <p class="ag-net" id="bet-net">Mainnet oracle · KRON idx · 15m windows</p>
-            <div class="bet-clock" id="bet-clock">15:00</div>
-            <p class="at-tiny" id="bet-q">Will <b>KKDAG</b> print higher than the KRON index at this window’s open?</p>
-            <div class="bet-yn" id="bet-yn">
-              <button type="button" class="bet-yes" id="bet-yes" data-side="yes">YES<br><b id="bet-yes-c">50¢</b></button>
-              <button type="button" class="bet-no" id="bet-no" data-side="no">NO<br><b id="bet-no-c">50¢</b></button>
+            <p class="bet-q" id="bet-q">Will <b>KKDAG</b> close higher than it opened this 15 minutes?</p>
+            <div class="bet-meta">
+              <span class="bet-clock" id="bet-clock">15:00</span>
+              <span class="bet-net" id="bet-net">KRON idx close</span>
             </div>
+            <div class="bet-odds" id="bet-odds" title="Live YES share">
+              <span class="bet-odds-yes" id="bet-odds-yes"></span>
+            </div>
+            <div class="bet-yn" id="bet-yn">
+              <button type="button" class="bet-yes" id="bet-yes" data-side="yes">YES <b id="bet-yes-c">50¢</b></button>
+              <button type="button" class="bet-no" id="bet-no" data-side="no">NO <b id="bet-no-c">50¢</b></button>
+            </div>
+            <p class="bet-pool" id="bet-pool">Starts 50/50 · 0 KAS YES · 0 KAS NO</p>
             <div class="at-row">
               <label class="field grow"><span>Token</span>
                 <input id="bet-tick" value="KKDAG" spellcheck="false">
               </label>
-              <label class="field small"><span>Size KAS</span>
+              <label class="field small"><span>Stake KAS</span>
                 <input id="bet-size" type="number" min="0.15" step="0.05" value="0.15">
               </label>
             </div>
-            <p class="at-quote" id="bet-quote">Oracle is idx.kron.technology. YES buys the token on the KRON curve/pool. NO sells if you hold it. This app never holds the bet.</p>
+            <p class="bet-how" id="bet-how">Tap YES or NO. Your KAS locks in a covenant until this window closes — this app never holds it. More YES raises YES ¢; more NO raises NO ¢. You do not need an opponent to play. If nobody takes the other side, you get your KAS back. If they do, the escrow agent pays losers’ KAS to winners after KRON idx close. Offline agent: reclaim in 15 minutes after close.</p>
             <div class="section-label">Top 10 launched</div>
             <div class="glass list" id="bet-board"></div>
+            <div class="section-label">Your tickets</div>
+            <div class="ag-fills" id="bet-fills"></div>
             <div class="section-label">Hire Scorpion better</div>
-            <p class="at-tiny">Pay <b>KKDAG</b> (TTT token) to the agent address. Hourly hire. PIN pre-signs AMM bets for that token until the clock ends. Subscribe (hold ≥ 1,000 KKDAG) unlocks more hours and 1 hour free.</p>
+            <p class="at-tiny">Pay <b>KKDAG</b> (TTT token) to hire Scorpion. It locks your KAS bets each 15m while this wallet stays unlocked. PIN once. Hold ≥ 1,000 KKDAG for extra hours + 1 hour free. The escrow agent settles covenants after close.</p>
             <div class="at-row">
               <label class="field small"><span>Hours</span>
                 <input id="bet-hours" type="number" min="1" max="24" step="1" value="1">
@@ -290,8 +298,7 @@
             <p class="at-tiny" id="bet-pass">KCC20 pass: locked</p>
             <button class="btn btn-gold" id="bet-hire" type="button">Hire agent with KKDAG</button>
             <button class="btn btn-glass" id="bet-stop" type="button" style="margin-top:8px;">Stop hired agent</button>
-            <p class="at-quote" id="bet-hire-st">No hire running.</p>
-            <div class="ag-fills" id="bet-fills"></div>
+            <p class="bet-pool" id="bet-hire-st">No hire running.</p>
           </div>
 
           <div id="at-holdings" class="hidden">
@@ -740,7 +747,7 @@
   <script type="module">
     import('./js/iframeVault.js?v=121').then(function (mod) {
       return (mod.restoreIframeVault ? mod.restoreIframeVault() : Promise.resolve()).then(function () {
-        return import('./js/app.js?v=125');
+        return import('./js/app.js?v=126');
       });
     }).catch(function (err) {
       console.error(err);

@@ -238,6 +238,37 @@ export async function buildEscrowCovenant({ ownerPubHex, buyerPubHex }) {
   return { address: String(addr), redeemHex, spkHex: p2sh.script, type: 'escrow' };
 }
 
+/** Agent IF-branch can pay a winner now. ELSE is user refund after CLTV (Kaspa pops CLTV, dummy+DROP). */
+export async function buildBetEscrowCovenant({ agentPubHex, userPubHex, minutes }) {
+  const k = await loadKaspaSdk();
+  const daaNow = await currentDaa();
+  const unlockDaa = daaNow + Math.max(10, Math.round(Number(minutes) * 60 * 10));
+  const net = networkId();
+  const sb = new k.ScriptBuilder();
+  sb.addOp(k.Opcodes.OpIf);
+  sb.addData(hexToBytes(agentPubHex));
+  sb.addOp(k.Opcodes.OpCheckSig);
+  sb.addOp(k.Opcodes.OpElse);
+  sb.addI64(BigInt(unlockDaa));
+  sb.addOp(k.Opcodes.OpCheckLockTimeVerify);
+  sb.addOp(k.Opcodes.OpDrop);
+  sb.addData(hexToBytes(userPubHex));
+  sb.addOp(k.Opcodes.OpCheckSig);
+  sb.addOp(k.Opcodes.OpEndif);
+  const redeemHex = sb.toString();
+  const p2sh = sb.createPayToScriptHashScript();
+  const addr = k.addressFromScriptPublicKey(p2sh, net);
+  if (!addr) throw new Error('SDK did not produce a bet escrow address');
+  return {
+    address: String(addr),
+    redeemHex,
+    spkHex: p2sh.script,
+    unlockDaa,
+    daaNow,
+    type: 'betescrow'
+  };
+}
+
 export async function buildMultisigCovenant({ ownerPubHex, otherPubHex }) {
   const k = await loadKaspaSdk();
   const sb = new k.ScriptBuilder();
@@ -1188,12 +1219,21 @@ export async function reconstructTimelockRedeem(vault, pubkeyHex) {
   return redeem;
 }
 
-function redeemHasCltvDrop(redeemHex) {
+function redeemBytes(redeemHex) {
   const h = hexish(redeemHex);
-  if (h.length < 4) return false;
   const bytes = [];
   for (let i = 0; i < h.length; i += 2) bytes.push(parseInt(h.slice(i, i + 2), 16));
+  return bytes;
+}
+
+function redeemHasCltvDrop(redeemHex) {
+  const bytes = redeemBytes(redeemHex);
   return bytes.includes(0xb0) && bytes.includes(0x75);
+}
+
+function redeemIfElseCltv(redeemHex) {
+  const bytes = redeemBytes(redeemHex);
+  return bytes.includes(0x63) && bytes.includes(0x67) && bytes.includes(0xb0) && bytes.includes(0x75);
 }
 
 /**
@@ -1212,7 +1252,12 @@ function p2shWitness(k, redeemHex, { sigs, flag, extra }) {
     if (push) parts.push(push);
   }
   if (flag === 'true') parts.push('51');
-  else if (flag === 'false' || (flag == null && redeemHasCltvDrop(redeemHex))) parts.push('00');
+  else if (flag === 'false') {
+    if (redeemIfElseCltv(redeemHex)) parts.push('00');
+    parts.push('00');
+  } else if (flag == null && redeemHasCltvDrop(redeemHex)) {
+    parts.push('00');
+  }
   if (!parts.length) throw new Error('Empty signature — cannot sweep');
   const redeemPush = hexish(k.payToScriptHashSignatureScript(redeemHex, new Uint8Array()));
   return parts.join('') + redeemPush;
@@ -1554,7 +1599,7 @@ export async function timeoutHop({ wallet, vault, utxos }) {
   });
 }
 
-export async function sweepVault({ wallet, vault, utxos, extraPrivKey, escrowRelease = false, secretHex = '' }) {
+export async function sweepVault({ wallet, vault, utxos, extraPrivKey, escrowRelease = false, secretHex = '', payoutAddr = '', extraOutputs = [] }) {
   const type = vault?.type || '';
   if (type === 'dca') {
     const hop = currentHop(vault) || vault;
@@ -1567,7 +1612,7 @@ export async function sweepVault({ wallet, vault, utxos, extraPrivKey, escrowRel
     return timeoutHop({ wallet, vault, utxos });
   }
   const k = await loadKaspaSdk();
-  const redeemHex = vault?.scriptHex || await reconstructTimelockRedeem(vault, wallet.pubKey);
+  const redeemHex = vault?.scriptHex || vault?.redeemHex || await reconstructTimelockRedeem(vault, wallet.pubKey);
   if (!redeemHex) throw new Error('This vault has no redeem script saved — cannot sweep');
   vault = { ...vault, scriptHex: redeemHex };
   const entries = restUtxosToEntries(utxos, vault.address);
@@ -1575,8 +1620,10 @@ export async function sweepVault({ wallet, vault, utxos, extraPrivKey, escrowRel
   const total = entries.reduce((a, e) => a + e.amount, 0n);
   const daaNow = await currentDaa();
   const unlock = Number(vault.unlockDaa || 0);
-  const isCltv = redeemHasCltvDrop(redeemHex) || unlock > 0;
-  if (type !== 'hashlock' && isCltv && unlock && daaNow < unlock) {
+  const isBet = type === 'betescrow' || type === 'bet';
+  const agentSettle = (type === 'escrow' || isBet) && !!escrowRelease;
+  const isCltv = !agentSettle && (redeemHasCltvDrop(redeemHex) || unlock > 0);
+  if (!agentSettle && type !== 'hashlock' && isCltv && unlock && daaNow < unlock) {
     const waitSec = Math.ceil((unlock - daaNow) / 10);
     throw new Error(`Still time-locked. Unlock DAA ${unlock}, now ${daaNow}. Wait ~${waitSec}s then Sweep.`);
   }
@@ -1590,21 +1637,26 @@ export async function sweepVault({ wallet, vault, utxos, extraPrivKey, escrowRel
   }
 
   const claimHash = kind === 'hashlock' && !!secretHex;
-  const lockTime = (!claimHash && isCltv) ? Math.max(unlock || 0, daaNow) : 0;
+  const lockTime = agentSettle ? 0 : ((!claimHash && isCltv) ? Math.max(unlock || 0, daaNow) : 0);
   const priv = new k.PrivateKey(wallet.privKey);
   const extraPriv = extraPrivKey ? new k.PrivateKey(extraPrivKey) : null;
-  const flag = kind === 'escrow'
+  const flag = (kind === 'escrow' || isBet)
     ? (escrowRelease ? 'true' : 'false')
     : (claimHash ? 'true' : (isCltv ? 'false' : null));
+  const extras = (extraOutputs || []).filter(o => o?.address && BigInt(o.amount || 0) > 0n);
   const { rpc, url } = await connectPublicNode();
 
   function assemble(fee) {
-    if (total <= fee) throw new Error('Vault balance is too small to cover the network fee');
-    const sendAmt = total - fee;
-    const payoutAddr = (claimHash && vault.params?.receiver) ? vault.params.receiver : wallet.address;
+    const extraSum = extras.reduce((a, o) => a + BigInt(o.amount), 0n);
+    if (total <= fee + extraSum) throw new Error('Vault balance is too small to cover the network fee');
+    const sendAmt = total - fee - extraSum;
+    const dest = payoutAddr
+      || vault.params?.payoutAddr
+      || ((claimHash && vault.params?.receiver) ? vault.params.receiver : wallet.address);
+    const outs = [{ address: dest, amount: sendAmt }, ...extras.map(o => ({ address: o.address, amount: BigInt(o.amount) }))];
     const tx = k.createTransaction(
       entries,
-      [{ address: payoutAddr, amount: sendAmt }],
+      outs,
       0n,
       undefined,
       1

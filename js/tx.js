@@ -1325,8 +1325,9 @@ function redeemIfElseCltv(redeemHex) {
  * `<daa> CLTV DROP <pk> CHECKSIG`, so scriptSig is `<sig> <dummy> <redeem>`.
  * Escrow IF/ELSE needs `<sig> <1|0> <redeem>`. 2-of-2 is `<sigOther> <sigOwner> <redeem>`.
  */
-export function p2shSpendScript(k, redeemHex, sigHex) {
-  return p2shWitness(k, redeemHex, { sigs: [sigHex], flag: redeemHasCltvDrop(redeemHex) ? 'false' : null });
+export function p2shSpendScript(k, redeemHex, sigHex, flag) {
+  const f = flag != null ? flag : (redeemHasCltvDrop(redeemHex) ? 'false' : null);
+  return p2shWitness(k, redeemHex, { sigs: [sigHex], flag: f });
 }
 
 function p2shWitness(k, redeemHex, { sigs, flag, extra }) {
@@ -2754,7 +2755,7 @@ async function loadLockedKcc20Pieces(vault) {
  * and funds ~0.2 KAS to that kaspa:p as the co-present witness. Unlock spends
  * the P2SH after DAA (witness) and transfers back to ADDRESS presence.
  */
-export async function lockKcc20Timelock({ wallet, tick, amountHuman, decimals, minutes, utxos, onStatus }) {
+export async function lockKcc20Timelock({ wallet, tick, amountHuman, decimals, minutes, utxos, onStatus, capsule: givenCapsule }) {
   const ticker = String(tick || '').toUpperCase().trim();
   if (!ticker) throw new Error('Missing KCC20 ticker');
   const k = await loadKaspaSdk();
@@ -2771,8 +2772,8 @@ export async function lockKcc20Timelock({ wallet, tick, amountHuman, decimals, m
     throw new Error(`${ticker} is split across ${loaded.pieces.length} cells. The largest ${selected.length} only hold ${have}.`);
   }
 
-  onStatus?.('Building CLTV time capsule for ' + ticker + '…');
-  const capsule = await buildTimelockCovenant({ pubkeyHex: wallet.pubKey, minutes });
+  onStatus?.(givenCapsule ? 'Using covenant++ escrow capsule…' : 'Building CLTV time capsule for ' + ticker + '…');
+  const capsule = givenCapsule || await buildTimelockCovenant({ pubkeyHex: wallet.pubKey, minutes });
   const hash32 = p2shHash32(k, capsule.redeemHex);
 
   // Same as Vault → Time Capsule: fund the kaspa:p CLTV with a normal exact KAS send
@@ -2958,8 +2959,8 @@ export async function lockKcc20Timelock({ wallet, tick, amountHuman, decimals, m
     witnessKas: Number(fund.amountKas || 0.2),
     node: url,
     vault: {
-      type: 'kcc20lock',
-      name: ticker + ' Freeze',
+      type: givenCapsule?.type || 'kcc20lock',
+      name: givenCapsule?.type === 'betescrow' ? (ticker + ' bet escrow') : (ticker + ' Freeze'),
       address: capsule.address,
       scriptHex: capsule.redeemHex,
       spkHex: capsule.spkHex,
@@ -2988,18 +2989,18 @@ export async function lockKcc20Timelock({ wallet, tick, amountHuman, decimals, m
   };
 }
 
-export async function sweepKcc20Capsule({ wallet, vault, utxos, onStatus }) {
+export async function sweepKcc20Capsule({ wallet, vault, utxos, onStatus, escrowRelease = false, destAddr = '' }) {
   if (!vault?.address) throw new Error('Missing freeze address');
   const k = await loadKaspaSdk();
-  const redeemHex = vault.scriptHex || await reconstructTimelockRedeem(vault, wallet.pubKey);
+  const redeemHex = vault.scriptHex || vault.redeemHex || await reconstructTimelockRedeem(vault, wallet.pubKey);
   if (!redeemHex) throw new Error('This freeze has no redeem script saved — cannot sweep');
   const daaNow = await currentDaa();
   const unlock = Number(vault.unlockDaa || 0);
-  if (unlock && daaNow < unlock) {
+  if (!escrowRelease && unlock && daaNow < unlock) {
     const waitSec = Math.ceil((unlock - daaNow) / 10);
     throw new Error(`Still time-locked. Unlock DAA ${unlock}, now ${daaNow}. Wait ~${waitSec}s then Sweep.`);
   }
-  const lockTime = Math.max(unlock || 0, daaNow);
+  const lockTime = escrowRelease ? 0 : Math.max(unlock || 0, daaNow);
   const p2shUtxos = utxos && utxos.length ? utxos : await fetchAddressUtxos(vault.address);
   const p2shEntries = restUtxosToEntries(p2shUtxos, vault.address);
   if (!p2shEntries.length) throw new Error('Witness capsule is empty — nothing to unlock with');
@@ -3012,9 +3013,10 @@ export async function sweepKcc20Capsule({ wallet, vault, utxos, onStatus }) {
 
   const priv = new k.PrivateKey(wallet.privKey);
   const selfPk = hexToU8(priv.toPublicKey().toXOnlyPublicKey().toString());
+  const destPk = destAddr ? destXOnly(k, destAddr) : selfPk;
   const sendAmt = selected.reduce((a, p) => a + p.tokenAmount, 0n);
   const tpl = { script: selected[0].redeem.script, stateStart: selected[0].redeem.stateStart || 0 };
-  const next = [presenceState(selfPk, sendAmt)];
+  const next = [presenceState(destPk, sendAmt)];
   const tokenN = selected.length;
   const p2shIdx = tokenN;
   const witnesses = selected.map(() => p2shIdx);
@@ -3112,7 +3114,7 @@ export async function sweepKcc20Capsule({ wallet, vault, utxos, onStatus }) {
     const signed = tokenScripts.slice();
     for (let i = tokenN; i < p2shEnd; i++) {
       const sig = k.createInputSignature(tx, i, priv, k.SighashType.All);
-      const script = p2shSpendScript(k, redeemHex, sig);
+      const script = p2shSpendScript(k, redeemHex, sig, escrowRelease ? 'true' : undefined);
       tx.inputs[i].signatureScript = script;
       signed.push(script);
     }

@@ -23,7 +23,7 @@ import {
   fetchOwnedUtxos, collectSpendableUtxos, buildSentinelChain, buildRecurringChain, buildHashlockCovenant,
   newHashlockSecret, checkinHop, currentHop, parseXmssKit, p2shFromRedeemHex, spendXmssVault,
   disconnectRpc, buildDcaDrips, sendKasMany, releaseDcaDrip, cancelDcaDrip, isMassError
-} from './tx.js?v=134';
+} from './tx.js?v=135';
 import { bootDappConnect, pingTttDappFrame } from './dappConnect.js?v=121';
 import { schedulePersistIframeVault, bootIframeVaultWatch } from './iframeVault.js?v=120';
 import { kronMarkets, quoteKronTrade, executeKronTrade, formatKasSompi, lookupKronTick, tradeCostLines, attachKronLogos, kronCandles } from './kronTrade.js?v=123';
@@ -36,7 +36,7 @@ import {
   betProtocolFee, BET_FEE_BPS, betIdFromAddr, betIdFromTxid, encodeBetNotice, fetchPublicBetTape,
   poolFromTape, mergeTapeAndLocal, userPubFromAddr, marketId,
   betDecimals, betMinStake, betStakeStep, humanTokenBalance, snapBetStake
-} from './bet.js?v=134';
+} from './bet.js?v=135';
 import {
   migrateReceiveBook, ownedAddresses, markAddressUsed, currentReceive,
   deriveReceiveBatch, unusedReceiveCount, ensurePrivacyBook
@@ -56,9 +56,9 @@ import {
   rememberLaunch, loadLaunched, cookOwnerBalances, cookDeployed,
   cookTickOf, cookBookLevels
 } from './atrade.js?v=100';
-import { SCORPION_MEMORY } from './scorpionMemory.js?v=134';
+import { SCORPION_MEMORY } from './scorpionMemory.js?v=135';
 
-export const BUILD = '134';
+export const BUILD = '135';
 
 const TOKEN_FALLBACK_LOGO = 'assets/ttt.png';
 
@@ -196,15 +196,22 @@ const BOOST_PTS = 15;
 
 const $ = (id) => document.getElementById(id);
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
-const explorerTx = (id) => isTestnet()
-  ? 'https://explorer-tn10.kaspa.org/txs/' + encodeURIComponent(id || '')
-  : 'https://kaspa.stream/transactions/' + encodeURIComponent(id || '');
+function isRealTxId(id) {
+  return /^[0-9a-f]{64}$/i.test(String(id || '').replace(/^0x/i, ''));
+}
+const explorerTx = (id) => {
+  const h = String(id || '').replace(/^0x/i, '');
+  if (!isRealTxId(h)) return '';
+  return isTestnet()
+    ? 'https://explorer-tn10.kaspa.org/txs/' + encodeURIComponent(h)
+    : 'https://kaspa.stream/transactions/' + encodeURIComponent(h);
+};
 const explorerAddr = (addr) => isTestnet()
   ? 'https://explorer-tn10.kaspa.org/addresses/' + encodeURIComponent(addr || '')
   : 'https://kaspa.stream/addresses/' + encodeURIComponent(addr || '');
 
 function txidBlock(id, label = 'TX') {
-  if (!id) return '';
+  if (!isRealTxId(id)) return '';
   return `
     <div class="kv kv-stack">
       <span class="k">${esc(label)}</span>
@@ -5065,7 +5072,8 @@ function paintBetFills() {
       ? (f.won ? 'paid' : (f.refunded ? 'refund' : 'settled'))
       : (f.pending ? (f.won ? 'waiting escrow' : 'lost · escrow') : 'locked');
     const id = f.betId || betIdFromAddr(f.vaultAddr);
-    const tx = f.txId ? `<a href="${esc(explorerTx(f.txId))}" target="_blank" rel="noopener">tx</a>` : '';
+    const href = explorerTx(f.txId);
+    const tx = href ? `<a href="${esc(href)}" target="_blank" rel="noopener">tx</a>` : '';
     return `<button class="bet-ticket" type="button" data-bet-addr="${esc(f.vaultAddr || f.txId || '')}" title="Copy id">
       <b class="bet-id">${esc(id || betIdFromTxid(f.txId) || 'Bet')}</b>
       <span class="${cls}">${esc((f.side || '').toUpperCase())}</span>
@@ -5312,34 +5320,54 @@ async function placeBet(side, opts = {}) {
     try { await requirePin((side === 'yes' ? 'YES' : 'NO') + ' ' + size + ' ' + tick); }
     catch (e) { if (errText(e) === 'cancelled') return; toast(errText(e)); return; }
   }
-  toast('Escrowing ' + size + ' ' + tick + ' for ' + (side === 'yes' ? 'YES' : 'NO') + '…');
+  toast('Locking ' + size + ' ' + tick + ' in a covenant++ escrow…');
   const sendAmt = feeTok > 0 ? size + feeTok : size;
-  let result;
-  if (isEscrowAgent(wallet.address)) {
-    result = { txId: 'escrow-' + Date.now().toString(16) };
-  } else {
-    const utxos = await compoundForBet();
-    result = await sendKcc20({
-      wallet,
-      dest: BET_AGENT_ADDR,
-      token: hold,
-      amountHuman: String(sendAmt),
-      utxos,
-      onStatus: (m) => toast(m)
-    });
-  }
+  const minutes = refundMinutesFromNow(w.end);
+  const capsule = await buildBetEscrowCovenant({
+    agentPubHex: agentPubHex(),
+    userPubHex: wallet.pubKey,
+    userAddr: wallet.address,
+    minutes
+  });
+  const utxos = await compoundForBet();
+  const locked = await lockKcc20Timelock({
+    wallet,
+    tick,
+    amountHuman: String(sendAmt),
+    decimals: dec,
+    minutes,
+    utxos,
+    onStatus: (m) => toast(m),
+    capsule
+  });
+  const result = locked;
   const openPx = Number(info?.price || 0);
   addPoolStake(tick, w.start, side, size, openPx);
   const pool = loadPool(tick, w.start);
   paintBetOdds(yesCentsFromPool(pool));
-  const betId = betIdFromTxid(result?.txId) || betIdFromAddr(result?.txId);
+  const betId = betIdFromAddr(capsule.address) || betIdFromTxid(result?.txId);
   const row = {
     tick, side, openPx, start: w.start, end: w.end, sizeKas: size, feeKas: feeTok, betId,
     asset: 'kcc20', decimals: dec,
-    txId: result?.txId || '', vaultAddr: '', userAddr: wallet.address,
-    settled: false, at: Date.now()
+    txId: result?.txId || '', fundTxId: result?.vault?.fundTxId || '',
+    vaultAddr: capsule.address, redeemHex: capsule.redeemHex, unlockDaa: capsule.unlockDaa,
+    tokenCovid: result?.vault?.tokenCovid || '',
+    userAddr: wallet.address, settled: false, at: Date.now()
   };
   recordBet(row);
+  if (result?.vault) {
+    setVaultOwner(wallet.address);
+    saveVault({
+      ...result.vault,
+      type: 'betescrow',
+      name: 'Bet ' + betId + ' ' + side.toUpperCase() + ' ' + tick,
+      params: {
+        ...(result.vault.params || {}),
+        tick, side, start: w.start, end: w.end, amountKas: size, betId,
+        userAddr: wallet.address, feeAddr: BET_AGENT_ADDR
+      }
+    });
+  }
   try {
     const raw = BigInt(Math.round(sendAmt * (10 ** dec)));
     applyLocalTokenDelta(tick, 'kcc20', '-' + String(raw));
@@ -5603,6 +5631,24 @@ async function tickBetSettle() {
 }
 
 async function settleBetVault(row, dest, extraOutputs = [], agentSettle = true) {
+  if (row?.vaultAddr && row?.redeemHex) {
+    const utxosV = await fetchAddressUtxos(row.vaultAddr).catch(() => []);
+    return sweepKcc20Capsule({
+      wallet,
+      vault: {
+        type: 'betescrow',
+        address: row.vaultAddr,
+        scriptHex: row.redeemHex,
+        redeemHex: row.redeemHex,
+        unlockDaa: row.unlockDaa,
+        tick: row.tick,
+        tokenCovid: row.tokenCovid
+      },
+      utxos: utxosV,
+      escrowRelease: !!agentSettle,
+      destAddr: dest || row.userAddr || wallet.address
+    });
+  }
   const tokenBet = row?.asset === 'kcc20' || (!row?.redeemHex && row?.tick && row.tick !== 'KAS');
   if (tokenBet) {
     if (!agentSettle) throw new Error('Waiting for escrow to return ' + (row.tick || 'token'));

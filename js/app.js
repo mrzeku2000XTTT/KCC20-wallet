@@ -23,7 +23,7 @@ import {
   fetchOwnedUtxos, collectSpendableUtxos, buildSentinelChain, buildRecurringChain, buildHashlockCovenant,
   newHashlockSecret, checkinHop, currentHop, parseXmssKit, p2shFromRedeemHex, spendXmssVault,
   disconnectRpc, buildDcaDrips, sendKasMany, releaseDcaDrip, cancelDcaDrip
-} from './tx.js?v=130';
+} from './tx.js?v=131';
 import { bootDappConnect, pingTttDappFrame } from './dappConnect.js?v=121';
 import { schedulePersistIframeVault, bootIframeVaultWatch } from './iframeVault.js?v=120';
 import { kronMarkets, quoteKronTrade, executeKronTrade, formatKasSompi, lookupKronTick, tradeCostLines, attachKronLogos, kronCandles } from './kronTrade.js?v=123';
@@ -33,9 +33,10 @@ import {
   loadBetHire, saveBetHire, recordBet, settleOpenBets, loadBetBook,
   loadPool, addPoolStake, yesCentsFromPool, hasOpponent, agentPubHex, isEscrowAgent,
   refundMinutesFromNow, refundAtMs, dueBetGroups, patchBet, winSideFromPrices,
-  betProtocolFee, BET_FEE_BPS, betIdFromAddr, encodeBetNotice, fetchPublicBetTape,
-  poolFromTape, mergeTapeAndLocal, userPubFromAddr, marketId
-} from './bet.js?v=130';
+  betProtocolFee, BET_FEE_BPS, betIdFromAddr, betIdFromTxid, encodeBetNotice, fetchPublicBetTape,
+  poolFromTape, mergeTapeAndLocal, userPubFromAddr, marketId,
+  betDecimals, betMinStake, betStakeStep, humanTokenBalance, snapBetStake
+} from './bet.js?v=131';
 import {
   migrateReceiveBook, ownedAddresses, markAddressUsed, currentReceive,
   deriveReceiveBatch, unusedReceiveCount, ensurePrivacyBook
@@ -55,9 +56,9 @@ import {
   rememberLaunch, loadLaunched, cookOwnerBalances, cookDeployed,
   cookTickOf, cookBookLevels
 } from './atrade.js?v=100';
-import { SCORPION_MEMORY } from './scorpionMemory.js?v=130';
+import { SCORPION_MEMORY } from './scorpionMemory.js?v=131';
 
-export const BUILD = '130';
+export const BUILD = '131';
 
 const TOKEN_FALLBACK_LOGO = 'assets/ttt.png';
 
@@ -3595,7 +3596,7 @@ function syncAtNote() {
   } else if (atPane === 'tokens') {
     el.textContent = 'Holdings. KRON / K.COM / Scorpion live in COOK. ' + kw;
   } else if (atPane === 'bet') {
-    el.textContent = 'Bet: one 15m market per token for every wallet. You make the YES/NO. The live book is the on-chain tape, same ¢ for everyone. ' + kw;
+    el.textContent = 'Bet: stake the ticker you picked (KKDAG, then any KRON token). ¢ starts 50/50 and moves with YES vs NO size. ' + kw;
   } else {
     el.textContent = 'COOK: KRON AMM · K.COM order book · Scorpion launches. Tap a token for chart, book, and swap. ' + kw;
   }
@@ -5047,15 +5048,50 @@ function paintBetFills() {
       : (f.pending ? (f.won ? 'waiting escrow' : 'lost · escrow') : 'locked');
     const id = f.betId || betIdFromAddr(f.vaultAddr);
     const tx = f.txId ? `<a href="${esc(explorerTx(f.txId))}" target="_blank" rel="noopener">tx</a>` : '';
-    return `<button class="bet-ticket" type="button" data-bet-addr="${esc(f.vaultAddr || '')}" title="Copy covenant address">
-      <b class="bet-id">${esc(id || 'Bet')}</b>
+    return `<button class="bet-ticket" type="button" data-bet-addr="${esc(f.vaultAddr || f.txId || '')}" title="Copy id">
+      <b class="bet-id">${esc(id || betIdFromTxid(f.txId) || 'Bet')}</b>
       <span class="${cls}">${esc((f.side || '').toUpperCase())}</span>
-      ${esc(f.tick || '')} · ${esc(String(f.sizeKas || ''))} KAS · ${esc(st)} ${tx}
+      ${esc(String(f.sizeKas || ''))} ${esc(f.tick || '')} · ${esc(st)} ${tx}
     </button>`;
   }).join('') || '<div>No tickets yet. Tap YES or NO — a covenant++ escrow is created for that bet.</div>';
 }
 
 function SUB_HOLD_SAFE() { return 1000; }
+
+function betStakeMeta() {
+  const tick = betTickNow();
+  const hold = holdingForTick(tick);
+  const dec = betDecimals(hold);
+  return {
+    tick,
+    hold,
+    dec,
+    have: humanTokenBalance(hold),
+    min: betMinStake(dec),
+    step: betStakeStep(dec)
+  };
+}
+
+function paintBetStakeLabels() {
+  const m = betStakeMeta();
+  if ($('bet-size-lab')) $('bet-size-lab').textContent = 'Stake ' + m.tick;
+  if ($('bet-hire-size-lab')) $('bet-hire-size-lab').textContent = m.tick + ' / bet';
+  ['bet-size', 'bet-hire-kas'].forEach(id => {
+    const el = $(id);
+    if (!el) return;
+    el.min = String(m.min);
+    el.step = String(m.step);
+    const snapped = snapBetStake(el.value || m.min, m.dec);
+    if (Number(el.value) !== snapped) el.value = String(snapped);
+  });
+  const stake = snapBetStake($('bet-size')?.value || m.min, m.dec);
+  const fee = betProtocolFee(stake, m.dec);
+  if ($('bet-fee')) {
+    $('bet-fee').textContent = 'You have ' + (m.have ? m.have.toLocaleString() : '0') + ' ' + m.tick
+      + '. Stake is ' + m.tick + ', not KAS. First tickets nudge ¢ from 50/50 like Kalshi.'
+      + (fee > 0 ? ' Protocol ' + fee + ' ' + m.tick + ' to KCC20.' : '');
+  }
+}
 
 function paintBetCost() {
   const hours = Math.max(1, Math.round(Number($('bet-hours')?.value || 1)));
@@ -5064,12 +5100,7 @@ function paintBetCost() {
   if (hours > cap && $('bet-hours')) $('bet-hours').value = String(cap);
   const cost = hireCost(Math.min(hours, cap), sub);
   if ($('bet-cost')) $('bet-cost').value = cost + ' KKDAG' + (sub ? ' · pass' : '');
-  const stake = Number($('bet-size')?.value || 0.15);
-  const fee = betProtocolFee(stake);
-  if ($('bet-fee')) {
-    $('bet-fee').textContent = 'Tap YES or NO → new covenant++ escrow. Bet #id is that kaspa:p, truncated. '
-      + fee.toFixed(2) + ' KAS fee (' + (BET_FEE_BPS / 100) + '%, min 0.02) to KCC20. Keys stay in this wallet.';
-  }
+  paintBetStakeLabels();
 }
 
 function paintBetClock() {
@@ -5130,23 +5161,21 @@ async function paintBetMarket() {
   try { tape = await fetchPublicBetTape(); } catch {}
   const merged = mergeTapeAndLocal(tape, tick, w.start);
   const live = poolFromTape(merged, tick, w.start);
-  if (live.yesKas || live.noKas) {
-    pool.yesKas = live.yesKas;
-    pool.noKas = live.noKas;
-    pool.nYes = live.nYes;
-    pool.nNo = live.nNo;
-  }
+  pool.yesKas = live.yesKas;
+  pool.noKas = live.noKas;
+  pool.nYes = live.nYes;
+  pool.nNo = live.nNo;
   const yes = yesCentsFromPool(pool);
   paintBetOdds(yes);
   const traders = (live.nYes || 0) + (live.nNo || 0);
-  const yesKas = Number(pool.yesKas || 0);
-  const noKas = Number(pool.noKas || 0);
+  const yesAmt = Number(pool.yesKas || 0);
+  const noAmt = Number(pool.noKas || 0);
+  const unit = tick;
   if ($('bet-pool')) {
-    $('bet-pool').textContent = 'Market ' + marketId(tick, w.start).split(':')[0] + ' · '
-      + yes + ' / ' + (100 - yes) + ' · '
-      + yesKas.toFixed(2) + ' KAS YES · ' + noKas.toFixed(2) + ' KAS NO · '
+    $('bet-pool').textContent = 'Live ' + yes + '¢ YES / ' + (100 - yes) + '¢ NO · '
+      + yesAmt.toLocaleString() + ' ' + unit + ' YES · ' + noAmt.toLocaleString() + ' ' + unit + ' NO · '
       + traders + ' ticket' + (traders === 1 ? '' : 's')
-      + (hasOpponent(pool) ? ' · matched pool' : ' · still 50/50 seed — anyone can take the other side');
+      + (hasOpponent(pool) ? ' · matched' : ' · 50/50 until the other side fills');
   }
   if ($('bet-net')) $('bet-net').textContent = 'Open ' + fmtPx(pool.openPx || px) + ' · now ' + fmtPx(px);
   paintBetLive(merged);
@@ -5164,7 +5193,7 @@ function paintBetLive(rows) {
   box.innerHTML = list.map(f => {
     const cls = f.side === 'yes' ? 'up' : 'down';
     const mine = f.userAddr && wallet && sameAddrPayload(f.userAddr, wallet.address);
-    return `<div><b class="bet-id">${esc(f.betId || betIdFromAddr(f.vaultAddr))}</b> <span class="${cls}">${esc((f.side || '').toUpperCase())}</span> ${esc(String(f.sizeKas || ''))} KAS${mine ? ' · you' : ''}</div>`;
+    return `<div><b class="bet-id">${esc(f.betId || betIdFromAddr(f.vaultAddr) || betIdFromTxid(f.txId))}</b> <span class="${cls}">${esc((f.side || '').toUpperCase())}</span> ${esc(String(f.sizeKas || ''))} ${esc(tick)}${mine ? ' · you' : ''}</div>`;
   }).join('') || '<div>Empty book. First YES or NO on this 15m market is the first shared ticket — every wallet reads the same tape.</div>';
 }
 
@@ -5175,6 +5204,7 @@ function ensureBetHireLoop() {
 
 function startBetUi() {
   if ($('bet-tick') && !$('bet-tick').value) $('bet-tick').value = 'KKDAG';
+  paintBetStakeLabels();
   paintBetClock();
   paintBetCost();
   paintBetBoard().catch(() => {});
@@ -5219,71 +5249,52 @@ async function placeBet(side, opts = {}) {
   if (isTestnet()) { toast('Bets are mainnet KRON only'); return; }
   if (!wallet) { toast('Unlock a wallet'); return; }
   const tick = String(opts.tick || betTickNow()).toUpperCase();
-  const sizeKas = Number(opts.sizeKas != null ? opts.sizeKas : ($('bet-size')?.value || $('bet-hire-kas')?.value || 0.15));
-  if (!(sizeKas >= 0.15)) { toast('Stake at least 0.15 KAS'); return; }
-  const feeKas = betProtocolFee(sizeKas);
-  const need = Number(kasToSompi(sizeKas) + kasToSompi(feeKas) + 500000n) / 1e8;
-  if (Number(balanceSompi || 0) / 1e8 < need) {
-    toast('Fund this wallet with at least ' + need.toFixed(2) + ' KAS first');
-    return;
-  }
+  const hold = holdingForTick(tick);
+  if (!hold || hold.native) throw new Error('Need ' + tick + ' in this wallet to stake');
+  const dec = betDecimals(hold);
+  const size = snapBetStake(opts.sizeKas != null ? opts.sizeKas : ($('bet-size')?.value || $('bet-hire-kas')?.value || betMinStake(dec)), dec);
+  const feeTok = betProtocolFee(size, dec);
+  const have = humanTokenBalance(hold);
+  if (have < size + feeTok) throw new Error('Stake ' + size + ' ' + tick + ' — this wallet has ' + Math.floor(have));
   const info = await lookupKronTick(tick);
   const w = windowBounds();
   if (!opts.skipPin) {
-    try { await requirePin((side === 'yes' ? 'YES' : 'NO') + ' ' + sizeKas + ' KAS on ' + tick); }
+    try { await requirePin((side === 'yes' ? 'YES' : 'NO') + ' ' + size + ' ' + tick); }
     catch (e) { if (errText(e) === 'cancelled') return; toast(errText(e)); return; }
   }
-  toast('Locking ' + sizeKas + ' KAS in a new escrow · ' + feeKas + ' KAS fee to KCC20');
-  setVaultOwner(wallet.address);
-  const built = await buildBetEscrowCovenant({
-    agentPubHex: agentPubHex(),
-    userPubHex: wallet.pubKey,
-    userAddr: wallet.address,
-    minutes: refundMinutesFromNow(w.end)
-  });
-  const notice = encodeBetNotice({
-    tick, side, start: w.start, sizeKas,
-    vaultAddr: built.address, userAddr: wallet.address, unlockDaa: built.unlockDaa
-  });
-  const result = await sendKasMany({
-    wallet,
-    outputs: [
-      { address: built.address, amount: kasToSompi(sizeKas) },
-      { address: BET_AGENT_ADDR, amount: kasToSompi(feeKas) }
-    ],
-    utxos: await fetchAddressUtxos(wallet.address).catch(() => []),
-    signWithKasware: kaswareEnabled(),
-    payload: notice
-  });
+  toast('Escrowing ' + size + ' ' + tick + ' for ' + (side === 'yes' ? 'YES' : 'NO') + '…');
+  const sendAmt = feeTok > 0 ? size + feeTok : size;
+  let result;
+  if (isEscrowAgent(wallet.address)) {
+    result = { txId: 'escrow-' + Date.now().toString(16) };
+  } else {
+    result = await sendKcc20({
+      wallet,
+      dest: BET_AGENT_ADDR,
+      token: hold,
+      amountHuman: String(sendAmt),
+      utxos: await fetchAddressUtxos(wallet.address).catch(() => []),
+      onStatus: (m) => toast(m)
+    });
+  }
   const openPx = Number(info?.price || 0);
-  addPoolStake(tick, w.start, side, sizeKas, openPx);
-  const betId = betIdFromAddr(built.address);
+  addPoolStake(tick, w.start, side, size, openPx);
+  const pool = loadPool(tick, w.start);
+  paintBetOdds(yesCentsFromPool(pool));
+  const betId = betIdFromTxid(result?.txId) || betIdFromAddr(result?.txId);
   const row = {
-    tick, side, openPx, start: w.start, end: w.end, sizeKas, feeKas, betId,
-    txId: result?.txId || '', vaultAddr: built.address, redeemHex: built.redeemHex,
-    unlockDaa: built.unlockDaa, userAddr: wallet.address,
+    tick, side, openPx, start: w.start, end: w.end, sizeKas: size, feeKas: feeTok, betId,
+    asset: 'kcc20', decimals: dec,
+    txId: result?.txId || '', vaultAddr: '', userAddr: wallet.address,
     settled: false, at: Date.now()
   };
   recordBet(row);
-  saveVault({
-    type: 'betescrow',
-    name: 'Bet ' + betId + ' ' + side.toUpperCase() + ' ' + tick,
-    address: built.address,
-    scriptHex: built.redeemHex,
-    redeemHex: built.redeemHex,
-    spkHex: built.spkHex,
-    unlockDaa: built.unlockDaa,
-    unlockAt: Date.now() + refundMinutesFromNow(w.end) * 60000,
-    params: {
-      tick, side, start: w.start, end: w.end, amountKas: sizeKas, feeKas, betId,
-      userAddr: wallet.address, feeAddr: BET_AGENT_ADDR
-    },
-    status: 'locked',
-    fundedSompi: String(Math.round(sizeKas * 1e8)),
-    fundTxId: result?.txId || ''
-  });
+  try {
+    const raw = BigInt(Math.round(sendAmt * (10 ** dec)));
+    applyLocalTokenDelta(tick, 'kcc20', '-' + String(raw));
+  } catch {}
   afterTx();
-  toast((side === 'yes' ? 'YES' : 'NO') + ' ' + tick + ' · Bet ' + betId);
+  toast((side === 'yes' ? 'YES' : 'NO') + ' ' + size + ' ' + tick + ' · ' + yesCentsFromPool(pool) + '¢ · Bet ' + betId);
   paintBetMarket().catch(() => {});
   return row;
 }
@@ -5296,13 +5307,15 @@ async function hireBetAgent() {
   let hours = Math.max(1, Math.round(Number($('bet-hours')?.value || 1)));
   hours = Math.min(hours, maxHireHours(sub));
   const cost = hireCost(hours, sub);
-  const sizeKas = Number($('bet-hire-kas')?.value || $('bet-size')?.value || 0.15);
-  if (!(sizeKas >= 0.15)) throw new Error('Set KAS per bet (min 0.15) and fund this wallet first');
+  const hold = holdingForTick(tick);
+  if (!hold || hold.native) throw new Error('Need ' + tick + ' in this wallet to stake');
+  const dec = betDecimals(hold);
+  const sizeKas = snapBetStake($('bet-hire-kas')?.value || $('bet-size')?.value || betMinStake(dec), dec);
   if ($('bet-size')) $('bet-size').value = String(sizeKas);
-  const feeKas = betProtocolFee(sizeKas);
-  const needKas = Number(kasToSompi(sizeKas) + kasToSompi(feeKas) + 500000n) / 1e8;
-  if (Number(balanceSompi || 0) / 1e8 < needKas) {
-    throw new Error('Fund this wallet with at least ' + needKas.toFixed(2) + ' KAS first, then hire');
+  if ($('bet-hire-kas')) $('bet-hire-kas').value = String(sizeKas);
+  const feeTok = betProtocolFee(sizeKas, dec);
+  if (humanTokenBalance(hold) < sizeKas + feeTok) {
+    throw new Error('Fund at least ' + (sizeKas + feeTok) + ' ' + tick + ' first, then hire');
   }
   const held = kkdagsHeld(kccHoldings);
   if (cost > 0 && held < cost) throw new Error('Need ' + cost + ' KKDAG to hire. This wallet has ' + Math.floor(held));
@@ -5333,7 +5346,7 @@ async function hireBetAgent() {
   afterTx();
   ensureBetHireLoop();
   startBetUi();
-  toast('Agent hired ' + hours + 'h · ' + sizeKas + ' KAS each window · starts next 15m');
+  toast('Agent hired ' + hours + 'h · ' + sizeKas + ' ' + tick + ' each window · starts next 15m');
   paintBetHireStatus();
 }
 
@@ -5523,6 +5536,20 @@ async function tickBetSettle() {
 }
 
 async function settleBetVault(row, dest, extraOutputs = [], agentSettle = true) {
+  const tokenBet = row?.asset === 'kcc20' || (!row?.redeemHex && row?.tick && row.tick !== 'KAS');
+  if (tokenBet) {
+    if (!agentSettle) throw new Error('Waiting for escrow to return ' + (row.tick || 'token'));
+    const token = holdingForTick(row.tick);
+    if (!token) throw new Error('Settler needs ' + row.tick + ' in this wallet to pay out');
+    const sent = await sendKcc20({
+      wallet,
+      dest,
+      token,
+      amountHuman: String(row.sizeKas),
+      utxos: await fetchAddressUtxos(wallet.address).catch(() => [])
+    });
+    return { txId: sent?.txId || '' };
+  }
   if (!row?.vaultAddr || !row?.redeemHex) throw new Error('Bet ticket missing escrow script');
   const utxosV = await fetchAddressUtxos(row.vaultAddr);
   if (!utxosV.length) return { txId: '', skipped: true };
@@ -8347,7 +8374,11 @@ function bind() {
     if ($('bet-size') && $('bet-hire-kas').value) $('bet-size').value = $('bet-hire-kas').value;
     paintBetCost();
   });
-  $('bet-tick')?.addEventListener('change', () => paintBetMarket().catch(() => {}));
+  $('bet-tick')?.addEventListener('change', () => {
+    paintBetStakeLabels();
+    paintBetMarket().catch(() => {});
+  });
+  $('bet-tick')?.addEventListener('input', () => paintBetStakeLabels());
   $('bet-fills')?.addEventListener('click', e => {
     if (e.target.closest('a')) return;
     const row = e.target.closest('[data-bet-addr]');
@@ -8361,6 +8392,7 @@ function bind() {
     haptic();
     betFocus = row.dataset.betTick;
     if ($('bet-tick')) $('bet-tick').value = betFocus;
+    paintBetStakeLabels();
     paintBetMarket().catch(() => {});
     paintBetBoard().catch(() => {});
   });

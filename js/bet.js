@@ -9,17 +9,50 @@ export const HIRE_PER_HOUR = 100;
 export const SUB_KKDAG = 1000;
 export const WINDOW_MS = 15 * 60 * 1000;
 export const REFUND_GRACE_MS = 15 * 60 * 1000;
-export const POOL_SEED = 1;
+export const POOL_SEED = 10;
 export const MAX_HOURS = 8;
 export const MAX_HOURS_SUB = 24;
 export const BET_FEE_BPS = 200;
 export const BET_FEE_MIN_KAS = 0.02;
 
-export function betProtocolFee(stakeKas) {
-  const stake = Math.max(0, Number(stakeKas) || 0);
-  const pct = stake * BET_FEE_BPS / 10000;
-  const fee = Math.max(BET_FEE_MIN_KAS, pct);
-  return Math.round(fee * 1e8) / 1e8;
+export function betDecimals(token) {
+  return Math.max(0, Number(token?.decimals ?? 0));
+}
+
+export function betMinStake(decimals) {
+  return Number(decimals) === 0 ? 1 : 0.15;
+}
+
+export function betStakeStep(decimals) {
+  return Number(decimals) === 0 ? 1 : 0.15;
+}
+
+export function humanTokenBalance(token) {
+  if (!token) return 0;
+  const d = betDecimals(token);
+  return Number(token.balance || 0) / (10 ** d);
+}
+
+export function snapBetStake(n, decimals) {
+  const min = betMinStake(decimals);
+  let v = Number(n);
+  if (!Number.isFinite(v) || v < min) v = min;
+  if (Number(decimals) === 0) v = Math.round(v);
+  else v = Math.round(v * 1e8) / 1e8;
+  return v;
+}
+
+export function betProtocolFee(stake, decimals = 8) {
+  const s = Math.max(0, Number(stake) || 0);
+  const d = Math.max(0, Number(decimals) || 0);
+  const raw = Math.floor(s * BET_FEE_BPS / 10000 * (10 ** d)) / (10 ** d);
+  return raw;
+}
+
+export function betIdFromTxid(txid) {
+  const h = String(txid || '').replace(/^0x/i, '').toLowerCase();
+  if (h.length < 12) return '';
+  return '#' + h.slice(0, 6) + h.slice(-4);
 }
 
 /** Public ticket id = truncated kaspa:p covenant address. Never a key. */
@@ -138,14 +171,15 @@ export function poolFromTape(notices, tick, start) {
 }
 
 export function mergeTapeAndLocal(tape, tick, start) {
-  const local = loadBetBook().filter(r => r.tick === String(tick || '').toUpperCase() && Number(r.start) === Number(start));
+  const t = String(tick || '').toUpperCase();
+  const s = Number(start || 0);
+  const local = loadBetBook().filter(r => r.tick === t && Number(r.start) === s);
   const map = new Map();
-  for (const n of tape || []) {
-    if (n.vaultAddr) map.set(String(n.vaultAddr).toLowerCase(), n);
-  }
-  for (const n of local) {
-    const k = String(n.vaultAddr || '').toLowerCase();
-    if (k && !map.has(k)) map.set(k, n);
+  let i = 0;
+  for (const n of [...(tape || []), ...local]) {
+    if (String(n.tick || '').toUpperCase() !== t || Number(n.start) !== s) continue;
+    const k = String(n.vaultAddr || n.txId || n.betId || ('row' + i++)).toLowerCase();
+    if (!map.has(k)) map.set(k, n);
   }
   return [...map.values()];
 }

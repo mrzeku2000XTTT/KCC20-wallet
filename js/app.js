@@ -24,7 +24,7 @@ import {
   newHashlockSecret, checkinHop, currentHop, parseXmssKit, p2shFromRedeemHex, spendXmssVault,
   disconnectRpc, buildDcaDrips, sendKasMany, releaseDcaDrip, cancelDcaDrip, isMassError
 } from './tx.js?v=144';
-import { bootDappConnect, pingTttDappFrame, TTT_TREASURY } from './dappConnect.js?v=155';
+import { bootDappConnect, pingTttDappFrame, TTT_TREASURY } from './dappConnect.js?v=157';
 import { schedulePersistIframeVault, bootIframeVaultWatch } from './iframeVault.js?v=120';
 import { kronMarkets, quoteKronTrade, executeKronTrade, formatKasSompi, lookupKronTick, liveQuote, tradeCostLines, attachKronLogos, kronCandles, kronLogoFor, quoteKcc20Bridge, executeKcc20Bridge, formatTokenRaw } from './kronTrade.js?v=140';
 import {
@@ -58,7 +58,7 @@ import {
 } from './atrade.js?v=100';
 import { SCORPION_MEMORY } from './scorpionMemory.js?v=152';
 
-export const BUILD = '156';
+export const BUILD = '157';
 
 const TOKEN_FALLBACK_LOGO = 'assets/ttt.png';
 
@@ -1234,11 +1234,13 @@ async function dappSendToken({ tick, amount, dest }) {
   const payer = wallet;
   if (!payer?.address) throw new Error('Unlock KCC20 Wallet first');
   if (kaswareSigning(payer) && !hexKey(payer.privKey)) {
-    throw new Error('Import this key into KCC20 Wallet (not KasWare-only) to send KCC20');
+    throw new Error('This chip is KasWare-only. Switch Home to a native wallet (Wallet 2) that holds ' + t + ', Connect again, then Sign.');
   }
   const destOk = validateKaspaAddress(dest, networkId());
-  if (!destOk.isValid) throw new Error(destOk.error || 'Bad treasury address');
-  if (sameAddrPayload(payer.address, TTT_TREASURY) || sameAddrPayload(payer.address, dest)) {
+  if (!destOk.isValid) throw new Error(destOk.error || 'Bad destination address');
+  if (Number(destOk.versionByte) !== 0) throw new Error('Pay to a kaspa:q receive address, not a kaspa:p vault');
+  if (sameAddrPayload(payer.address, dest)) throw new Error('That is this wallet’s own address');
+  if (sameAddrPayload(dest, TTT_TREASURY) && sameAddrPayload(payer.address, TTT_TREASURY)) {
     throw new Error('This chip is ews (treasury). Fund must spend Wallet 1 (ax6). Switch the Home wallet chip to ax6, then Fund 10 KKDAG.');
   }
   const token = holdingForTick(t);

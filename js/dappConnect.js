@@ -1,5 +1,5 @@
 /* dApp connect host: popup / protocol-handler session for window.kcc20 (sdk.js). */
-import { networkId } from './crypto.js?v=100';
+import { networkId, validateKaspaAddress } from './crypto.js?v=100';
 import { fetchAddressUtxos, fetchAddressBalance, signPsktJson, pushSignedPskt } from './tx.js?v=154';
 import { kaswareSigning, signPsktWithKasware } from './kasware.js?v=100';
 
@@ -373,54 +373,68 @@ async function handleTokenBalance(req) {
   return serializeHolding(row) || { tick, name: tick, decimals: 0, raw: '0', balance: '0', protocol: tick === 'KAS' ? 'kas' : 'kcc20', address: w.address };
 }
 
+function cleanKaspaDest(raw) {
+  let dest = String(raw || '').trim().replace(/\s+/g, '').replace(/[.\u2026]+$/g, '').toLowerCase();
+  if (dest && !dest.startsWith('kaspa:') && /^q[a-z0-9]{20,}$/.test(dest)) dest = 'kaspa:' + dest;
+  return dest;
+}
+
+function destIsTreasury(dest) {
+  return cleanKaspaDest(dest) === TTT_TREASURY;
+}
+
 async function handleSendToken(req) {
   const w = await ensureUnlocked();
   const origin = req.origin;
   if (!originAllowed(origin)) await handleConnect(req);
-  if (netName() !== 'kaspa_mainnet') throw new Error('TTT credits are mainnet KKDAG. Switch this wallet off TN10.');
-  if (typeof hooks.isTreasuryPayer === 'function' && hooks.isTreasuryPayer()) {
-    throw new Error('Home chip is ews (treasury). Switch to Wallet 1 (ax6) on Home, then Fund. Treasury never pays.');
-  }
+  if (netName() !== 'kaspa_mainnet') throw new Error('KCC20 pay is mainnet. Switch this wallet off TN10.');
   const tick = String(req.params?.tick || req.params?.ticker || 'KKDAG').toUpperCase();
   let amount = String(req.params?.amount ?? req.params?.amountHuman ?? '').trim();
-  let dest = String(req.params?.dest || req.params?.to || req.params?.treasury || '').trim();
+  let dest = cleanKaspaDest(
+    req.params?.dest || req.params?.to || req.params?.treasury
+    || req.params?.destination || req.params?.destinationAddress || req.params?.recipient || ''
+  );
   if (!/^[A-Z0-9]{2,12}$/.test(tick)) throw new Error('Bad ticker');
   if (!(Number(amount) > 0)) amount = '10';
-  const pinned = pinnedTreasury(origin);
-  if (!dest) dest = pinned || (isTttOrigin(origin) ? TTT_TREASURY : '');
-  if (!/^kaspa:q[a-z0-9]{20,120}$/i.test(dest)) {
-    throw new Error('TTT must pass its treasury as a kaspa:q… address (full, not truncated)');
+  if (!dest) dest = destIsTreasury(pinnedTreasury(origin)) ? pinnedTreasury(origin) : (isTttOrigin(origin) ? TTT_TREASURY : '');
+  const parsed = validateKaspaAddress(dest, 'mainnet');
+  if (!parsed.isValid) {
+    throw new Error('Need a full kaspa:q… receive address (not truncated, not kaspa:p). ' + (parsed.error || ''));
+  }
+  if (Number(parsed.versionByte) !== 0) {
+    throw new Error('Pay to a kaspa:q receive address, not a kaspa:p vault');
   }
   dest = dest.toLowerCase();
-  if (pinned && pinned !== dest) {
-    throw new Error('Treasury for this app is already pinned. Pass the same kaspa:q address.');
+  const toTreasury = destIsTreasury(dest);
+  if (toTreasury && typeof hooks.isTreasuryPayer === 'function' && hooks.isTreasuryPayer()) {
+    throw new Error('Home chip is ews (treasury). Switch to Wallet 1 (ax6) on Home, then Fund. Treasury never pays.');
   }
   const hold = typeof hooks.getTokenBalance === 'function' ? await hooks.getTokenBalance(tick) : null;
   const have = Number(serializeHolding(hold)?.balance || 0);
   if (!(have > 0)) {
-    throw new Error('This wallet has 0 ' + tick + '. Buy ' + tick + ' on Home → Tokens in KCC20 Wallet, then tap Fund again.');
+    throw new Error('This wallet has 0 ' + tick + '. Switch Home to the chip that holds ' + tick + ' (Wallet 2), then Connect again.');
   }
   if (Number(amount) > have + 1e-9) {
     throw new Error('Need ' + amount + ' ' + tick + '. This wallet holds ' + have);
   }
   const payerLine = (typeof hooks.payerLabel === 'function' && hooks.payerLabel()) || (w.name || 'Wallet') + ' · ' + (w.address || '');
   await showOverlay({
-    title: 'Pay ' + amount + ' ' + tick + ' from this chip',
+    title: 'Sign ' + amount + ' ' + tick,
     origin,
     approveLabel: 'Sign ' + amount + ' ' + tick,
     body:
-      '<p class="muted" style="text-align:left;padding:0 0 8px;"><b>Paying from the Home wallet chip only.</b> If this is ews, Reject and switch to ax6.</p>'
+      '<p class="muted" style="text-align:left;padding:0 0 8px;"><b>Review this pay.</b> Keys stay in this wallet. The dApp never sees them.</p>'
       + '<div class="kv kv-stack"><span class="k">PAYING FROM</span><span class="v">' + esc(payerLine) + '</span></div>'
       + '<div class="kv"><span class="k">This bag holds</span><span class="v">' + esc(String(have)) + ' ' + esc(tick) + '</span></div>'
       + '<div class="kv"><span class="k">Send</span><span class="v">' + esc(amount) + ' ' + esc(tick) + '</span></div>'
-      + '<div class="kv kv-stack"><span class="k">TO treasury (ews)</span><span class="v">' + esc(dest) + '</span></div>'
+      + '<div class="kv kv-stack"><span class="k">' + (toTreasury ? 'TO treasury (ews)' : 'TO') + '</span><span class="v">' + esc(dest) + '</span></div>'
   });
   if (typeof hooks.requirePin === 'function' && !kaswareSigning(w)) {
-    await hooks.requirePin('Sign TTT ' + tick + ' payment');
+    await hooks.requirePin('Sign ' + amount + ' ' + tick);
   }
   if (typeof hooks.sendToken !== 'function') throw new Error('Wallet cannot send KCC20 from this session');
   const result = await hooks.sendToken({ tick, amount, dest, origin });
-  pinTreasury(origin, dest);
+  if (toTreasury) pinTreasury(origin, dest);
   return result;
 }
 

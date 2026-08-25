@@ -375,6 +375,11 @@ img { display: block; max-width: 100%; }
   display: inline-block; margin-right: 6px;
   color: var(--gold-2); font-weight: 800; font-variant-numeric: tabular-nums;
 }
+#bet-stop {
+  position: relative; z-index: 6;
+  margin-top: 8px; min-height: 44px;
+  pointer-events: auto;
+}
 #tok-seg { margin: 0 0 8px; flex-shrink: 0; }
 #tok-kron, #tok-kcom, #tok-scorpion {
   flex: 1; min-height: 0; overflow-y: auto; display: flex; flex-direction: column;

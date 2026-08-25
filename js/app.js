@@ -23,20 +23,20 @@ import {
   fetchOwnedUtxos, collectSpendableUtxos, buildSentinelChain, buildRecurringChain, buildHashlockCovenant,
   newHashlockSecret, checkinHop, currentHop, parseXmssKit, p2shFromRedeemHex, spendXmssVault,
   disconnectRpc, buildDcaDrips, sendKasMany, releaseDcaDrip, cancelDcaDrip, isMassError
-} from './tx.js?v=133';
+} from './tx.js?v=134';
 import { bootDappConnect, pingTttDappFrame } from './dappConnect.js?v=121';
 import { schedulePersistIframeVault, bootIframeVaultWatch } from './iframeVault.js?v=120';
 import { kronMarkets, quoteKronTrade, executeKronTrade, formatKasSompi, lookupKronTick, tradeCostLines, attachKronLogos, kronCandles } from './kronTrade.js?v=123';
 import {
   BET_AGENT_ADDR, TTT_TICK, WINDOW_MS, windowBounds, fmtRemain,
   kkdagsHeld, isKcc20Pass, hireCost, maxHireHours,
-  loadBetHire, saveBetHire, recordBet, settleOpenBets, loadBetBook,
+  loadBetHire, saveBetHire as writeBetHireRaw, recordBet, settleOpenBets, loadBetBook,
   loadPool, addPoolStake, yesCentsFromPool, hasOpponent, agentPubHex, isEscrowAgent,
   refundMinutesFromNow, refundAtMs, dueBetGroups, patchBet, winSideFromPrices,
   betProtocolFee, BET_FEE_BPS, betIdFromAddr, betIdFromTxid, encodeBetNotice, fetchPublicBetTape,
   poolFromTape, mergeTapeAndLocal, userPubFromAddr, marketId,
   betDecimals, betMinStake, betStakeStep, humanTokenBalance, snapBetStake
-} from './bet.js?v=133';
+} from './bet.js?v=134';
 import {
   migrateReceiveBook, ownedAddresses, markAddressUsed, currentReceive,
   deriveReceiveBatch, unusedReceiveCount, ensurePrivacyBook
@@ -56,9 +56,9 @@ import {
   rememberLaunch, loadLaunched, cookOwnerBalances, cookDeployed,
   cookTickOf, cookBookLevels
 } from './atrade.js?v=100';
-import { SCORPION_MEMORY } from './scorpionMemory.js?v=133';
+import { SCORPION_MEMORY } from './scorpionMemory.js?v=134';
 
-export const BUILD = '133';
+export const BUILD = '134';
 
 const TOKEN_FALLBACK_LOGO = 'assets/ttt.png';
 
@@ -287,6 +287,24 @@ let betHireTimer = null;
 let betBusy = false;
 let betAbort = false;
 let betFocus = 'KKDAG';
+const BET_ABORT_KEY = 'kcc20_bet_abort_v1';
+
+function readBetAbort() {
+  try { return localStorage.getItem(BET_ABORT_KEY) === '1'; } catch { return false; }
+}
+function setBetAbort(v) {
+  betAbort = !!v;
+  try { localStorage.setItem(BET_ABORT_KEY, v ? '1' : '0'); } catch {}
+}
+function saveBetHire(job) {
+  if (!job) { writeBetHireRaw(null); return; }
+  if (betAbort || readBetAbort()) job = { ...job, on: false };
+  writeBetHireRaw(job);
+}
+function killBetHireLoop() {
+  if (betHireTimer) { clearInterval(betHireTimer); betHireTimer = null; }
+  betBusy = false;
+}
 let dcaTimer = null;
 let dcaBusy = false;
 let qrRaf = 0;
@@ -5026,13 +5044,13 @@ function paintBetHireStatus() {
   }
   paintBetCost();
   paintBetFills();
-  if (!job) {
-    if (el) el.textContent = 'No hire running.';
+  if (!job || !job.on || betAbort || readBetAbort()) {
+    if (el) el.textContent = 'Stopped.';
     return;
   }
   const left = Math.max(0, Number(job.until || 0) - Date.now());
   if (el) {
-    el.textContent = (job.on && left > 0 ? 'Hired · ' : 'Hire ended · ') + (job.tick || '') + ' · '
+    el.textContent = 'Hired · ' + (job.tick || '') + ' · '
       + Math.ceil(left / 3600000) + 'h left · ' + (job.last || 'waiting next 15m');
   }
 }
@@ -5202,6 +5220,8 @@ function paintBetLive(rows) {
 }
 
 function ensureBetHireLoop() {
+  if (betAbort || readBetAbort()) return;
+  if (!loadBetHire()?.on) return;
   if (betHireTimer) return;
   betHireTimer = setInterval(() => tickBetHire().catch(() => {}), 8000);
 }
@@ -5220,7 +5240,8 @@ function startBetUi() {
       if (w.remainMs < 4000 || w.remainMs > WINDOW_MS - 2500) paintBetMarket().catch(() => {});
     }, 1000);
   }
-  ensureBetHireLoop();
+  if (!betAbort && loadBetHire()?.on) ensureBetHireLoop();
+  else paintBetHireStatus();
 }
 
 function stopBetClock() {
@@ -5228,14 +5249,21 @@ function stopBetClock() {
 }
 
 function resumeBetHireIfAny() {
-  ensureBetHireLoop();
+  betAbort = readBetAbort();
   const job = loadBetHire();
+  if (betAbort || job?.massFail || /stopped/i.test(String(job?.last || ''))) {
+    setBetAbort(true);
+    killBetHireLoop();
+    if (job?.on) saveBetHire({ ...job, on: false, last: job.last || 'stopped' });
+    return;
+  }
   if (job?.on && Number(job.until || 0) > Date.now() && sessionOpen()) {
-    if (job.massFail || /storage mass|small UTXOs|Compound/i.test(String(job.last || ''))) {
+    if (/storage mass|small UTXOs|Compound/i.test(String(job.last || ''))) {
       saveBetHire({ ...job, on: false, massFail: true, last: 'paused — Compound on Home, then hire again' });
       toast('Bet agent paused. Compound, then hire again.');
       return;
     }
+    ensureBetHireLoop();
     tickBetHire().catch(() => {});
     toast('Bet agent resumed · ' + (job.tick || TTT_TICK));
   } else {
@@ -5359,12 +5387,12 @@ async function hireBetAgent() {
     });
     payTxId = sent?.txId || '';
   }
-  betAbort = false;
-  saveBetHire({
+  setBetAbort(false);
+  writeBetHireRaw({
     on: true, tick, hours, sizeKas, mode: 'auto',
     until: Date.now() + hours * 3600000,
     paid: cost, payTxId, lastWindow: windowBounds().start, last: 'hired · next 15m', fills: [],
-    startedAt: Date.now(), pass: sub
+    startedAt: Date.now(), pass: sub, massFail: false
   });
   afterTx();
   ensureBetHireLoop();
@@ -5374,18 +5402,19 @@ async function hireBetAgent() {
 }
 
 function stopBetHire() {
-  betAbort = true;
-  betBusy = false;
-  const job = loadBetHire();
-  saveBetHire({ ...(job || {}), on: false, last: 'stopped' });
+  setBetAbort(true);
+  killBetHireLoop();
+  const job = loadBetHire() || {};
+  writeBetHireRaw({ ...job, on: false, last: 'stopped', stoppedAt: Date.now() });
   paintBetHireStatus();
   toast('Bet agent stopped');
 }
 
 async function tickBetHire() {
-  if (betAbort) {
+  if (betAbort || readBetAbort()) {
+    killBetHireLoop();
     const job = loadBetHire();
-    if (job?.on) saveBetHire({ ...job, on: false, last: 'stopped' });
+    if (job?.on) writeBetHireRaw({ ...job, on: false, last: 'stopped' });
     return;
   }
   if (atPane === 'bet') paintBetMarket().catch(() => {});
@@ -5413,26 +5442,32 @@ async function tickBetHire() {
   if (job.lastWindow === w.start) return;
   betBusy = true;
   try {
+    if (betAbort || readBetAbort() || !loadBetHire()?.on) return;
     const pool = loadPool(job.tick, w.start);
     const yes = yesCentsFromPool(pool);
     const side = job.mode === 'no' ? 'no' : (job.mode === 'yes' ? 'yes' : (yes >= 50 ? 'yes' : 'no'));
-    job.last = 'window ' + side.toUpperCase() + ' · ' + yes + '¢';
-    saveBetHire(job);
-    if (betAbort || !loadBetHire()?.on) return;
     const row = await placeBet(side, { skipPin: true, tick: job.tick, sizeKas: Number(job.sizeKas || 0.15) });
-    job.lastWindow = w.start;
+    if (betAbort || readBetAbort() || !loadBetHire()?.on) return;
+    const live = loadBetHire() || job;
+    live.lastWindow = w.start;
     if (row) {
-      job.fills = (job.fills || []).concat({
+      live.fills = (live.fills || []).concat({
         t: Date.now(), side, px: row?.openPx, txId: row?.txId || ''
       }).slice(-12);
-      job.last = side.toUpperCase() + ' escrow · ' + String(row?.txId || '').slice(0, 10);
+      live.last = side.toUpperCase() + ' escrow · ' + String(row?.txId || '').slice(0, 10);
     } else {
-      job.last = 'waiting for fund / PIN';
+      live.last = 'waiting for fund / PIN';
     }
-    saveBetHire(job);
+    saveBetHire(live);
     paintBetHireStatus();
   } catch (e) {
-    const j = loadBetHire() || job;
+    if (betAbort || readBetAbort()) {
+      const j = loadBetHire() || {};
+      writeBetHireRaw({ ...j, on: false, last: 'stopped' });
+      paintBetHireStatus();
+      return;
+    }
+    const j = loadBetHire() || job || {};
     j.lastWindow = windowBounds().start;
     j.last = betErr(e);
     if (isMassError(e) || /storage mass|500000/i.test(errText(e))) {
@@ -8396,7 +8431,20 @@ function bind() {
   click('bet-yes', () => placeBet('yes').catch(err => toast(betErr(err))));
   click('bet-no', () => placeBet('no').catch(err => toast(betErr(err))));
   click('bet-hire', () => hireBetAgent().catch(err => toast(betErr(err))));
-  click('bet-stop', () => { haptic(); stopBetHire(); });
+  let lastStopTap = 0;
+  const stopHire = ev => {
+    ev?.preventDefault?.();
+    ev?.stopPropagation?.();
+    if (Date.now() - lastStopTap < 400) return;
+    lastStopTap = Date.now();
+    haptic();
+    stopBetHire();
+  };
+  click('bet-stop', () => stopHire());
+  $('bet-stop')?.addEventListener('pointerdown', stopHire, true);
+  $('at-bet')?.addEventListener('click', e => {
+    if (e.target.closest('#bet-stop')) stopHire(e);
+  });
   $('bet-hours')?.addEventListener('input', paintBetCost);
   $('bet-size')?.addEventListener('input', () => {
     if ($('bet-hire-kas') && $('bet-size').value) $('bet-hire-kas').value = $('bet-size').value;

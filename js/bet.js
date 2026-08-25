@@ -12,6 +12,15 @@ export const REFUND_GRACE_MS = 15 * 60 * 1000;
 export const POOL_SEED = 1;
 export const MAX_HOURS = 8;
 export const MAX_HOURS_SUB = 24;
+export const BET_FEE_BPS = 200;
+export const BET_FEE_MIN_KAS = 0.02;
+
+export function betProtocolFee(stakeKas) {
+  const stake = Math.max(0, Number(stakeKas) || 0);
+  const pct = stake * BET_FEE_BPS / 10000;
+  const fee = Math.max(BET_FEE_MIN_KAS, pct);
+  return Math.round(fee * 1e8) / 1e8;
+}
 
 const HIRE_KEY = 'kcc20_bet_hire_v1';
 const BOOK_KEY = 'kcc20_bet_book_v1';

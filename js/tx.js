@@ -238,8 +238,8 @@ export async function buildEscrowCovenant({ ownerPubHex, buyerPubHex }) {
   return { address: String(addr), redeemHex, spkHex: p2sh.script, type: 'escrow' };
 }
 
-/** Agent IF-branch can pay a winner now. ELSE is user refund after CLTV (Kaspa pops CLTV, dummy+DROP). */
-export async function buildBetEscrowCovenant({ agentPubHex, userPubHex, minutes }) {
+/** Per-ticket P2SH. Agent IF can pay a winner. ELSE is user CLTV refund pinned to the user's address. */
+export async function buildBetEscrowCovenant({ agentPubHex, userPubHex, userAddr, minutes }) {
   const k = await loadKaspaSdk();
   const daaNow = await currentDaa();
   const unlockDaa = daaNow + Math.max(10, Math.round(Number(minutes) * 60 * 10));
@@ -253,7 +253,15 @@ export async function buildBetEscrowCovenant({ agentPubHex, userPubHex, minutes 
   sb.addOp(k.Opcodes.OpCheckLockTimeVerify);
   sb.addOp(k.Opcodes.OpDrop);
   sb.addData(hexToBytes(userPubHex));
-  sb.addOp(k.Opcodes.OpCheckSig);
+  if (userAddr) {
+    sb.addOp(k.Opcodes.OpCheckSigVerify);
+    sb.addData(versionedSpk(spkHexFromAddr(k, userAddr)));
+    sb.addI64(0n);
+    sb.addOp(k.Opcodes.OpTxOutputSpk);
+    sb.addOp(k.Opcodes.OpEqual);
+  } else {
+    sb.addOp(k.Opcodes.OpCheckSig);
+  }
   sb.addOp(k.Opcodes.OpEndif);
   const redeemHex = sb.toString();
   const p2sh = sb.createPayToScriptHashScript();

@@ -7,4 +7,4 @@ export const SCORPION_MEMORY = `COOK desk memory
 • Scorpion launched tokens with a Cook tokenId trade like K.COM (same candles, bids/asks, buy/sell).
 • Compound: one output, no dust change. sendKaspa(self, total-fee) blows storage mass.
 • Agent only while this tab is unlocked. Arm K.COM/Scorpion on TN10, KRON AMM on mainnet. Modes: range, dip catch, trend, curve stack, fade pump. Tape sells can print while the 1d candle stays green.
-• Bet: 15m YES/NO on KRON idx. ¢ starts 50/50 and follows YES vs NO KAS. Stake locks in P2SH (agent CHECKSIG or user CLTV refund). No opponent → refund. Matched → escrow agent pays losers’ KAS to winners. Hire is KKDAG to kaspa:qrtfjh…`;
+• Bet: 15m YES/NO on KRON idx. ¢ starts 50/50. Each ticket mints a new kaspa:p (agent settle | user CLTV refund pinned to the user). Protocol fee 2% min 0.02 KAS goes to ax6 — that address never holds the stake. Hire is KKDAG to the same ax6.`;

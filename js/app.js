@@ -23,7 +23,7 @@ import {
   fetchOwnedUtxos, collectSpendableUtxos, buildSentinelChain, buildRecurringChain, buildHashlockCovenant,
   newHashlockSecret, checkinHop, currentHop, parseXmssKit, p2shFromRedeemHex, spendXmssVault,
   disconnectRpc, buildDcaDrips, sendKasMany, releaseDcaDrip, cancelDcaDrip
-} from './tx.js?v=126';
+} from './tx.js?v=127';
 import { bootDappConnect, pingTttDappFrame } from './dappConnect.js?v=121';
 import { schedulePersistIframeVault, bootIframeVaultWatch } from './iframeVault.js?v=120';
 import { kronMarkets, quoteKronTrade, executeKronTrade, formatKasSompi, lookupKronTick, tradeCostLines, attachKronLogos, kronCandles } from './kronTrade.js?v=123';
@@ -32,8 +32,9 @@ import {
   kkdagsHeld, isKcc20Pass, hireCost, maxHireHours,
   loadBetHire, saveBetHire, recordBet, settleOpenBets, loadBetBook,
   loadPool, addPoolStake, yesCentsFromPool, hasOpponent, agentPubHex, isEscrowAgent,
-  refundMinutesFromNow, refundAtMs, dueBetGroups, patchBet, winSideFromPrices
-} from './bet.js?v=126';
+  refundMinutesFromNow, refundAtMs, dueBetGroups, patchBet, winSideFromPrices,
+  betProtocolFee, BET_FEE_BPS
+} from './bet.js?v=127';
 import {
   migrateReceiveBook, ownedAddresses, markAddressUsed, currentReceive,
   deriveReceiveBatch, unusedReceiveCount, ensurePrivacyBook
@@ -53,9 +54,9 @@ import {
   rememberLaunch, loadLaunched, cookOwnerBalances, cookDeployed,
   cookTickOf, cookBookLevels
 } from './atrade.js?v=100';
-import { SCORPION_MEMORY } from './scorpionMemory.js?v=126';
+import { SCORPION_MEMORY } from './scorpionMemory.js?v=127';
 
-export const BUILD = '126';
+export const BUILD = '127';
 
 const TOKEN_FALLBACK_LOGO = 'assets/ttt.png';
 
@@ -3592,7 +3593,7 @@ function syncAtNote() {
   } else if (atPane === 'tokens') {
     el.textContent = 'Holdings. KRON / K.COM / Scorpion live in COOK. ' + kw;
   } else if (atPane === 'bet') {
-    el.textContent = 'Bet: lock KAS in a covenant. ¢ starts 50/50 and follows YES vs NO stakes. Winners are paid from losers after KRON idx close. ' + kw;
+    el.textContent = 'Bet: each ticket mints a new kaspa:p escrow. Stake stays there. Protocol fee goes to KCC20 (ax6), not the pot. ' + kw;
   } else {
     el.textContent = 'COOK: KRON AMM · K.COM order book · Scorpion launches. Tap a token for chart, book, and swap. ' + kw;
   }
@@ -5043,7 +5044,8 @@ function paintBetFills() {
       ? (f.won ? 'paid' : (f.refunded ? 'refund' : 'settled'))
       : (f.pending ? (f.won ? 'waiting escrow' : 'lost · escrow') : 'locked');
     const tx = f.txId ? `<a href="${esc(explorerTx(f.txId))}" target="_blank" rel="noopener">${esc(String(f.txId).slice(0, 10))}…</a>` : '';
-    return `<div><span class="${cls}">${esc((f.side || '').toUpperCase())}</span> ${esc(f.tick || '')} · ${esc(String(f.sizeKas || ''))} KAS · ${esc(st)} · ${tx}</div>`;
+    const vault = f.vaultAddr ? esc(shortAddr(f.vaultAddr, 8, 4)) : '';
+    return `<div><span class="${cls}">${esc((f.side || '').toUpperCase())}</span> ${esc(f.tick || '')} · ${esc(String(f.sizeKas || ''))} KAS · ${esc(st)}${vault ? ' · ' + vault : ''} · ${tx}</div>`;
   }).join('') || '<div>No tickets yet. Tap YES or NO — you do not need an opponent.</div>';
 }
 
@@ -5056,6 +5058,12 @@ function paintBetCost() {
   if (hours > cap && $('bet-hours')) $('bet-hours').value = String(cap);
   const cost = hireCost(Math.min(hours, cap), sub);
   if ($('bet-cost')) $('bet-cost').value = cost + ' KKDAG' + (sub ? ' · pass' : '');
+  const stake = Number($('bet-size')?.value || 0.15);
+  const fee = betProtocolFee(stake);
+  if ($('bet-fee')) {
+    $('bet-fee').textContent = 'New escrow for this ticket · ' + fee.toFixed(2)
+      + ' KAS fee (' + (BET_FEE_BPS / 100) + '%, min 0.02) to KCC20. Stake never sits on that address.';
+  }
 }
 
 function paintBetClock() {
@@ -5175,23 +5183,28 @@ async function placeBet(side, opts = {}) {
     try { await requirePin((side === 'yes' ? 'YES' : 'NO') + ' ' + sizeKas + ' KAS on ' + tick); }
     catch (e) { if (errText(e) === 'cancelled') return; toast(errText(e)); return; }
   }
-  toast('Locking ' + sizeKas + ' KAS in escrow…');
+  const feeKas = betProtocolFee(sizeKas);
+  toast('Locking ' + sizeKas + ' KAS in a new escrow · ' + feeKas + ' KAS fee to KCC20');
   setVaultOwner(wallet.address);
   const built = await buildBetEscrowCovenant({
     agentPubHex: agentPubHex(),
     userPubHex: wallet.pubKey,
+    userAddr: wallet.address,
     minutes: refundMinutesFromNow(w.end)
   });
-  const result = await sendKas({
+  const result = await sendKasMany({
     wallet,
-    dest: built.address,
-    amountKas: String(sizeKas),
-    utxos: await fetchAddressUtxos(wallet.address).catch(() => [])
+    outputs: [
+      { address: built.address, amount: kasToSompi(sizeKas) },
+      { address: BET_AGENT_ADDR, amount: kasToSompi(feeKas) }
+    ],
+    utxos: await fetchAddressUtxos(wallet.address).catch(() => []),
+    signWithKasware: kaswareEnabled()
   });
   const openPx = Number(info?.price || 0);
   addPoolStake(tick, w.start, side, sizeKas, openPx);
   const row = {
-    tick, side, openPx, start: w.start, end: w.end, sizeKas,
+    tick, side, openPx, start: w.start, end: w.end, sizeKas, feeKas,
     txId: result?.txId || '', vaultAddr: built.address, redeemHex: built.redeemHex,
     unlockDaa: built.unlockDaa, userAddr: wallet.address, userPub: wallet.pubKey,
     settled: false, at: Date.now()
@@ -5207,8 +5220,8 @@ async function placeBet(side, opts = {}) {
     unlockDaa: built.unlockDaa,
     unlockAt: Date.now() + refundMinutesFromNow(w.end) * 60000,
     params: {
-      tick, side, start: w.start, end: w.end, amountKas: sizeKas,
-      userAddr: wallet.address, agentAddr: BET_AGENT_ADDR
+      tick, side, start: w.start, end: w.end, amountKas: sizeKas, feeKas,
+      userAddr: wallet.address, agentAddr: BET_AGENT_ADDR, feeAddr: BET_AGENT_ADDR
     },
     status: 'locked',
     fundedSompi: String(Math.round(sizeKas * 1e8)),
@@ -8217,6 +8230,7 @@ function bind() {
   click('bet-hire', () => hireBetAgent().catch(err => toast(errText(err))));
   click('bet-stop', () => stopBetHire());
   $('bet-hours')?.addEventListener('input', paintBetCost);
+  $('bet-size')?.addEventListener('input', paintBetCost);
   $('bet-tick')?.addEventListener('change', () => paintBetMarket().catch(() => {}));
   $('bet-board')?.addEventListener('click', e => {
     const row = e.target.closest('[data-bet-tick]');

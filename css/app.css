@@ -453,6 +453,21 @@ img { display: block; max-width: 100%; }
   display: block; font-size: 9px; color: var(--label-2);
   letter-spacing: 0.04em; text-transform: uppercase;
 }
+.ag-picks {
+  display: flex; flex-wrap: wrap; gap: 6px;
+  margin: 8px 0 2px;
+}
+.ag-picks button {
+  height: 28px; padding: 0 10px; border-radius: 14px;
+  font-size: 11px; font-weight: 750; letter-spacing: 0.02em;
+  background: rgba(255,255,255,0.06); color: inherit;
+  border: 0.5px solid var(--hairline);
+}
+.ag-picks button.on { background: rgba(243,226,191,0.16); color: var(--gold-2); border-color: rgba(212,176,122,0.45); }
+.ag-now {
+  margin: 8px 0 6px; font-size: 14px; font-weight: 750;
+  font-variant-numeric: tabular-nums; letter-spacing: -0.2px;
+}
 .at-chart {
   width: 100%; height: 168px; display: block; border-radius: 14px;
   background: linear-gradient(180deg, rgba(8,10,12,0.78), rgba(8,10,12,0.4));

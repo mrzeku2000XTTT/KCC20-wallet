@@ -6,5 +6,5 @@ export const SCORPION_MEMORY = `COOK desk memory
 • Cook trade: unsigned PSKT → native or KasWare → broadcast on the same net. Amount is tokens. Limit rests; empty limit takes the book. Need a wrapper marketId.
 • Scorpion launched tokens with a Cook tokenId trade like K.COM (same candles, bids/asks, buy/sell).
 • Compound: one output, no dust change. sendKaspa(self, total-fee) blows storage mass.
-• Agent only while this tab is unlocked. Arm K.COM/Scorpion on TN10, KRON AMM on mainnet. Modes: range, dip catch, trend, curve stack, fade pump. Tape sells can print while the 1d candle stays green.
+• Agent: pick any KRON tick (top-10 chips + type-in). Signs on this device. Keeps ticking while the PWA is unlocked in background; if the OS kills the app, reopen to resume. Never a hosted bot. Modes: range, dip catch, trend, curve stack, fade pump.
 • Bet: users tap YES/NO. One market = ticker + 15m UTC window (same for every wallet). Public tape is the fee-tx payload to ax6 (no keys). ¢ is parimutuel on that shared book. Ticket id = truncated kaspa:p. Hire is KKDAG to ax6.`;

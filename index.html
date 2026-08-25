@@ -12,7 +12,7 @@
   <link rel="icon" href="assets/icon.png">
   <title>KCC20 Wallet</title>
   <meta http-equiv="Cache-Control" content="no-store, no-cache, must-revalidate">
-  <link rel="stylesheet" href="css/app.css?v=145">
+  <link rel="stylesheet" href="css/app.css?v=151">
 </head>
 <body>
   <img class="bg-poster" src="assets/bg.jpg" alt="">
@@ -223,8 +223,9 @@
             <p class="ag-net" id="ag-net">Network · —</p>
             <div class="ag-preview" id="ag-preview">
               <canvas class="at-chart" id="ag-chart" width="640" height="168" aria-label="Scorpion price"></canvas>
+              <div class="ag-now" id="ag-now">Now —</div>
               <div class="at-stats" id="ag-stats"></div>
-              <div class="at-quote" id="ag-quote">Pick a token. Live AMM quote appears here.</div>
+              <div class="at-quote" id="ag-quote">Pick a KRON token. Live AMM quote and candles load here.</div>
               <div class="ag-fills" id="ag-fills"></div>
             </div>
             <div class="seg ag-strats" id="ag-strat">
@@ -234,10 +235,12 @@
               <button data-strat="curve" type="button">Curve stack</button>
               <button data-strat="fade" type="button">Fade pump</button>
             </div>
-            <p class="at-tiny" id="ag-strat-help">Range: buy under your floor, sell over your ceiling on the live AMM quote.</p>
+            <p class="at-tiny" id="ag-strat-help">Range: buy if live AMM is at or under your floor. Sell if it is at or over your ceiling.</p>
+            <div class="ag-picks" id="ag-picks"></div>
             <div class="at-row">
               <label class="field grow"><span>Token</span>
-                <input id="ag-tick" placeholder="KRON" value="KRON" spellcheck="false">
+                <input id="ag-tick" list="ag-tick-list" placeholder="KRON / KKDAG / IFWEN…" value="KRON" spellcheck="false" autocomplete="off">
+                <datalist id="ag-tick-list"></datalist>
               </label>
               <label class="field small"><span>Size KAS</span>
                 <input id="ag-size" type="number" min="0.05" step="0.05" value="0.15">
@@ -259,7 +262,7 @@
               <input id="ag-max" type="number" min="0.15" step="0.15" value="1">
             </label>
             <button class="btn btn-gold" id="ag-toggle" type="button">Start Scorpion agent</button>
-            <p class="at-quote" id="ag-status">Agent can trade only while this wallet is unlocked. Keys never leave the device or KasWare.</p>
+            <p class="at-quote" id="ag-status">Scorpion signs on this device. It keeps ticking in the background while the PWA stays unlocked. If the phone kills the app, reopen to resume.</p>
           </div>
 
           <div id="at-bet" class="hidden">
@@ -794,7 +797,7 @@
   <script type="module">
     import('./js/iframeVault.js?v=121').then(function (mod) {
       return (mod.restoreIframeVault ? mod.restoreIframeVault() : Promise.resolve()).then(function () {
-        return import('./js/app.js?v=150');
+        return import('./js/app.js?v=151');
       });
     }).catch(function (err) {
       console.error(err);

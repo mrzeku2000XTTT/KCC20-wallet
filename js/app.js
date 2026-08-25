@@ -56,9 +56,9 @@ import {
   rememberLaunch, loadLaunched, cookOwnerBalances, cookDeployed,
   cookTickOf, cookBookLevels
 } from './atrade.js?v=100';
-import { SCORPION_MEMORY } from './scorpionMemory.js?v=142';
+import { SCORPION_MEMORY } from './scorpionMemory.js?v=151';
 
-export const BUILD = '150';
+export const BUILD = '151';
 
 const TOKEN_FALLBACK_LOGO = 'assets/ttt.png';
 
@@ -297,6 +297,8 @@ let agentTimer = null;
 let agentPreviewTimer = null;
 let agentBusy = false;
 let agentPreview = null;
+let agentWake = null;
+let agentTickDebounce = 0;
 let betTimer = null;
 let betHireTimer = null;
 let betBusy = false;
@@ -4258,7 +4260,13 @@ function setAtPane(pane) {
     syncAgStratUi(loadAgentJob()?.strat || selectedAgentStrat());
     paintAgentStatus();
     startAgentPreviewLoop();
-  } else {
+    fillAgentMarkets().catch(() => {});
+    const t = ($('ag-tick')?.value || loadAgentJob()?.tick || 'KRON').trim().toUpperCase();
+    if (t && !loadAgentJob()?.on) {
+      const needPrefill = !($('ag-buy')?.value && $('ag-sell')?.value);
+      applyAgentTick(t, { prefill: needPrefill }).catch(() => {});
+    }
+  } else if (!loadAgentJob()?.on) {
     stopAgentPreviewLoop();
   }
   if (bet) startBetUi();
@@ -5186,11 +5194,11 @@ async function runCookGraduate() {
 }
 
 const AGENT_STRATS = {
-  range: 'Range: buy under your floor, sell over your ceiling. Uses the live AMM quote for your size.',
-  dip: 'Dip catch: buy when price is X% under the recent candle high. Optional sell-above still dumps rips.',
-  trend: 'Trend: buy when the last 3 candles close up and price is over the 8-candle average. Sell when they close down.',
-  curve: 'Curve stack: on an ungraduated KRON curve (KKDAG-style), buy dips until max KAS. Stops buying after graduation.',
-  fade: 'Fade pump: sell into green extension (X% off the recent high or hot 24h). Buy only a deep dip.'
+  range: 'Range: buy if the live AMM quote is at or under Buy below. Sell if it is at or over Sell above. Floors/ceilings prefill ~4% under / 5% over the current price when you pick a token.',
+  dip: 'Dip catch: buy after a drop of Dip % off the recent candle high (not your typed floor). Set Sell above if you also want to dump a bounce.',
+  trend: 'Trend: buy after three green closes while price is above the 8-bar average. Sell after three red closes. Ignores Buy below / Sell above.',
+  curve: 'Curve stack: on an ungraduated KRON curve, keep buying dips until Max KAS. After graduation it falls back to your range caps and can sell.',
+  fade: 'Fade pump: sell into a spike (near the recent high or a hot 24h). Only buy back after a full Dip % crash from that high.'
 };
 
 function selectedAgentStrat() {
@@ -5203,6 +5211,59 @@ function syncAgStratUi(strat) {
   if ($('ag-strat-help')) $('ag-strat-help').textContent = AGENT_STRATS[s] || AGENT_STRATS.range;
   $('ag-pct-wrap')?.classList.toggle('hidden', s !== 'dip' && s !== 'fade');
   $('ag-levels')?.classList.toggle('hidden', s === 'trend');
+}
+
+async function fillAgentMarkets() {
+  const box = $('ag-picks');
+  const list = $('ag-tick-list');
+  try {
+    const mkts = await kronMarkets();
+    const rows = (mkts || []).filter(m => validTick(m.tick)).slice(0, 24);
+    const top = rows.slice(0, 10);
+    if (list) {
+      list.innerHTML = rows.map(m => `<option value="${esc(m.tick)}">${esc(m.tick)}</option>`).join('');
+    }
+    if (box) {
+      const cur = ($('ag-tick')?.value || '').trim().toUpperCase();
+      box.innerHTML = top.map(m =>
+        `<button type="button" data-ag-pick="${esc(m.tick)}" class="${m.tick === cur ? 'on' : ''}">${esc(m.tick)}</button>`
+      ).join('');
+    }
+  } catch {}
+}
+
+function prefillAgentLevels(px) {
+  const p = Number(px || 0);
+  if (!(p > 0)) return;
+  if ($('ag-buy') && document.activeElement !== $('ag-buy')) $('ag-buy').value = Number(p * 0.96).toPrecision(4);
+  if ($('ag-sell') && document.activeElement !== $('ag-sell')) $('ag-sell').value = Number(p * 1.05).toPrecision(4);
+}
+
+async function applyAgentTick(tick, { prefill = true } = {}) {
+  const t = String(tick || '').trim().toUpperCase();
+  if (!validTick(t) && t) { toast('Ticker like KRON, KKDAG, IFWEN'); return; }
+  if (!t) return;
+  const job = loadAgentJob();
+  if (job?.on && job.tick && job.tick !== t) {
+    toast('Stop Scorpion to switch token');
+    if ($('ag-tick')) $('ag-tick').value = job.tick;
+    return;
+  }
+  if ($('ag-tick')) $('ag-tick').value = t;
+  document.querySelectorAll('#ag-picks [data-ag-pick]').forEach(b => b.classList.toggle('on', b.dataset.agPick === t));
+  if (!isTestnet() && prefill) {
+    try {
+      const info = await lookupKronTick(t);
+      const px = Number(info.price || 0);
+      if (px > 0) {
+        if ($('ag-now')) $('ag-now').textContent = t + ' now ' + fmtPx(px) + ' KAS · 24h ' + fmtChg(info.change24h);
+        prefillAgentLevels(px);
+      }
+    } catch (e) {
+      if ($('ag-now')) $('ag-now').textContent = errText(e);
+    }
+  }
+  await refreshAgentPreview();
 }
 
 function candleHigh(candles, n = 36) {
@@ -5324,7 +5385,7 @@ function paintAgentStatus() {
     paintAgentFills(null);
     return;
   }
-  if ($('ag-tick') && document.activeElement !== $('ag-tick')) $('ag-tick').value = job.tick || '';
+  if (job.on && $('ag-tick') && document.activeElement !== $('ag-tick')) $('ag-tick').value = job.tick || '';
   if ($('ag-size') && document.activeElement !== $('ag-size') && job.sizeKas) $('ag-size').value = String(job.sizeKas);
   if ($('ag-buy') && document.activeElement !== $('ag-buy') && job.buyBelow) $('ag-buy').value = String(job.buyBelow);
   if ($('ag-sell') && document.activeElement !== $('ag-sell') && job.sellAbove) $('ag-sell').value = String(job.sellAbove);
@@ -5338,10 +5399,14 @@ function paintAgentStatus() {
   const p = job.preview || agentPreview;
   const qel = $('ag-quote');
   const stats = $('ag-stats');
+  const nowPx = Number(p?.ammPx || p?.indexPx || 0);
+  if ($('ag-now') && nowPx > 0) {
+    $('ag-now').textContent = (job.tick || '') + ' now ' + fmtPx(nowPx) + ' KAS · 24h ' + fmtChg(p.change24h);
+  }
   if (p && stats) {
     const chg = Number(p.change24h || 0);
     stats.innerHTML = `
-      <div class="at-stat"><b>${esc(fmtPx(p.ammPx || p.indexPx))}</b><span>AMM quote</span></div>
+      <div class="at-stat"><b>${esc(fmtPx(p.ammPx || p.indexPx))}</b><span>Now AMM</span></div>
       <div class="at-stat"><b>${esc(fmtPx(p.indexPx))}</b><span>Index</span></div>
       <div class="at-stat"><b>${esc(p.tokens != null ? fmtTok(p.tokens) : '—')}</b><span>${esc(job.tick)} out</span></div>
       <div class="at-stat"><b>${esc(fmtChg(chg))}</b><span>24h</span></div>`;
@@ -5368,13 +5433,15 @@ function stopAgentPreviewLoop() {
 function startAgentPreviewLoop() {
   if (agentPreviewTimer) return;
   agentPreviewTimer = setInterval(() => { refreshAgentPreview().catch(() => {}); }, 5000);
+  fillAgentMarkets().catch(() => {});
   refreshAgentPreview().catch(() => {});
 }
 
 async function refreshAgentPreview() {
-  if ($('at-agent')?.classList.contains('hidden')) return;
   const job = loadAgentJob();
-  const tick = (job?.tick || $('ag-tick')?.value || '').trim().toUpperCase();
+  const onAgent = !$('at-agent')?.classList.contains('hidden');
+  if (!onAgent && !job?.on) return;
+  const tick = ((job?.on ? job.tick : null) || $('ag-tick')?.value || '').trim().toUpperCase();
   const sizeKas = Number(job?.sizeKas || $('ag-size')?.value || 0.15);
   if (!tick) return;
   if (isTestnet()) {
@@ -5412,7 +5479,7 @@ async function refreshAgentPreview() {
       job.preview = agentPreview;
       saveAgentJob(job);
     }
-    drawAtChart(candles, 'ag-chart');
+    if (onAgent) drawAtChart(candles, 'ag-chart');
     paintAgentStatus();
   } catch (e) {
     if ($('ag-quote')) $('ag-quote').textContent = errText(e);
@@ -5421,6 +5488,7 @@ async function refreshAgentPreview() {
 
 function stopAgentLoop() {
   if (agentTimer) { clearInterval(agentTimer); agentTimer = null; }
+  dropAgentWake();
   paintAgentStatus();
 }
 
@@ -5433,12 +5501,23 @@ function resumeAgentIfAny() {
   } else paintAgentStatus();
 }
 
+async function holdAgentWake() {
+  try {
+    if (navigator.wakeLock?.request) agentWake = await navigator.wakeLock.request('screen');
+  } catch { agentWake = null; }
+}
+function dropAgentWake() {
+  try { agentWake?.release?.(); } catch {}
+  agentWake = null;
+}
+
 function startAgentLoop() {
   stopAgentLoop();
   const job = loadAgentJob();
   if (!job?.on) return;
   agentTimer = setInterval(() => { tickAgent().catch(() => {}); }, 8000);
   startAgentPreviewLoop();
+  holdAgentWake();
   paintAgentStatus();
   tickAgent().catch(() => {});
 }
@@ -5490,7 +5569,7 @@ async function toggleAgent() {
 
 async function tickAgent() {
   if (agentBusy) return;
-  if (!sessionOpen() || document.visibilityState !== 'visible') {
+  if (!sessionOpen()) {
     paintAgentStatus();
     return;
   }
@@ -9139,7 +9218,20 @@ function bind() {
     syncAgStratUi(b.dataset.strat);
   });
   syncAgStratUi('range');
-  $('ag-tick')?.addEventListener('change', () => refreshAgentPreview().catch(() => {}));
+  $('ag-tick')?.addEventListener('change', () => applyAgentTick($('ag-tick').value, { prefill: true }).catch(() => {}));
+  $('ag-tick')?.addEventListener('input', () => {
+    clearTimeout(agentTickDebounce);
+    agentTickDebounce = setTimeout(() => {
+      const t = ($('ag-tick')?.value || '').trim().toUpperCase();
+      if (validTick(t)) applyAgentTick(t, { prefill: true }).catch(() => {});
+    }, 450);
+  });
+  $('ag-picks')?.addEventListener('click', e => {
+    const b = e.target.closest('[data-ag-pick]');
+    if (!b?.dataset.agPick) return;
+    haptic();
+    applyAgentTick(b.dataset.agPick, { prefill: true }).catch(err => toast(errText(err)));
+  });
   $('ag-size')?.addEventListener('change', () => refreshAgentPreview().catch(() => {}));
   click('boost-open', openBoost);
   $('at-cook-mkts')?.addEventListener('click', e => {
@@ -9459,11 +9551,15 @@ function bind() {
     if (row?.dataset.vault) openVaultDetail(row.dataset.vault);
   });
   document.addEventListener('visibilitychange', () => {
+    const job = loadAgentJob();
     if (document.visibilityState === 'visible' && wallet) {
       tickLive(true);
       maybeAutoUnlock();
       resumeAgentIfAny();
       resumeDcaIfAny();
+      if (job?.on) holdAgentWake();
+    } else if (job?.on && sessionOpen()) {
+      tickAgent().catch(() => {});
     }
   });
 }

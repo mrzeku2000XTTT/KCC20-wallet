@@ -239,10 +239,10 @@ export async function buildEscrowCovenant({ ownerPubHex, buyerPubHex }) {
 }
 
 /** Per-ticket P2SH. Agent IF can pay a winner. ELSE is user CLTV refund pinned to the user's address. */
-export async function buildBetEscrowCovenant({ agentPubHex, userPubHex, userAddr, minutes }) {
+export async function buildBetEscrowCovenant({ agentPubHex, userPubHex, userAddr, minutes, unlockDaa: givenUnlock }) {
   const k = await loadKaspaSdk();
-  const daaNow = await currentDaa();
-  const unlockDaa = daaNow + Math.max(10, Math.round(Number(minutes) * 60 * 10));
+  const daaNow = Number(givenUnlock) ? 0 : await currentDaa();
+  const unlockDaa = Number(givenUnlock) || (daaNow + Math.max(10, Math.round(Number(minutes) * 60 * 10)));
   const net = networkId();
   const sb = new k.ScriptBuilder();
   sb.addOp(k.Opcodes.OpIf);
@@ -471,7 +471,7 @@ export async function cancelDcaDrip({ wallet, vault, utxos }) {
   });
 }
 
-export async function sendKasMany({ wallet, outputs, utxos, signWithKasware = false }) {
+export async function sendKasMany({ wallet, outputs, utxos, signWithKasware = false, payload = null }) {
   const k = await loadKaspaSdk();
   const external = !!(signWithKasware || (kaswareSigning(wallet) && !wallet.privKey));
   const dests = (outputs || []).map(o => ({
@@ -484,6 +484,9 @@ export async function sendKasMany({ wallet, outputs, utxos, signWithKasware = fa
   if (!entries.length) throw new Error('No UTXOs yet — receive KAS first');
   entries = [...entries].sort((a, b) => (a.amount < b.amount ? 1 : -1));
   const totalOut = dests.reduce((a, o) => a + o.amount, 0n);
+  const payBytes = payload == null || payload === ''
+    ? null
+    : (payload instanceof Uint8Array ? payload : new TextEncoder().encode(String(payload)));
   const { rpc, url } = await connectPublicNode();
   const net = networkId();
   const feeRate = await nodeFeeRate(rpc);
@@ -497,7 +500,8 @@ export async function sendKasMany({ wallet, outputs, utxos, signWithKasware = fa
       priorityFee: 0n,
       feeRate,
       sigOpCount: 1,
-      networkId: net
+      networkId: net,
+      payload: payBytes || undefined
     });
     pendingList = built.transactions || [];
   } catch (e) {
@@ -516,9 +520,14 @@ export async function sendKasMany({ wallet, outputs, utxos, signWithKasware = fa
     const change = sum - totalOut - fee;
     const outs = dests.map(o => ({ address: o.address, amount: o.amount }));
     if (change > 200_000n) outs.push({ address: wallet.address, amount: change });
-    const tx = k.createTransaction(ins, outs, 0n, undefined, 1);
+    const tx = k.createTransaction(ins, outs, 0n, payBytes, 1);
     pendingList = [{ transaction: tx }];
     entries = ins;
+  }
+  if (payBytes) {
+    for (const p of pendingList) {
+      try { p.transaction.payload = payBytes; } catch {}
+    }
   }
   const priv = wallet.privKey && !external ? new k.PrivateKey(wallet.privKey) : null;
   let txId = null;
@@ -526,6 +535,7 @@ export async function sendKasMany({ wallet, outputs, utxos, signWithKasware = fa
   for (let p = 0; p < pendingList.length; p++) {
     const tx = pendingList[p].transaction;
     tx.version = 1;
+    if (payBytes) { try { tx.payload = payBytes; } catch {} }
     prepInputs(tx, { sigOpCount: 0, computeBudget: 10 });
     try { k.updateTransactionMass(net, tx); } catch {}
     if (external) {

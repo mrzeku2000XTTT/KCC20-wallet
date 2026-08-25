@@ -23,7 +23,7 @@ import {
   fetchOwnedUtxos, collectSpendableUtxos, buildSentinelChain, buildRecurringChain, buildHashlockCovenant,
   newHashlockSecret, checkinHop, currentHop, parseXmssKit, p2shFromRedeemHex, spendXmssVault,
   disconnectRpc, buildDcaDrips, sendKasMany, releaseDcaDrip, cancelDcaDrip
-} from './tx.js?v=127';
+} from './tx.js?v=129';
 import { bootDappConnect, pingTttDappFrame } from './dappConnect.js?v=121';
 import { schedulePersistIframeVault, bootIframeVaultWatch } from './iframeVault.js?v=120';
 import { kronMarkets, quoteKronTrade, executeKronTrade, formatKasSompi, lookupKronTick, tradeCostLines, attachKronLogos, kronCandles } from './kronTrade.js?v=123';
@@ -33,8 +33,9 @@ import {
   loadBetHire, saveBetHire, recordBet, settleOpenBets, loadBetBook,
   loadPool, addPoolStake, yesCentsFromPool, hasOpponent, agentPubHex, isEscrowAgent,
   refundMinutesFromNow, refundAtMs, dueBetGroups, patchBet, winSideFromPrices,
-  betProtocolFee, BET_FEE_BPS, betIdFromAddr
-} from './bet.js?v=128';
+  betProtocolFee, BET_FEE_BPS, betIdFromAddr, encodeBetNotice, fetchPublicBetTape,
+  poolFromTape, mergeTapeAndLocal, userPubFromAddr, marketId
+} from './bet.js?v=129';
 import {
   migrateReceiveBook, ownedAddresses, markAddressUsed, currentReceive,
   deriveReceiveBatch, unusedReceiveCount, ensurePrivacyBook
@@ -54,9 +55,9 @@ import {
   rememberLaunch, loadLaunched, cookOwnerBalances, cookDeployed,
   cookTickOf, cookBookLevels
 } from './atrade.js?v=100';
-import { SCORPION_MEMORY } from './scorpionMemory.js?v=128';
+import { SCORPION_MEMORY } from './scorpionMemory.js?v=129';
 
-export const BUILD = '128';
+export const BUILD = '129';
 
 const TOKEN_FALLBACK_LOGO = 'assets/ttt.png';
 
@@ -3593,7 +3594,7 @@ function syncAtNote() {
   } else if (atPane === 'tokens') {
     el.textContent = 'Holdings. KRON / K.COM / Scorpion live in COOK. ' + kw;
   } else if (atPane === 'bet') {
-    el.textContent = 'Bet: tap YES or NO and a covenant++ escrow is born. Ticket id is that kaspa:p, truncated. Keys never shown. ' + kw;
+    el.textContent = 'Bet: one 15m market per token for every wallet. You make the YES/NO. The live book is the on-chain tape, same ¢ for everyone. ' + kw;
   } else {
     el.textContent = 'COOK: KRON AMM · K.COM order book · Scorpion launches. Tap a token for chart, book, and swap. ' + kw;
   }
@@ -5124,19 +5125,46 @@ async function paintBetMarket() {
     pool.openPx = px;
     pool = addPoolStake(tick, w.start, 'yes', 0, px);
   }
+  let tape = [];
+  try { tape = await fetchPublicBetTape(); } catch {}
+  const merged = mergeTapeAndLocal(tape, tick, w.start);
+  const live = poolFromTape(merged, tick, w.start);
+  if (live.yesKas || live.noKas) {
+    pool.yesKas = live.yesKas;
+    pool.noKas = live.noKas;
+    pool.nYes = live.nYes;
+    pool.nNo = live.nNo;
+  }
   const yes = yesCentsFromPool(pool);
   paintBetOdds(yes);
+  const traders = (live.nYes || 0) + (live.nNo || 0);
   const yesKas = Number(pool.yesKas || 0);
   const noKas = Number(pool.noKas || 0);
   if ($('bet-pool')) {
-    $('bet-pool').textContent = 'Live ' + yes + ' / ' + (100 - yes) + ' · '
-      + yesKas.toFixed(2) + ' KAS YES · ' + noKas.toFixed(2) + ' KAS NO'
-      + (hasOpponent(pool) ? ' · matched' : ' · no opponent yet — you can still play, un-matched KAS refunds');
+    $('bet-pool').textContent = 'Market ' + marketId(tick, w.start).split(':')[0] + ' · '
+      + yes + ' / ' + (100 - yes) + ' · '
+      + yesKas.toFixed(2) + ' KAS YES · ' + noKas.toFixed(2) + ' KAS NO · '
+      + traders + ' ticket' + (traders === 1 ? '' : 's')
+      + (hasOpponent(pool) ? ' · matched pool' : ' · still 50/50 seed — anyone can take the other side');
   }
   if ($('bet-net')) $('bet-net').textContent = 'Open ' + fmtPx(pool.openPx || px) + ' · now ' + fmtPx(px);
+  paintBetLive(merged);
   settleOpenBets(tick, px, Date.now());
   paintBetHireStatus();
   tickBetSettle().catch(() => {});
+}
+
+function paintBetLive(rows) {
+  const box = $('bet-live');
+  if (!box) return;
+  const tick = betTickNow();
+  const start = windowBounds().start;
+  const list = (rows || []).filter(r => r.tick === tick && Number(r.start) === start).slice(-16).reverse();
+  box.innerHTML = list.map(f => {
+    const cls = f.side === 'yes' ? 'up' : 'down';
+    const mine = f.userAddr && wallet && sameAddrPayload(f.userAddr, wallet.address);
+    return `<div><b class="bet-id">${esc(f.betId || betIdFromAddr(f.vaultAddr))}</b> <span class="${cls}">${esc((f.side || '').toUpperCase())}</span> ${esc(String(f.sizeKas || ''))} KAS${mine ? ' · you' : ''}</div>`;
+  }).join('') || '<div>Empty book. First YES or NO on this 15m market is the first shared ticket — every wallet reads the same tape.</div>';
 }
 
 function ensureBetHireLoop() {
@@ -5196,6 +5224,10 @@ async function placeBet(side, opts = {}) {
     userAddr: wallet.address,
     minutes: refundMinutesFromNow(w.end)
   });
+  const notice = encodeBetNotice({
+    tick, side, start: w.start, sizeKas,
+    vaultAddr: built.address, userAddr: wallet.address, unlockDaa: built.unlockDaa
+  });
   const result = await sendKasMany({
     wallet,
     outputs: [
@@ -5203,7 +5235,8 @@ async function placeBet(side, opts = {}) {
       { address: BET_AGENT_ADDR, amount: kasToSompi(feeKas) }
     ],
     utxos: await fetchAddressUtxos(wallet.address).catch(() => []),
-    signWithKasware: kaswareEnabled()
+    signWithKasware: kaswareEnabled(),
+    payload: notice
   });
   const openPx = Number(info?.price || 0);
   addPoolStake(tick, w.start, side, sizeKas, openPx);
@@ -5288,7 +5321,8 @@ function stopBetHire() {
 }
 
 async function tickBetHire() {
-  tickBetSettle().catch(() => {});
+  if (atPane === 'bet') paintBetMarket().catch(() => {});
+  else tickBetSettle().catch(() => {});
   if (betBusy) return;
   const job = loadBetHire();
   if (!job?.on) return;
@@ -5332,16 +5366,45 @@ async function tickBetHire() {
 
 let betSettleBusy = false;
 
+async function hydrateBetRow(row) {
+  if (row?.redeemHex && row.vaultAddr) return row;
+  const userPub = userPubFromAddr(row.userAddr);
+  if (!userPub || !row.unlockDaa) return row;
+  const built = await buildBetEscrowCovenant({
+    agentPubHex: agentPubHex(),
+    userPubHex: userPub,
+    userAddr: row.userAddr,
+    unlockDaa: row.unlockDaa
+  });
+  if (row.vaultAddr && String(built.address).toLowerCase() !== String(row.vaultAddr).toLowerCase()) return row;
+  return { ...row, redeemHex: built.redeemHex, vaultAddr: row.vaultAddr || built.address };
+}
+
 async function tickBetSettle() {
   if (betSettleBusy || !wallet || isTestnet()) return;
+  let tape = [];
+  try { tape = await fetchPublicBetTape(); } catch {}
   const groups = dueBetGroups();
-  if (!groups.length) return;
+  const extra = new Map();
+  for (const n of tape) {
+    if (Number(n.end) > Date.now()) continue;
+    const id = marketId(n.tick, n.start);
+    if (!extra.has(id)) extra.set(id, []);
+    extra.get(id).push(n);
+  }
+  const allGroups = groups.slice();
+  for (const [id, rows] of extra) {
+    if (allGroups.some(g => marketId(g[0].tick, g[0].start) === id)) continue;
+    allGroups.push(rows);
+  }
+  if (!allGroups.length) return;
   betSettleBusy = true;
   try {
     const agent = isEscrowAgent(wallet.address);
-    for (const group of groups) {
-      const tick = group[0].tick;
-      const start = group[0].start;
+    for (const rawGroup of allGroups) {
+      const tick = rawGroup[0].tick;
+      const start = rawGroup[0].start;
+      const group = mergeTapeAndLocal(tape, tick, start);
       const info = await lookupKronTick(tick).catch(() => null);
       const closePx = Number(info?.price || 0);
       const openPx = Number(group.find(r => r.openPx)?.openPx || loadPool(tick, start).openPx || 0);
@@ -5380,7 +5443,8 @@ async function tickBetSettle() {
       const winners = group.filter(r => r.side === win);
       const losers = group.filter(r => r.side !== win);
       if (!matched) {
-        for (const r of group) {
+        for (const raw of group) {
+          const r = await hydrateBetRow(raw);
           const paid = await settleBetVault(r, r.userAddr || wallet.address);
           patchBet(r.txId, {
             paid: true, refunded: true, pending: false, won: r.side === win,
@@ -5391,7 +5455,8 @@ async function tickBetSettle() {
         toast(tick + ' window: no opponent — KAS returned');
         continue;
       }
-      for (const r of winners) {
+      for (const raw of winners) {
+        const r = await hydrateBetRow(raw);
         const paid = await settleBetVault(r, r.userAddr || wallet.address);
         patchBet(r.txId, {
           paid: true, pending: false, won: true, outcome: win, closePx,
@@ -5400,7 +5465,8 @@ async function tickBetSettle() {
         if (r.vaultAddr) updateVault(r.vaultAddr, { status: 'swept', unlockTxId: paid?.txId || '' });
       }
       const dest = winners[0]?.userAddr || BET_AGENT_ADDR;
-      for (const r of losers) {
+      for (const raw of losers) {
+        const r = await hydrateBetRow(raw);
         const paid = await settleBetVault(r, dest);
         patchBet(r.txId, {
           paid: true, pending: false, won: false, outcome: win, closePx,

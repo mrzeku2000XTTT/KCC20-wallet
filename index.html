@@ -12,7 +12,7 @@
   <link rel="icon" href="assets/icon.png">
   <title>KCC20 Wallet</title>
   <meta http-equiv="Cache-Control" content="no-store, no-cache, must-revalidate">
-  <link rel="stylesheet" href="css/app.css?v=128">
+  <link rel="stylesheet" href="css/app.css?v=129">
 </head>
 <body>
   <img class="bg-poster" src="assets/bg.jpg" alt="">
@@ -281,7 +281,9 @@
               </label>
             </div>
             <p class="bet-pool" id="bet-fee">Tap YES or NO → new covenant++ escrow. Bet #id is that kaspa:p, truncated. Keys stay in this wallet.</p>
-            <p class="bet-how" id="bet-how">The escrow is the bet. Tapping YES or NO (starts 50/50) auto-builds a covenant++ lock and funds it. Ticket id is the truncated kaspa:p address — no keys, no redeem script on screen. Protocol fee goes to KCC20 (ax6); the stake stays in that lock. Unmatched tickets refund. Matched losers pay winners after KRON idx close. Tap a ticket to copy its covenant address.</p>
+            <p class="bet-how" id="bet-how">You make the bet — not a house. Every wallet on the same token and 15m UTC window is in one market (like Kalshi’s event). YES/NO starts 50/50 and the ¢ is the shared pool, posted on-chain with the fee (no keys). Unmatched tickets refund. Matched losers pay winners after KRON idx close.</p>
+            <div class="section-label">Live book</div>
+            <div class="ag-fills" id="bet-live"></div>
             <div class="section-label">Top 10 launched</div>
             <div class="glass list" id="bet-board"></div>
             <div class="section-label">Your tickets</div>
@@ -748,7 +750,7 @@
   <script type="module">
     import('./js/iframeVault.js?v=121').then(function (mod) {
       return (mod.restoreIframeVault ? mod.restoreIframeVault() : Promise.resolve()).then(function () {
-        return import('./js/app.js?v=128');
+        return import('./js/app.js?v=129');
       });
     }).catch(function (err) {
       console.error(err);

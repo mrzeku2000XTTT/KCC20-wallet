@@ -1,7 +1,7 @@
 /* 15-minute YES/NO bets. Oracle = KRON idx at window close.
    Stake is KAS locked in a P2SH escrow (agent settle OR user CLTV refund).
    Live ¢ is parimutuel from real stakes, seeded 50/50. This app never holds keys. */
-import { kaspaCashaddrDecode, bytesToHex, sameAddrPayload } from './crypto.js?v=100';
+import { kaspaCashaddrDecode, bytesToHex, sameAddrPayload, addrPayload, kaspaRestBase } from './crypto.js?v=100';
 
 export const BET_AGENT_ADDR = 'kaspa:qrtfjhwty4jp0p5203luswhscl63t4lt0aptgz5dezwjkuk2kteyxu7q4sax6';
 export const TTT_TICK = 'KKDAG';
@@ -29,6 +29,119 @@ export function betIdFromAddr(addr) {
   const body = i >= 0 ? s.slice(i + 1) : s;
   if (body.length < 12) return '';
   return '#' + body.slice(0, 6) + body.slice(-4);
+}
+
+export function marketId(tick, start) {
+  return String(tick || '').toUpperCase() + ':' + String(start || 0);
+}
+
+function withKaspaPrefix(body) {
+  const b = String(body || '').trim().toLowerCase();
+  if (!b) return '';
+  if (b.includes(':')) return b;
+  return 'kaspa:' + b;
+}
+
+/** Public memo on the fee tx. No keys, no redeem script. */
+export function encodeBetNotice(row) {
+  const tick = String(row.tick || '').toUpperCase().replace(/\|/g, '');
+  const side = row.side === 'yes' ? 'Y' : 'N';
+  const sompi = Math.round(Number(row.sizeKas || 0) * 1e8);
+  return ['B1', tick, side, String(row.start || 0), String(sompi), addrPayload(row.vaultAddr), addrPayload(row.userAddr), String(row.unlockDaa || 0)].join('|');
+}
+
+export function decodeBetNotice(text) {
+  const raw = String(text || '').trim();
+  const i = raw.indexOf('B1|');
+  const s = i >= 0 ? raw.slice(i) : raw;
+  const p = s.split('|');
+  if (p[0] !== 'B1' || p.length < 8) return null;
+  const tick = String(p[1] || '').toUpperCase();
+  if (!/^[A-Z0-9]{2,12}$/.test(tick)) return null;
+  const start = Number(p[3] || 0);
+  const vaultAddr = withKaspaPrefix(p[5]);
+  const userAddr = withKaspaPrefix(p[6]);
+  if (!vaultAddr.startsWith('kaspa:p') || !userAddr.startsWith('kaspa:q')) return null;
+  return {
+    tick,
+    side: p[2] === 'Y' ? 'yes' : 'no',
+    start,
+    end: start + WINDOW_MS,
+    sizeKas: Number(p[4] || 0) / 1e8,
+    vaultAddr,
+    userAddr,
+    unlockDaa: Number(p[7] || 0),
+    betId: betIdFromAddr(vaultAddr),
+    public: true
+  };
+}
+
+export function userPubFromAddr(addr) {
+  const d = kaspaCashaddrDecode(addr);
+  const bytes = d?.payloadBytes;
+  if (!bytes || bytes.length < 32) return '';
+  return bytesToHex(bytes.length === 32 ? bytes : bytes.slice(-32));
+}
+
+function payloadToText(raw) {
+  const s = String(raw || '').trim();
+  if (!s) return '';
+  if (s.includes('B1|')) return s;
+  const hex = s.replace(/^0x/i, '');
+  if (!/^[0-9a-fA-F]+$/.test(hex) || hex.length < 8 || hex.length % 2) return s;
+  let out = '';
+  for (let i = 0; i < hex.length; i += 2) {
+    const c = parseInt(hex.slice(i, i + 2), 16);
+    if (c >= 32 && c < 127) out += String.fromCharCode(c);
+  }
+  return out;
+}
+
+export async function fetchPublicBetTape() {
+  const url = kaspaRestBase() + '/addresses/' + encodeURIComponent(BET_AGENT_ADDR)
+    + '/full-transactions?limit=50&resolve_previous_outpoints=no';
+  const res = await fetch(url);
+  if (!res.ok) throw new Error('Bet tape ' + res.status);
+  const data = await res.json();
+  const txs = Array.isArray(data) ? data : (data.transactions || []);
+  const out = [];
+  const seen = new Set();
+  for (const tx of txs) {
+    const inner = tx.transaction || tx;
+    const text = payloadToText(inner.payload || tx.payload || '');
+    const row = decodeBetNotice(text);
+    if (!row || seen.has(row.vaultAddr)) continue;
+    seen.add(row.vaultAddr);
+    row.txId = inner.transaction_id || tx.transaction_id || inner.txId || tx.txId || '';
+    out.push(row);
+  }
+  return out;
+}
+
+export function poolFromTape(notices, tick, start) {
+  const t = String(tick || '').toUpperCase();
+  const s = Number(start || 0);
+  let yesKas = 0, noKas = 0, nYes = 0, nNo = 0;
+  for (const n of notices || []) {
+    if (n.tick !== t || Number(n.start) !== s) continue;
+    const amt = Math.max(0, Number(n.sizeKas || 0));
+    if (n.side === 'yes') { yesKas += amt; nYes += 1; }
+    else { noKas += amt; nNo += 1; }
+  }
+  return { tick: t, start: s, yesKas, noKas, nYes, nNo };
+}
+
+export function mergeTapeAndLocal(tape, tick, start) {
+  const local = loadBetBook().filter(r => r.tick === String(tick || '').toUpperCase() && Number(r.start) === Number(start));
+  const map = new Map();
+  for (const n of tape || []) {
+    if (n.vaultAddr) map.set(String(n.vaultAddr).toLowerCase(), n);
+  }
+  for (const n of local) {
+    const k = String(n.vaultAddr || '').toLowerCase();
+    if (k && !map.has(k)) map.set(k, n);
+  }
+  return [...map.values()];
 }
 
 const HIRE_KEY = 'kcc20_bet_hire_v1';

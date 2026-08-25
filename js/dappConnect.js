@@ -210,6 +210,7 @@ async function handleConnect(req) {
     });
     rememberOrigin(origin, req.name);
   }
+  try { hooks?.rememberDappAccount?.(w.address); } catch {}
   return {
     accounts: [w.address],
     network: netName(),
@@ -385,6 +386,7 @@ async function dispatch(req) {
   }
   if (method === 'disconnect') {
     forgetOrigin(req.origin);
+    try { hooks?.rememberDappAccount?.(''); } catch {}
     return true;
   }
   if (method === 'switchNetwork') return handleSwitch(req);

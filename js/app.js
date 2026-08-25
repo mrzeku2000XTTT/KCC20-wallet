@@ -24,7 +24,7 @@ import {
   newHashlockSecret, checkinHop, currentHop, parseXmssKit, p2shFromRedeemHex, spendXmssVault,
   disconnectRpc, buildDcaDrips, sendKasMany, releaseDcaDrip, cancelDcaDrip, isMassError
 } from './tx.js?v=144';
-import { bootDappConnect, pingTttDappFrame, TTT_TREASURY } from './dappConnect.js?v=142';
+import { bootDappConnect, pingTttDappFrame, TTT_TREASURY } from './dappConnect.js?v=149';
 import { schedulePersistIframeVault, bootIframeVaultWatch } from './iframeVault.js?v=120';
 import { kronMarkets, quoteKronTrade, executeKronTrade, formatKasSompi, lookupKronTick, liveQuote, tradeCostLines, attachKronLogos, kronCandles, quoteKcc20Bridge, executeKcc20Bridge, formatTokenRaw } from './kronTrade.js?v=140';
 import {
@@ -58,7 +58,7 @@ import {
 } from './atrade.js?v=100';
 import { SCORPION_MEMORY } from './scorpionMemory.js?v=142';
 
-export const BUILD = '148';
+export const BUILD = '149';
 
 const TOKEN_FALLBACK_LOGO = 'assets/ttt.png';
 
@@ -1192,6 +1192,22 @@ async function activateWallet(w, { toastMsg } = {}) {
   beginPinFlow('unlock');
 }
 
+let dappBoundAddr = '';
+
+function walletByAddr(addr) {
+  if (!addr) return null;
+  const list = loadWalletList();
+  return list.find(w => sameAddrPayload(w.address, addr)) || null;
+}
+
+function walletForDapp() {
+  return walletByAddr(dappBoundAddr) || wallet;
+}
+
+function rememberDappAccount(addr) {
+  dappBoundAddr = String(addr || '');
+}
+
 function dappHoldingRow(tick) {
   const t = holdingForTick(tick);
   if (!t) return { ticker: String(tick || '').toUpperCase(), decimals: 0, balance: '0', protocol: 'kcc20' };
@@ -1206,30 +1222,41 @@ function dappHoldingsList() {
 async function dappSendToken({ tick, amount, dest }) {
   const t = String(tick || 'KKDAG').toUpperCase();
   if (isTestnet()) throw new Error('TTT credits are mainnet KKDAG');
-  if (!wallet?.address) throw new Error('Unlock KCC20 Wallet first');
-  if (kaswareSigning(wallet) && !hexKey(wallet.privKey)) {
+  const payer = walletForDapp();
+  if (!payer?.address) throw new Error('Unlock KCC20 Wallet first');
+  if (kaswareSigning(payer) && !hexKey(payer.privKey)) {
     throw new Error('Import this key into KCC20 Wallet (not KasWare-only) to send KCC20');
   }
   const destOk = validateKaspaAddress(dest, networkId());
   if (!destOk.isValid) throw new Error(destOk.error || 'Bad treasury address');
-  const token = holdingForTick(t);
+  if (sameAddrPayload(payer.address, dest)) {
+    throw new Error('Fund pays TO ews. You are on the treasury key. Switch to Wallet 1 (ax6) and Fund from there.');
+  }
+  if (sameAddrPayload(payer.address, TTT_TREASURY)) {
+    throw new Error('Refusing to spend ews treasury from TTT Fund. Switch to the payer wallet (ax6).');
+  }
+  const token = sameAddrPayload(payer.address, wallet?.address)
+    ? holdingForTick(t)
+    : (kccHoldings.find(x => String(x.ticker).toUpperCase() === t) || { ticker: t, protocol: 'kcc20', decimals: 0, balance: '0' });
   if (!token || token.native) throw new Error('Buy ' + t + ' on Home → Tokens, then fund TTT');
   const human = String(amount || '').trim();
   const raw = toTokenRaw(human, token.decimals);
-  if (BigInt(raw) > BigInt(token.balance || '0')) throw new Error('More than you hold');
+  if (sameAddrPayload(payer.address, wallet?.address) && BigInt(raw) > BigInt(token.balance || '0')) {
+    throw new Error('More than you hold');
+  }
   await loadKaspaSdk();
   await pingPublicNode();
-  toast('Sending ' + human + ' ' + t + ' to TTT…');
+  toast('Sending ' + human + ' ' + t + ' from ' + shortAddr(payer.address, 8, 6) + ' to TTT…');
   let availableUtxos = [];
-  try { availableUtxos = await fetchOwnedUtxos(wallet); } catch {}
+  try { availableUtxos = await fetchOwnedUtxos(payer); } catch {}
   if (!availableUtxos.length) {
-    try { availableUtxos = await fetchAddressUtxos(wallet.address); } catch {}
+    try { availableUtxos = await fetchAddressUtxos(payer.address); } catch {}
   }
   if (!availableUtxos.length) throw new Error('Need a little KAS in this wallet for the send fee');
   const result = await sendKcc20({
-    wallet,
+    wallet: payer,
     dest,
-    token,
+    token: { ...token, ticker: t, protocol: 'kcc20' },
     amountHuman: human,
     utxos: availableUtxos,
     onStatus: (m) => toast(m)
@@ -1242,8 +1269,9 @@ async function dappSendToken({ tick, amount, dest }) {
     amount: String(raw),
     decimals: token.decimals,
     txId: result.txId || '',
-    label: 'TTT credits'
-  });
+    label: 'TTT credits',
+    note: 'From ' + shortAddr(payer.address, 10, 6)
+  }, payer.address);
   if (dest && sameAddrPayload(dest, TTT_TREASURY)) {
     pushTokenActivity({
       dir: 'in',
@@ -1263,14 +1291,15 @@ async function dappSendToken({ tick, amount, dest }) {
     amount: human,
     raw: String(raw),
     dest,
-    from: wallet.address,
+    from: payer.address,
     explorer: result.txId ? ('https://kas.fyi/transaction/' + result.txId) : ''
   };
 }
 
 function dappHooks() {
   return {
-    getWallet: () => wallet,
+    getWallet: () => walletForDapp(),
+    rememberDappAccount,
     sessionOpen,
     requirePin,
     toast,
@@ -2905,19 +2934,24 @@ async function openTreasurySweep() {
     : '<p class="muted">Cells loading from KRON idx…</p>';
   const others = otherWallets();
   const dest0 = others.find(w => !sameAddrPayload(w.address, TTT_TREASURY))?.address || others[0]?.address || '';
-  openSheet('Sweep DD KKDAG', `
-    <p class="muted" style="text-align:left;padding:0 0 10px;">This wallet is ews. Those <code>kaspa:p</code> rows are covenant cells this key owns — not Vault capsules. Sweep sends KKDAG to another of your q-addresses.</p>
-    <div class="kv"><span class="k">Holdings</span><span class="v">${esc(Math.floor(have).toLocaleString())} KKDAG</span></div>
+  openSheet('Cash out ews KKDAG', `
+    <p class="muted" style="text-align:left;padding:0 0 10px;">This is the <b>treasury</b> bag. Sweep moves KKDAG <em>off ews</em> to another wallet. Fund is the opposite (ax6 pays ews). Do not Max this unless you mean to empty ews.</p>
+    <div class="kv"><span class="k">Ews holds</span><span class="v">${esc(Math.floor(have).toLocaleString())} KKDAG</span></div>
     ${cellRows}
+    <div class="field"><label>Amount to move off ews</label>
+      <input id="dd-sweep-amt" type="text" inputmode="decimal" value="">
+    </div>
   `, {
-    confirm: dest0 ? 'Sweep to ' + (others.find(w => w.address === dest0)?.name || 'wallet') : 'Send KKDAG',
+    confirm: dest0 ? 'Review send to ' + (others.find(w => w.address === dest0)?.name || 'wallet') : 'Review send',
     gold: true,
     onConfirm: () => {
+      const amt = String($('dd-sweep-amt')?.value || '').trim();
+      if (!(Number(amt) > 0)) throw new Error('Enter how many KKDAG to move. Leave empty and cancel if you only meant to Fund.');
       closeSheet();
       openSend({
         assetKey: 'kcc20:KKDAG',
         destination: dest0,
-        amount: String(Math.floor(have) || Math.floor(Number(onChain) || 0))
+        amount: amt
       });
     }
   });

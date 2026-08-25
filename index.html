@@ -12,7 +12,7 @@
   <link rel="icon" href="assets/icon.png">
   <title>KCC20 Wallet</title>
   <meta http-equiv="Cache-Control" content="no-store, no-cache, must-revalidate">
-  <link rel="stylesheet" href="css/app.css?v=137">
+  <link rel="stylesheet" href="css/app.css?v=138">
 </head>
 <body>
   <img class="bg-poster" src="assets/bg.jpg" alt="">
@@ -376,7 +376,8 @@
                 <li><b>Not a chain wrap.</b> This is not Ethereum↔Kaspa. Both tokens are already KCC20. The only hop is <b>KAS</b>, because KRON has no token↔token pool.</li>
                 <li><b>Two legs, two signatures.</b> 1) Sell FROM for KAS. 2) Buy TO with that KAS. Keys stay in this wallet. We never hold the funds.</li>
                 <li><b>Curve vs pool.</b> New tokens trade on a bonding <b>curve</b>. After graduation they trade on a locked <b>pool</b>. The quote names which venue each token uses.</li>
-                <li><b>Read the quote.</b> <em>1000 KKDAG → ~10 KAS (curve) → ~899 KRON (pool)</em> means: sell 1000 KKDAG on the curve for about 10 KAS, keep ~0.5 KAS for the second network fee, spend ~9.5 KAS on the KRON pool, receive about 899 KRON.</li>
+                <li><b>Oracle.</b> Quotes are live KRON indexer reads of the curve/pool reserves (<code>idx.kron.technology</code>), not a made-up price. After you sell KKDAG, the app waits for the KAS UTXO, then <b>re-quotes IFWEN (or TO)</b> from fresh reserves and buys. Then it checks your TO cells so you actually received it.</li>
+                <li><b>Example.</b> <em>KKDAG → IFWEN</em>: sell KKDAG for KAS on its venue, then buy IFWEN with that KAS on IFWEN’s venue.</li>
               </ul>
             </details>
             <div class="at-row">
@@ -384,7 +385,7 @@
                 <input id="br-from" value="KKDAG" spellcheck="false" autocomplete="off">
               </label>
               <label class="field grow"><span>To</span>
-                <input id="br-to" value="KRON" spellcheck="false" autocomplete="off">
+                <input id="br-to" value="IFWEN" spellcheck="false" autocomplete="off">
               </label>
             </div>
             <div class="at-row">
@@ -786,7 +787,7 @@
   <script type="module">
     import('./js/iframeVault.js?v=121').then(function (mod) {
       return (mod.restoreIframeVault ? mod.restoreIframeVault() : Promise.resolve()).then(function () {
-        return import('./js/app.js?v=137');
+        return import('./js/app.js?v=138');
       });
     }).catch(function (err) {
       console.error(err);

@@ -394,11 +394,24 @@ function tokenRawFromHuman(human, decimals) {
   return n;
 }
 
+function kronEntryFromIdx(tick, token) {
+  const t = String(tick).toUpperCase();
+  return findKronEntry(t) || {
+    symbol: t,
+    decimals: Number(token.dec ?? token.decimals ?? 0),
+    covenantId: token.covenantId,
+    extensions: {
+      graduated: !!token.graduated,
+      poolCovenantId: token.poolCovenantId || token.cpState?.poolCovenantId
+    }
+  };
+}
+
 export async function quoteKronTrade({ tick, side, amount }) {
-  await kronTokenlist();
-  const entry = findKronEntry(tick);
-  if (!entry) throw new Error(tick + ' is not a KRON token');
+  await kronTokenlist().catch(() => {});
   const token = await idxToken(tick);
+  const entry = kronEntryFromIdx(tick, token);
+  if (!entry?.covenantId && !token.covenantId) throw new Error(tick + ' is not a KRON KCC20 on idx.kron.technology');
   const graduated = !!(token.graduated || entry.extensions?.graduated);
   const decimals = Number(entry.decimals ?? token.dec ?? token.decimals ?? 0);
   if (side === 'buy') {
@@ -669,12 +682,12 @@ function pickTokens(pieces, need, maxN) {
 
 export async function executeKronTrade({ wallet, tick, side, amount, utxos, onStatus, forceKasware = false }) {
   const k = await loadKaspaSdk();
-  await kronTokenlist();
-  const entry = findKronEntry(tick);
-  if (!entry) throw new Error(tick + ' is not a KRON token');
+  await kronTokenlist().catch(() => {});
   const token = await idxToken(tick);
+  const entry = kronEntryFromIdx(tick, token);
+  if (!entry?.covenantId && !token.covenantId) throw new Error(tick + ' is not a KRON KCC20 on idx.kron.technology');
   const graduated = !!(token.graduated || entry.extensions?.graduated);
-  const desc = await descriptor(entry.covenantId);
+  const desc = await descriptor(entry.covenantId || token.covenantId);
   const tokenTpl = templateFromPart(desc.token);
   const buyer = xOnly(wallet);
   onStatus?.('Quoting on KRON…');
@@ -803,9 +816,34 @@ function kasHumanFromSompi(sompi) {
   return n.toFixed(8).replace(/0+$/, '').replace(/\.$/, '');
 }
 
+function utxoKasSum(utxos) {
+  let s = 0n;
+  for (const u of utxos || []) {
+    const v = u?.utxoEntry?.amount ?? u?.amount ?? 0;
+    try { s += BigInt(v); } catch {}
+  }
+  return s;
+}
+
+async function waitKasHop(addr, before, expect, onStatus) {
+  let last = { utxos: [], sum: before, delta: 0n };
+  for (let i = 0; i < 14; i++) {
+    await new Promise(r => setTimeout(r, 900));
+    onStatus?.('Oracle wait ' + (i + 1) + '/14 — KRON idx + Kaspa UTXOs…');
+    try {
+      const utxos = await fetchAddressUtxos(addr);
+      const sum = utxoKasSum(utxos);
+      last = { utxos, sum, delta: sum > before ? sum - before : 0n };
+      if (expect && last.delta >= expect * 80n / 100n) return last;
+      if (!expect && last.delta > 0n) return last;
+    } catch {}
+  }
+  return last;
+}
+
 /**
  * Canonical KCC20↔KCC20 route: sell FROM for KAS on KRON (curve or pool), then buy TO.
- * No wrap, no L2, no custody. KAS is the only canonical hop KRON covenants support.
+ * Quotes always re-read idx.kron.technology (live curve/pool reserves). Not a price API guess.
  */
 export async function quoteKcc20Bridge({ fromTick, toTick, amount }) {
   const from = String(fromTick || '').trim().toUpperCase();
@@ -828,33 +866,59 @@ export async function quoteKcc20Bridge({ fromTick, toTick, amount }) {
     buy,
     kasGross,
     kasForBuy,
-    hopReserve
+    hopReserve,
+    oracle: 'idx.kron.technology live ' + (sell.graduated ? 'pool' : 'curve') + ' → ' + (buy.graduated ? 'pool' : 'curve')
   };
 }
 
 export async function executeKcc20Bridge({ wallet, fromTick, toTick, amount, utxos, onStatus, forceKasware = false }) {
   const quoted = await quoteKcc20Bridge({ fromTick, toTick, amount });
+  const beforeUtxos = utxos?.length ? utxos : await fetchAddressUtxos(wallet.address).catch(() => []);
+  const beforeKas = utxoKasSum(beforeUtxos);
+  let beforeTok = 0n;
+  try {
+    const held = await loadUserTokens(quoted.toTick, wallet.address, { limit: 8, withKas: true });
+    beforeTok = held.reduce((a, p) => a + BigInt(p.state?.amount || 0), 0n);
+  } catch {}
+
+  onStatus?.('Live oracle: ' + quoted.oracle);
   onStatus?.('Leg 1/2: selling ' + quoted.fromTick + ' for KAS on KRON…');
   const sell = await executeKronTrade({
     wallet, tick: quoted.fromTick, side: 'sell', amount: String(amount),
-    utxos, onStatus, forceKasware
+    utxos: beforeUtxos, onStatus, forceKasware
   });
-  onStatus?.('Waiting for KAS hop to land…');
-  for (let i = 0; i < 8; i++) {
-    await new Promise(r => setTimeout(r, 900));
-    try {
-      const rest = await fetchAddressUtxos(wallet.address);
-      if (rest?.length) break;
-    } catch {}
-  }
-  const kasHuman = kasHumanFromSompi(quoted.kasForBuy);
-  onStatus?.('Leg 2/2: buying ' + quoted.toTick + ' with ' + kasHuman + ' KAS…');
-  const fresh = await fetchAddressUtxos(wallet.address).catch(() => []);
+  const expectKas = BigInt(sell.quote?.net || sell.quote?.kasOut || quoted.kasGross || 0);
+  const hop = await waitKasHop(wallet.address, beforeKas, expectKas, onStatus);
+  let kasForBuy = quoted.kasForBuy;
+  if (hop.delta > quoted.hopReserve + 10_000_000n) kasForBuy = hop.delta - quoted.hopReserve;
+  const kasHuman = kasHumanFromSompi(kasForBuy);
+  onStatus?.('Re-quoting ' + quoted.toTick + ' from live KRON reserves with ' + kasHuman + ' KAS…');
+  const liveBuy = await quoteKronTrade({ tick: quoted.toTick, side: 'buy', amount: kasHuman });
+  onStatus?.('Leg 2/2: buying ~' + formatTokenRaw(liveBuy.tokenOut, liveBuy.decimals) + ' ' + quoted.toTick + '…');
   const buy = await executeKronTrade({
     wallet, tick: quoted.toTick, side: 'buy', amount: kasHuman,
-    utxos: fresh, onStatus, forceKasware
+    utxos: hop.utxos.length ? hop.utxos : await fetchAddressUtxos(wallet.address),
+    onStatus, forceKasware
   });
-  return { sell, buy, quote: quoted };
+
+  let received = BigInt(buy.quote?.tokenOut || liveBuy.tokenOut || 0);
+  for (let i = 0; i < 8; i++) {
+    await new Promise(r => setTimeout(r, 800));
+    try {
+      const held = await loadUserTokens(quoted.toTick, wallet.address, { limit: 8, withKas: true });
+      const now = held.reduce((a, p) => a + BigInt(p.state?.amount || 0), 0n);
+      if (now > beforeTok) {
+        received = now - beforeTok;
+        break;
+      }
+    } catch {}
+  }
+  return {
+    sell, buy,
+    quote: { ...quoted, buy: liveBuy, kasForBuy },
+    receivedRaw: received,
+    receivedHuman: formatTokenRaw(received, liveBuy.decimals)
+  };
 }
 
 export { errText as kronErr };

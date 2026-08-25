@@ -26,7 +26,7 @@ import {
 } from './tx.js?v=135';
 import { bootDappConnect, pingTttDappFrame } from './dappConnect.js?v=121';
 import { schedulePersistIframeVault, bootIframeVaultWatch } from './iframeVault.js?v=120';
-import { kronMarkets, quoteKronTrade, executeKronTrade, formatKasSompi, lookupKronTick, tradeCostLines, attachKronLogos, kronCandles, quoteKcc20Bridge, executeKcc20Bridge, formatTokenRaw } from './kronTrade.js?v=136';
+import { kronMarkets, quoteKronTrade, executeKronTrade, formatKasSompi, lookupKronTick, tradeCostLines, attachKronLogos, kronCandles, quoteKcc20Bridge, executeKcc20Bridge, formatTokenRaw } from './kronTrade.js?v=138';
 import {
   BET_AGENT_ADDR, TTT_TICK, WINDOW_MS, windowBounds, fmtRemain,
   kkdagsHeld, isKcc20Pass, hireCost, maxHireHours,
@@ -56,9 +56,9 @@ import {
   rememberLaunch, loadLaunched, cookOwnerBalances, cookDeployed,
   cookTickOf, cookBookLevels
 } from './atrade.js?v=100';
-import { SCORPION_MEMORY } from './scorpionMemory.js?v=137';
+import { SCORPION_MEMORY } from './scorpionMemory.js?v=138';
 
-export const BUILD = '137';
+export const BUILD = '138';
 
 const TOKEN_FALLBACK_LOGO = 'assets/ttt.png';
 
@@ -1832,7 +1832,7 @@ async function quoteBridgeUi() {
       el.innerHTML = '<b>Not P2P</b> — you swap against KRON covenants, not a person.<br>'
         + '1. Sell <b>' + esc(amt) + ' ' + esc(from) + '</b> on the KRON <b>' + esc(sellVenue) + '</b> → about <b>' + esc(sellKas) + ' KAS</b>.<br>'
         + '2. Keep ~0.5 KAS for the second network fee, then buy <b>' + esc(to) + '</b> on the <b>' + esc(buyVenue) + '</b> with ~<b>' + esc(hopKas) + ' KAS</b> → about <b>' + esc(outTok) + ' ' + esc(to) + '</b>.<br>'
-        + 'You sign both Kaspa txs. This wallet never takes custody.';
+        + 'Live oracle: <b>' + esc(q.oracle) + '</b>. You sign both Kaspa txs. This wallet never takes custody.';
     }
   } catch (e) {
     lastBridgeQuote = null;
@@ -1867,7 +1867,9 @@ async function runBridge() {
       + ' · Buy '
       + (isRealTxId(buyId) ? `<a href="${esc(explorerTx(buyId))}" target="_blank" rel="noopener">${esc(buyId.slice(0, 10))}…</a>` : '');
   }
-  toast(from + ' → ' + to + ' bridged');
+  const got = res?.receivedHuman ? ' Received ' + res.receivedHuman + ' ' + to + '.' : '';
+  toast(from + ' → ' + to + ' bridged.' + got);
+  if (got && $('br-st')) $('br-st').innerHTML += got;
 }
 
 let showVaultHistory = false;

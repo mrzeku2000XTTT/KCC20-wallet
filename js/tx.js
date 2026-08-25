@@ -2105,7 +2105,8 @@ async function revealKrc20({ k, wallet, priv, script, p2shAddr, revealUtxos }) {
 
 const KRON_IDX = 'https://idx.kron.technology';
 const MIN_CELL_KAS = 5_000_000n;
-const CHANGE_CELL_KAS = 8_000_000n; // leftover token cell — distinct from the send cell (KIP-9)
+const COVENANT_DUST = 50_000_000n; // 0.50 KAS — KRON KIP-9 floor for covenant outputs
+const CHANGE_CELL_KAS = 60_000_000n; // 0.60 KAS, never equal dest (equal splits blow mass)
 const P2PK_RE = /^20([0-9a-f]{64})ac$/i;
 const NATIVE_SUBNET = '0000000000000000000000000000000000000000';
 
@@ -2121,32 +2122,49 @@ function kasNeedError(moreSompi) {
 
 function massSplitError() {
   return new Error(
-    'Kaspa storage mass rejected this token split — not a missing-KAS problem (this wallet has funds). ' +
-    'Tap Send now again; leftover tokens will sit in a differently sized KAS cell.'
+    'Kaspa storage mass rejected this token send — not your KAS UTXO count. ' +
+    'Covenant cells need about 0.5 KAS each. Close TTT, tap Fund again; leftover KKDAG will use a differently sized cell.'
   );
+}
+
+function uniqBig(list) {
+  const out = [];
+  for (const n of list) {
+    if (!out.some(x => x === n)) out.push(n);
+  }
+  return out;
 }
 
 function layoutSendKas(k, inAmts, inCellKas, nTok, feeGuess) {
   const inSum = inAmts.reduce((a, b) => a + b, 0n);
-  const keep = inCellKas >= MIN_CELL_KAS ? inCellKas : MIN_CELL_KAS;
-  const keepOpts = [keep, keep + 5_000_000n, 50_000_000n];
+  const destFloor = inCellKas >= COVENANT_DUST ? inCellKas : COVENANT_DUST;
+  const keepOpts = uniqBig([destFloor, COVENANT_DUST, 51_000_000n, 75_000_000n, 100_000_000n, 80_000_000n]);
   const changeOpts = nTok > 1
-    ? [CHANGE_CELL_KAS, 12_000_000n, 7_000_000n, 15_000_000n, 9_000_000n, 6_000_000n, 11_000_000n]
+    ? [CHANGE_CELL_KAS, 51_000_000n, 55_000_000n, 70_000_000n, 80_000_000n, 100_000_000n, 120_000_000n]
     : [0n];
   const dust = 200_000n;
+  const tries = [];
   for (const sendKasAmt of keepOpts) {
+    if (sendKasAmt < COVENANT_DUST) continue;
     for (const ch of changeOpts) {
-      if (nTok > 1 && (ch === sendKasAmt || ch < MIN_CELL_KAS || sendKasAmt < MIN_CELL_KAS)) continue;
+      if (nTok > 1 && (ch === sendKasAmt || ch < COVENANT_DUST)) continue;
       const tokenKas = nTok > 1 ? [sendKasAmt, ch] : [sendKasAmt];
       const tokenOutSum = tokenKas.reduce((a, b) => a + b, 0n);
       const leftover = inSum - tokenOutSum - feeGuess;
       if (leftover < 0n) continue;
       const kasChange = leftover >= dust ? leftover : 0n;
-      const outs = kasChange > 0n ? [...tokenKas, kasChange] : tokenKas;
-      if (storageMassOk(k, inAmts, outs)) return { tokenKas, kasChange, tokenOutSum };
+      tries.push({ tokenKas, kasChange, tokenOutSum, absorb: false });
+      if (kasChange > 0n && nTok >= 1) {
+        const absorbed = nTok > 1 ? [sendKasAmt + kasChange, ch] : [sendKasAmt + kasChange];
+        tries.push({ tokenKas: absorbed, kasChange: 0n, tokenOutSum: tokenOutSum + kasChange, absorb: true });
+      }
     }
   }
-  return null;
+  for (const t of tries) {
+    const outs = t.kasChange > 0n ? [...t.tokenKas, t.kasChange] : t.tokenKas;
+    if (storageMassOk(k, inAmts, outs)) return t;
+  }
+  return tries[0] || null;
 }
 
 function hexToU8(hex) {
@@ -2370,24 +2388,14 @@ export async function sendKcc20({ wallet, dest, token, amountHuman, utxos, onSta
   if (!pieces.length) {
     throw new Error('Found ' + tick + ' on the indexer but could not load the cell UTXOs. Tap Send now again.');
   }
-  pieces.sort((a, b) => (a.tokenAmount < b.tokenAmount ? 1 : -1));
+  pieces.sort((a, b) => (a.tokenAmount < b.tokenAmount ? -1 : 1));
   const totalTok = pieces.reduce((a, p) => a + p.tokenAmount, 0n);
   if (totalTok < sendAmt) throw new Error(`You only hold ${totalTok} ${tick}`);
   const maxIns = Math.max(1, Math.min(4, Number(meta?.maxIns || 4)));
-  let selected = pieces.filter(p => p.tokenAmount >= sendAmt).slice(0, 1);
-  if (!selected.length) {
-    selected = [];
-    let covered = 0n;
-    for (const p of pieces) {
-      selected.push(p);
-      covered += p.tokenAmount;
-      if (covered >= sendAmt) break;
-      if (selected.length >= maxIns) break;
-    }
-    const have = selected.reduce((a, p) => a + p.tokenAmount, 0n);
-    if (have < sendAmt) {
-      throw new Error(`${tick} is split across ${pieces.length} cells. This send needs ${sendAmt} but the largest ${selected.length} cells only hold ${have}. Send ${have} now, then the rest.`);
-    }
+  const selected = pickKcc20Pieces(pieces, sendAmt, maxIns);
+  const haveSel = selected.reduce((a, p) => a + p.tokenAmount, 0n);
+  if (haveSel < sendAmt) {
+    throw new Error(`${tick} is split across ${pieces.length} cells. This send needs ${sendAmt} but ${selected.length} cells only hold ${haveSel}. Send ${haveSel} now, then the rest.`);
   }
   onStatus?.(`Sending ${sendAmt} ${tick} from ${selected.length} cell${selected.length === 1 ? '' : 's'}…`);
 
@@ -2402,9 +2410,10 @@ export async function sendKcc20({ wallet, dest, token, amountHuman, utxos, onSta
   const inCellKas = selected.reduce((a, p) => a + p.value, 0n);
   const nTok = next.length;
   const feeGuess = 500_000n;
-  // Keep the send cell's own KAS (cancels in KIP-9). Leftover tokens get a
-  // differently sized cell from wallet KAS — never 0.2/0.2 or 0.05/0.05 splits.
-  const walletNeed = (nTok > 1 ? CHANGE_CELL_KAS : 0n) + feeGuess + 200_000n;
+  // Dest + leftover cells need ~0.5 KAS each (KRON dust). One 20 KAS UTXO is plenty.
+  const tokenOutMin = COVENANT_DUST + (nTok > 1 ? CHANGE_CELL_KAS : 0n);
+  let walletNeed = tokenOutMin + feeGuess + 1_000_000n - inCellKas;
+  if (walletNeed < feeGuess + 200_000n) walletNeed = feeGuess + 200_000n;
 
   onStatus?.('Connecting to Kaspa…');
   const { rpc, url } = await connectPublicNode();
@@ -2413,15 +2422,20 @@ export async function sendKcc20({ wallet, dest, token, amountHuman, utxos, onSta
     .sort((a, b) => (a.amount < b.amount ? 1 : -1));
   const picked = pickFeeEntries(feeEntries, walletNeed, 2);
   const feeSum = picked.reduce((a, e) => a + e.amount, 0n);
+  if (!feeEntries.length) {
+    throw new Error('KAS UTXO did not load for this send. Close TTT, tap Refresh on Home, then Fund again.');
+  }
   if (!picked.length || feeSum < walletNeed) {
-    throw new Error('Too many small UTXOs to send this token. Home → Compound, then bet again.');
+    throw kasNeedError(walletNeed - feeSum);
   }
 
   const inAmts = [...selected.map(p => p.value), ...picked.map(e => e.amount)];
   let layout = layoutSendKas(k, inAmts, inCellKas, nTok, feeGuess);
   if (!layout) {
-    const keep = inCellKas >= MIN_CELL_KAS ? inCellKas : MIN_CELL_KAS;
-    const tokenKasFallback = nTok > 1 ? [keep, CHANGE_CELL_KAS] : [keep];
+    const keep = inCellKas >= COVENANT_DUST ? inCellKas : COVENANT_DUST;
+    let ch = nTok > 1 ? CHANGE_CELL_KAS : 0n;
+    if (nTok > 1 && ch === keep) ch = keep + 10_000_000n;
+    const tokenKasFallback = nTok > 1 ? [keep, ch] : [keep];
     const tokenOutSumFb = tokenKasFallback.reduce((a, b) => a + b, 0n);
     let kasChangeFb = inCellKas + feeSum - tokenOutSumFb - feeGuess;
     if (kasChangeFb < 200_000n) kasChangeFb = 0n;
@@ -2519,7 +2533,7 @@ export async function sendKcc20({ wallet, dest, token, amountHuman, utxos, onSta
   }
   try { k.updateTransactionMass(networkId(), tx); } catch {}
   if (!txUnderCap(k, tx)) {
-    throw new Error('Too many small UTXOs to send this token. Home → Compound, then bet again.');
+    throw massSplitError();
   }
 
   signKasInputs = function signKasInputs() {
@@ -2654,16 +2668,19 @@ function kccInputFromUtxo(k, {
 }
 
 function pickKcc20Pieces(pieces, sendAmt, maxIns) {
-  let selected = pieces.filter(p => p.tokenAmount >= sendAmt).slice(0, 1);
-  if (!selected.length) {
-    selected = [];
-    let covered = 0n;
-    for (const p of pieces) {
-      selected.push(p);
-      covered += p.tokenAmount;
-      if (covered >= sendAmt) break;
-      if (selected.length >= maxIns) break;
-    }
+  const exact = (pieces || []).filter(p => p.tokenAmount === sendAmt);
+  if (exact.length) return [exact[0]];
+  const cover = (pieces || []).filter(p => p.tokenAmount >= sendAmt)
+    .sort((a, b) => (a.tokenAmount < b.tokenAmount ? -1 : a.tokenAmount > b.tokenAmount ? 1 : 0));
+  if (cover.length) return [cover[0]];
+  const selected = [];
+  let covered = 0n;
+  const bigFirst = [...(pieces || [])].sort((a, b) => (a.tokenAmount < b.tokenAmount ? 1 : -1));
+  for (const p of bigFirst) {
+    selected.push(p);
+    covered += p.tokenAmount;
+    if (covered >= sendAmt) break;
+    if (selected.length >= maxIns) break;
   }
   return selected;
 }

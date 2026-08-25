@@ -23,7 +23,7 @@ import {
   fetchOwnedUtxos, collectSpendableUtxos, buildSentinelChain, buildRecurringChain, buildHashlockCovenant,
   newHashlockSecret, checkinHop, currentHop, parseXmssKit, p2shFromRedeemHex, spendXmssVault,
   disconnectRpc, buildDcaDrips, sendKasMany, releaseDcaDrip, cancelDcaDrip, isMassError
-} from './tx.js?v=135';
+} from './tx.js?v=143';
 import { bootDappConnect, pingTttDappFrame, TTT_TREASURY } from './dappConnect.js?v=142';
 import { schedulePersistIframeVault, bootIframeVaultWatch } from './iframeVault.js?v=120';
 import { kronMarkets, quoteKronTrade, executeKronTrade, formatKasSompi, lookupKronTick, liveQuote, tradeCostLines, attachKronLogos, kronCandles, quoteKcc20Bridge, executeKcc20Bridge, formatTokenRaw } from './kronTrade.js?v=140';
@@ -58,7 +58,7 @@ import {
 } from './atrade.js?v=100';
 import { SCORPION_MEMORY } from './scorpionMemory.js?v=142';
 
-export const BUILD = '142';
+export const BUILD = '143';
 
 const TOKEN_FALLBACK_LOGO = 'assets/ttt.png';
 
@@ -1215,9 +1215,11 @@ async function dappSendToken({ tick, amount, dest }) {
   await loadKaspaSdk();
   await pingPublicNode();
   toast('Sending ' + human + ' ' + t + ' to TTT…');
-  const availableUtxos = wallet.receiveAddrs?.length > 1
-    ? await fetchOwnedUtxos(wallet)
-    : await fetchAddressUtxos(wallet.address);
+  let availableUtxos = [];
+  try { availableUtxos = await fetchOwnedUtxos(wallet); } catch {}
+  if (!availableUtxos.length) {
+    try { availableUtxos = await fetchAddressUtxos(wallet.address); } catch {}
+  }
   if (!availableUtxos.length) throw new Error('Need a little KAS in this wallet for the send fee');
   const result = await sendKcc20({
     wallet,

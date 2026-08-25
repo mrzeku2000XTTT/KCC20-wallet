@@ -500,7 +500,7 @@ export async function sendKasMany({ wallet, outputs, utxos, signWithKasware = fa
       massOk = true;
       break;
     }
-    if (chosen.length >= 4) break;
+    if (chosen.length >= 2) break;
   }
   if (sum < totalOut + feeGuess) {
     throw new Error('Need ' + (Number(totalOut + feeGuess) / 1e8).toFixed(2) + ' KAS to fund this (stake + fee + network).');
@@ -835,8 +835,31 @@ export async function pingPublicNode() {
   };
 }
 
-function isMassError(e) {
-  return /storage mass|mass exceeds|transaction mass/i.test(errText(e));
+export function isMassError(e) {
+  return /storage mass|mass exceeds|transaction mass|Too many small UTXOs|Compound/i.test(errText(e));
+}
+
+function txUnderCap(k, tx) {
+  try {
+    const cap = k.maximumStandardTransactionMass();
+    const m = k.calculateTransactionMass(networkId(), tx, 1);
+    return m != null && BigInt(m) <= BigInt(cap);
+  } catch {
+    return true;
+  }
+}
+
+function pickFeeEntries(entries, need, maxN = 2) {
+  const usable = (entries || []).filter(e => e.amount > 0n).sort((a, b) => (a.amount < b.amount ? 1 : -1));
+  const picked = [];
+  let sum = 0n;
+  for (const e of usable) {
+    picked.push(e);
+    sum += e.amount;
+    if (sum >= need) return picked;
+    if (picked.length >= maxN) break;
+  }
+  return sum >= need ? picked : [];
 }
 
 function isOrphanError(e) {
@@ -2387,15 +2410,11 @@ export async function sendKcc20({ wallet, dest, token, amountHuman, utxos, onSta
   const walletUtxos = utxos && utxos.length ? utxos : await fetchAddressUtxos(wallet.address);
   const feeEntries = restUtxosToEntries(walletUtxos, wallet.address)
     .sort((a, b) => (a.amount < b.amount ? 1 : -1));
-  const picked = [];
-  let feeSum = 0n;
-  for (const e of feeEntries) {
-    picked.push(e);
-    feeSum += e.amount;
-    if (feeSum >= walletNeed) break;
+  const picked = pickFeeEntries(feeEntries, walletNeed, 2);
+  const feeSum = picked.reduce((a, e) => a + e.amount, 0n);
+  if (!picked.length || feeSum < walletNeed) {
+    throw new Error('Too many small UTXOs to send this token. Home → Compound, then bet again.');
   }
-  if (!picked.length) throw kasNeedError(walletNeed);
-  if (feeSum < walletNeed) throw kasNeedError(walletNeed - feeSum);
 
   const inAmts = [...selected.map(p => p.value), ...picked.map(e => e.amount)];
   let layout = layoutSendKas(k, inAmts, inCellKas, nTok, feeGuess);
@@ -2482,16 +2501,13 @@ export async function sendKcc20({ wallet, dest, token, amountHuman, utxos, onSta
     ? [...covOutputs, new k.TransactionOutput(kasChange, changeSpk)]
     : covOutputs;
 
-  const payBytes = !payload
-    ? ''
-    : (payload instanceof Uint8Array ? payload : new TextEncoder().encode(String(payload)));
   tx = new k.Transaction({
     version: 1,
     inputs: [...tokenIns, ...kasIns],
     outputs,
     lockTime: 0n,
     gas: 0n,
-    payload: (payBytes && payBytes.length && payBytes.length <= 80) ? payBytes : '',
+    payload: '',
     subnetworkId: NATIVE_SUBNET
   });
   prepInputs(tx, { sigOpCount: 0, computeBudget: 10 });
@@ -2501,6 +2517,9 @@ export async function sendKcc20({ wallet, dest, token, amountHuman, utxos, onSta
     tx.inputs[i].signatureScript = tokenScripts[i];
   }
   try { k.updateTransactionMass(networkId(), tx); } catch {}
+  if (!txUnderCap(k, tx)) {
+    throw new Error('Too many small UTXOs to send this token. Home → Compound, then bet again.');
+  }
 
   signKasInputs = function signKasInputs() {
     const signed = tokenScripts.slice();

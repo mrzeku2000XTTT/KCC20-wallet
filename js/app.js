@@ -22,8 +22,8 @@ import {
   compoundUtxos, sendKrc20, sendKcc20, loadKrc20Pending, lockKcc20Timelock, sweepKcc20Capsule,
   fetchOwnedUtxos, collectSpendableUtxos, buildSentinelChain, buildRecurringChain, buildHashlockCovenant,
   newHashlockSecret, checkinHop, currentHop, parseXmssKit, p2shFromRedeemHex, spendXmssVault,
-  disconnectRpc, buildDcaDrips, sendKasMany, releaseDcaDrip, cancelDcaDrip
-} from './tx.js?v=132';
+  disconnectRpc, buildDcaDrips, sendKasMany, releaseDcaDrip, cancelDcaDrip, isMassError
+} from './tx.js?v=133';
 import { bootDappConnect, pingTttDappFrame } from './dappConnect.js?v=121';
 import { schedulePersistIframeVault, bootIframeVaultWatch } from './iframeVault.js?v=120';
 import { kronMarkets, quoteKronTrade, executeKronTrade, formatKasSompi, lookupKronTick, tradeCostLines, attachKronLogos, kronCandles } from './kronTrade.js?v=123';
@@ -36,7 +36,7 @@ import {
   betProtocolFee, BET_FEE_BPS, betIdFromAddr, betIdFromTxid, encodeBetNotice, fetchPublicBetTape,
   poolFromTape, mergeTapeAndLocal, userPubFromAddr, marketId,
   betDecimals, betMinStake, betStakeStep, humanTokenBalance, snapBetStake
-} from './bet.js?v=132';
+} from './bet.js?v=133';
 import {
   migrateReceiveBook, ownedAddresses, markAddressUsed, currentReceive,
   deriveReceiveBatch, unusedReceiveCount, ensurePrivacyBook
@@ -56,9 +56,9 @@ import {
   rememberLaunch, loadLaunched, cookOwnerBalances, cookDeployed,
   cookTickOf, cookBookLevels
 } from './atrade.js?v=100';
-import { SCORPION_MEMORY } from './scorpionMemory.js?v=132';
+import { SCORPION_MEMORY } from './scorpionMemory.js?v=133';
 
-export const BUILD = '132';
+export const BUILD = '133';
 
 const TOKEN_FALLBACK_LOGO = 'assets/ttt.png';
 
@@ -5231,8 +5231,10 @@ function resumeBetHireIfAny() {
   ensureBetHireLoop();
   const job = loadBetHire();
   if (job?.on && Number(job.until || 0) > Date.now() && sessionOpen()) {
-    if (/storage mass|small UTXOs/i.test(String(job.last || ''))) {
-      saveBetHire({ ...job, lastWindow: windowBounds().start, last: 'paused — Compound on Home, then hire again' });
+    if (job.massFail || /storage mass|small UTXOs|Compound/i.test(String(job.last || ''))) {
+      saveBetHire({ ...job, on: false, massFail: true, last: 'paused — Compound on Home, then hire again' });
+      toast('Bet agent paused. Compound, then hire again.');
+      return;
     }
     tickBetHire().catch(() => {});
     toast('Bet agent resumed · ' + (job.tick || TTT_TICK));
@@ -5243,9 +5245,25 @@ function resumeBetHireIfAny() {
 
 function betErr(e) {
   const t = errText(e);
-  if (/storage mass/i.test(t)) return 'Too many small UTXOs. Home → Compound, then tap YES/NO.';
+  if (isMassError(e) || /storage mass|5100|500000/i.test(t)) {
+    return 'Kaspa rejected storage mass. Home → Compound, then hire/bet again.';
+  }
   if (/Need .* KAS to fund/i.test(t)) return t;
   return t;
+}
+
+async function compoundForBet() {
+  const utxos = await fetchAddressUtxos(wallet.address).catch(() => []);
+  if ((utxos || []).length < 3) return utxos || [];
+  toast('Merging UTXOs so Kaspa accepts the bet…');
+  try {
+    await compoundUtxos({ wallet, utxos, signWithKasware: kaswareEnabled() });
+  } catch (e) {
+    if (!isMassError(e)) throw e;
+    throw new Error('Kaspa rejected storage mass. Home → Compound, then hire/bet again.');
+  }
+  await new Promise(r => setTimeout(r, 2200));
+  return fetchAddressUtxos(wallet.address).catch(() => []);
 }
 
 async function placeBet(side, opts = {}) {
@@ -5272,14 +5290,14 @@ async function placeBet(side, opts = {}) {
   if (isEscrowAgent(wallet.address)) {
     result = { txId: 'escrow-' + Date.now().toString(16) };
   } else {
+    const utxos = await compoundForBet();
     result = await sendKcc20({
       wallet,
       dest: BET_AGENT_ADDR,
       token: hold,
       amountHuman: String(sendAmt),
-      utxos: await fetchAddressUtxos(wallet.address).catch(() => []),
-      onStatus: (m) => toast(m),
-      payload: encodeBetNotice({ tick, side, start: w.start, sizeKas: size })
+      utxos,
+      onStatus: (m) => toast(m)
     });
   }
   const openPx = Number(info?.price || 0);
@@ -5375,6 +5393,11 @@ async function tickBetHire() {
   if (betBusy) return;
   const job = loadBetHire();
   if (!job?.on) return;
+  if (job.massFail || /storage mass|Compound|Too many small/i.test(String(job.last || ''))) {
+    saveBetHire({ ...job, on: false, massFail: true, last: 'paused — Compound on Home, then hire again' });
+    paintBetHireStatus();
+    return;
+  }
   if (Date.now() >= Number(job.until || 0)) {
     saveBetHire({ ...job, on: false, last: 'hours ended' });
     paintBetHireStatus();
@@ -5412,6 +5435,10 @@ async function tickBetHire() {
     const j = loadBetHire() || job;
     j.lastWindow = windowBounds().start;
     j.last = betErr(e);
+    if (isMassError(e) || /storage mass|500000/i.test(errText(e))) {
+      j.on = false;
+      j.massFail = true;
+    }
     saveBetHire(j);
     paintBetHireStatus();
     toast(betErr(e));

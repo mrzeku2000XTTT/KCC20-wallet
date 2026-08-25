@@ -5,6 +5,7 @@ import {
   kaspaRestBase, networkId
 } from './crypto.js?v=90';
 import { kaswareSigning, sendKaspaWithKasware, sendKrc20WithKasware, signPsktWithKasware, fetchKaswareUtxos } from './kasware.js?v=100';
+import * as kron from '../vendor/kron-sdk/index.js';
 
 function API() { return kaspaRestBase(); }
 
@@ -2402,190 +2403,99 @@ export async function sendKcc20({ wallet, dest, token, amountHuman, utxos, onSta
   const inTok = selected.reduce((a, p) => a + p.tokenAmount, 0n);
   const changeTok = inTok - sendAmt;
   const tpl = { script: selected[0].redeem.script, stateStart: selected[0].redeem.stateStart || 0 };
-  const ownerId = selected[0].redeem.ownerIdentifier;
-  const next = [presenceState(destPk, sendAmt)];
-  if (changeTok > 0n) next.push(presenceState(ownerId, changeTok));
-  const presenceIdx = selected.length;
-  const witnesses = selected.map(() => presenceIdx);
   const inCellKas = selected.reduce((a, p) => a + p.value, 0n);
-  const nTok = next.length;
-  const feeGuess = 500_000n;
-  // Dest + leftover cells need ~0.5 KAS each (KRON dust). One 20 KAS UTXO is plenty.
-  const tokenOutMin = COVENANT_DUST + (nTok > 1 ? CHANGE_CELL_KAS : 0n);
-  let walletNeed = tokenOutMin + feeGuess + 1_000_000n - inCellKas;
-  if (walletNeed < feeGuess + 200_000n) walletNeed = feeGuess + 200_000n;
+  const senderTokens = selected.map(p => ({
+    transactionId: p.transactionId,
+    index: p.index,
+    value: p.value,
+    state: {
+      ownerIdentifier: p.redeem.ownerIdentifier,
+      identifierType: p.redeem.identifierType,
+      amount: p.tokenAmount,
+      isMinter: !!p.redeem.isMinter
+    }
+  }));
 
   onStatus?.('Connecting to Kaspa…');
   const { rpc, url } = await connectPublicNode();
   const walletUtxos = utxos && utxos.length ? utxos : await fetchAddressUtxos(wallet.address);
   const feeEntries = restUtxosToEntries(walletUtxos, wallet.address)
     .sort((a, b) => (a.amount < b.amount ? 1 : -1));
-  const picked = pickFeeEntries(feeEntries, walletNeed, 2);
-  const feeSum = picked.reduce((a, e) => a + e.amount, 0n);
   if (!feeEntries.length) {
     throw new Error('KAS UTXO did not load for this send. Close TTT, tap Refresh on Home, then Fund again.');
   }
-  if (!picked.length || feeSum < walletNeed) {
-    throw kasNeedError(walletNeed - feeSum);
-  }
 
-  const inAmts = [...selected.map(p => p.value), ...picked.map(e => e.amount)];
-  let layout = layoutSendKas(k, inAmts, inCellKas, nTok, feeGuess);
-  if (!layout) {
-    const keep = inCellKas >= COVENANT_DUST ? inCellKas : COVENANT_DUST;
-    let ch = nTok > 1 ? CHANGE_CELL_KAS : 0n;
-    if (nTok > 1 && ch === keep) ch = keep + 10_000_000n;
-    const tokenKasFallback = nTok > 1 ? [keep, ch] : [keep];
-    const tokenOutSumFb = tokenKasFallback.reduce((a, b) => a + b, 0n);
-    let kasChangeFb = inCellKas + feeSum - tokenOutSumFb - feeGuess;
-    if (kasChangeFb < 200_000n) kasChangeFb = 0n;
-    layout = { tokenKas: tokenKasFallback, kasChange: kasChangeFb, tokenOutSum: tokenOutSumFb };
-  }
-  const tokenKas = layout.tokenKas;
-  const kasChange = layout.kasChange;
-  const tokenOutSum = layout.tokenOutSum;
-  const tokenOuts = next.map((st, i) => ({
-    value: tokenKas[i],
-    spk: k.payToScriptHashScript(materializeKcc20Script(tpl, st))
-  }));
-
-  function spkOf(v) {
-    if (v instanceof k.ScriptPublicKey) return v;
-    if (typeof v === 'string') return new k.ScriptPublicKey(0, v);
-    if (v && (typeof v.script === 'string' || v.script instanceof Uint8Array)) {
-      return new k.ScriptPublicKey(Number(v.version || 0), v.script);
+  const destPads = [COVENANT_DUST, 75_000_000n, 100_000_000n, 200_000_000n, 500_000_000n, 1_000_000_000n];
+  let lastErr = null;
+  for (const destPad of destPads) {
+    try {
+      const spend = kron.kcc20.buildKcc20Send(
+        k, tpl, senderTokens, destPk, sendAmt, selected.length, tokenCovid, { tokenDust: destPad }
+      );
+      if (spend.outputs[0]) spend.outputs[0].value = destPad;
+      if (spend.outputs[1]) {
+        let ch = kron.covenantSelect.continuationValue(destPad + 10_000_000n, selected[0].value);
+        if (ch === destPad) ch = destPad + 10_000_000n;
+        spend.outputs[1].value = ch;
+      }
+      const covOut = spend.outputs.reduce((s, o) => s + BigInt(o.value), 0n);
+      let need = covOut + 2_000_000n - inCellKas;
+      if (need < 2_000_000n) need = 2_000_000n;
+      const picked = pickFeeEntries(feeEntries, need, 2);
+      if (!picked.length) throw kasNeedError(need);
+      const fundingEntries = picked.map(e => ({
+        address: wallet.address,
+        outpoint: e.outpoint,
+        amount: e.amount,
+        scriptPublicKey: e.scriptPublicKey,
+        blockDaaScore: e.blockDaaScore,
+        isCoinbase: e.isCoinbase
+      }));
+      let asm = kron.spend.assembleNativeTx(k, {
+        spend,
+        fundingEntries,
+        changeAddress: wallet.address,
+        networkFee: 10_000n
+      });
+      if (asm.change < 200_000n) throw kasNeedError(2_000_000n);
+      const networkFee = kron.spend.estimateNativeFee(k, networkId(), asm, 100);
+      asm = kron.spend.assembleNativeTx(k, {
+        spend,
+        fundingEntries,
+        changeAddress: wallet.address,
+        networkFee
+      });
+      if (asm.change < 200_000n) throw kasNeedError(networkFee);
+      const tx = asm.transaction;
+      for (const idx of asm.fundingInputIndexes) {
+        const sig = k.createInputSignature(tx, idx, priv, k.SighashType.All);
+        tx.inputs[idx].signatureScript = hexish(sig);
+      }
+      const scripts = [...tx.inputs].map(inp => hexish(inp.signatureScript));
+      onStatus?.('Broadcasting KCC20 send…');
+      const txId = await submitSignedRpc(k, rpc, url, tx, {
+        sigOpCount: 0,
+        computeBudget: 100,
+        lockTime: 0,
+        scripts
+      });
+      return {
+        txId,
+        revealId: txId,
+        tick,
+        amt: sendAmt.toString(),
+        dest,
+        change: changeTok.toString()
+      };
+    } catch (e) {
+      lastErr = e;
+      const m = errText(e);
+      if (/null pointer/i.test(m)) throw new Error('KCC20 send failed in the Kaspa engine while building the tx. Hard-refresh and try again.');
+      if (!isMassError(e) && !/mass exceeds|storage mass|transaction mass/i.test(m)) throw e;
+      onStatus?.('Storage mass high — retrying with a fatter KAS cell…');
     }
-    throw new Error('Missing script for a KCC20 input');
   }
-  function inputFromUtxo({ txid, index, amount, scriptPublicKey, address, blockDaaScore, isCoinbase, signatureScript, computeBudget }) {
-    const id = String(txid);
-    const idx = Number(index);
-    const spk = spkOf(scriptPublicKey);
-    const utxo = {
-      address: address || undefined,
-      outpoint: { transactionId: id, index: idx },
-      amount: BigInt(amount),
-      scriptPublicKey: { version: Number(spk.version || 0), script: hexish(spk.script) },
-      blockDaaScore: BigInt(blockDaaScore || 0),
-      isCoinbase: !!isCoinbase
-    };
-    return new k.TransactionInput({
-      previousOutpoint: new k.TransactionOutpoint(new k.Hash(id), idx),
-      signatureScript: signatureScript || '',
-      sequence: 0n,
-      sigOpCount: 0,
-      computeBudget: Number(computeBudget || 10),
-      utxo
-    });
-  }
-  let tx;
-  let scripts;
-  let signKasInputs;
-  let inSum;
-  try {
-  const tokenIns = selected.map(p => {
-    const redeem = p.redeem.script;
-    const spk = k.payToScriptHashScript(redeem);
-    return inputFromUtxo({
-      txid: p.transactionId,
-      index: p.index,
-      amount: p.value,
-      scriptPublicKey: spk,
-      address: String(k.addressFromScriptPublicKey(spk, 'mainnet') || ''),
-      signatureScript: transferSigScript(k, redeem, next, witnesses),
-      computeBudget: 100
-    });
-  });
-  const tokenScripts = tokenIns.map(inp => hexish(inp.signatureScript));
-  const kasIns = picked.map(e => inputFromUtxo({
-    txid: e.outpoint.transactionId,
-    index: e.outpoint.index,
-    amount: e.amount,
-    scriptPublicKey: e.scriptPublicKey,
-    address: wallet.address,
-    blockDaaScore: e.blockDaaScore,
-    isCoinbase: e.isCoinbase,
-    computeBudget: 10
-  }));
-  const covOutputs = tokenOuts.map(o =>
-    new k.TransactionOutput(o.value, o.spk, new k.CovenantBinding(0, new k.Hash(tokenCovid)))
-  );
-  inSum = inCellKas + feeSum;
-  const changeSpk = k.payToAddressScript(wallet.address);
-  const outputs = kasChange > 0n
-    ? [...covOutputs, new k.TransactionOutput(kasChange, changeSpk)]
-    : covOutputs;
-
-  tx = new k.Transaction({
-    version: 1,
-    inputs: [...tokenIns, ...kasIns],
-    outputs,
-    lockTime: 0n,
-    gas: 0n,
-    payload: '',
-    subnetworkId: NATIVE_SUBNET
-  });
-  prepInputs(tx, { sigOpCount: 0, computeBudget: 10 });
-  const tokenN = tokenIns.length;
-  for (let i = 0; i < tokenN; i++) {
-    tx.inputs[i].computeBudget = 100;
-    tx.inputs[i].signatureScript = tokenScripts[i];
-  }
-  try { k.updateTransactionMass(networkId(), tx); } catch {}
-  if (!txUnderCap(k, tx)) {
-    throw massSplitError();
-  }
-
-  signKasInputs = function signKasInputs() {
-    const signed = tokenScripts.slice();
-    for (let i = tokenN; i < tx.inputs.length; i++) {
-      const sig = k.createInputSignature(tx, i, priv, k.SighashType.All);
-      tx.inputs[i].signatureScript = hexish(sig);
-      signed.push(hexish(sig));
-    }
-    return signed;
-  };
-  scripts = signKasInputs();
-  } catch (e) {
-    const m = errText(e);
-    if (/null pointer/i.test(m)) throw new Error('KCC20 send failed in the Kaspa engine while building the tx. Hard-refresh and try 20 KKDAG again.');
-    throw e;
-  }
-  onStatus?.('Broadcasting KCC20 send…');
-  let txId;
-  try {
-    txId = await submitSignedRpc(k, rpc, url, tx, {
-      sigOpCount: 0,
-      computeBudget: 100,
-      lockTime: 0,
-      scripts
-    });
-  } catch (e) {
-    if (isMassError(e)) throw massSplitError();
-    const need = requiredFeeFromError(e);
-    if (!need) throw e;
-    const paid = inSum - [...tx.outputs].reduce((a, o) => a + BigInt(o.value), 0n);
-    if (need <= paid) throw e;
-    const last = tx.outputs.length - 1;
-    const extra = need - paid + 50_000n;
-    if (kasChange <= extra) throw e;
-    tx.outputs[last].value = BigInt(tx.outputs[last].value) - extra;
-    const scripts2 = signKasInputs();
-    txId = await submitSignedRpc(k, rpc, url, tx, {
-      sigOpCount: 0,
-      computeBudget: 100,
-      lockTime: 0,
-      scripts: scripts2
-    });
-  }
-  return {
-    txId,
-    revealId: txId,
-    tick,
-    amt: sendAmt.toString(),
-    dest,
-    change: changeTok.toString()
-  };
+  throw lastErr || massSplitError();
 }
 
 const WITNESS_KAS = 20_000_000n; // 0.2 KAS co-present CLTV UTXO — SCRIPT_HASH witness + sweep fee

@@ -58,7 +58,7 @@ import {
 } from './atrade.js?v=100';
 import { SCORPION_MEMORY } from './scorpionMemory.js?v=142';
 
-export const BUILD = '146';
+export const BUILD = '147';
 
 const TOKEN_FALLBACK_LOGO = 'assets/ttt.png';
 
@@ -126,6 +126,10 @@ function vaultCounterpartyKey(vault) {
 
 function isLifeVault(v) {
   return v?.type === 'life' || !!v?.lifeKind || !!v?.params?.lifeKind;
+}
+
+function isDdPayVault(v) {
+  return v?.type === 'ddpay';
 }
 
 function isDcaVault(v) {
@@ -253,6 +257,7 @@ const autoSweepTriedAt = new Map();
 const freezeTimers = new Map();
 let kccHoldings = [];
 let krcHoldings = [];
+let kkdCellCache = [];
 let kronPx = {};
 let kronTradeBasis = {};
 const BASIS_KEY = 'kcc20_basis_v1';
@@ -1791,7 +1796,19 @@ function renderHoldings() {
   const kasRow = tokenRow({ ...NATIVE_KAS, sompi: balanceSompi, usd: usd(kas()), protocol: 'native' }, 'data-ticker="KAS"');
   const kccRows = kccHoldings.map(t => tokenRow(t));
   const krcRows = krcHoldings.map(t => tokenRow(t));
-  const locked = loadVaults().filter(v => v.address && vaultLockedSompi(v) > 0 && !isVaultHistory(v) && v.status !== 'cancelled' && !isDcaVault(v));
+  const ddRows = (isTttTreasuryWallet() ? kkdCellCache : []).map(c => `
+    <button class="row token-row" type="button" data-dd-cell="${esc(c.txid)}:${esc(String(c.index))}">
+      <div class="dot" style="background:rgba(122,162,247,.2);color:#7aa2f7">↓</div>
+      <div>
+        <div class="title">DD pay-in</div>
+        <div class="sub">${esc(c.pAddr ? shortAddr(c.pAddr, 12, 8) : (c.txid ? c.txid.slice(0, 14) + '…' : 'KKDAG cell'))}</div>
+      </div>
+      <div class="amt">
+        <b>${esc(Number(c.amt).toLocaleString())}</b>
+        <em class="pnl up">incoming KKDAG</em>
+      </div>
+    </button>`);
+  const locked = loadVaults().filter(v => v.address && vaultLockedSompi(v) > 0 && !isVaultHistory(v) && v.status !== 'cancelled' && !isDcaVault(v) && !isDdPayVault(v));
   const lockRows = locked.map(v => {
     const sec = remainingLockSec(v.unlockDaa, v.unlockAt);
     const lockedNow = sec == null || sec > 0;
@@ -1810,12 +1827,12 @@ function renderHoldings() {
       </div>
     </button>`;
   });
-  const rows = [kasRow, ...kccRows, ...krcRows, ...lockRows];
+  const rows = [kasRow, ...kccRows, ...ddRows, ...krcRows, ...lockRows];
   const pnlKey = kccHoldings.map(t => {
     const p = holdingPnl(t);
     return `${t.ticker}:${p?.value?.toFixed?.(4) || ''}:${p?.chg24?.toFixed?.(2) || ''}:${p?.pct?.toFixed?.(2) || ''}:${p?.mode || ''}`;
   }).join(',');
-  const key = `${balanceSompi}|${kccHoldings.map(t => `${t.ticker}:${t.balance}:${t.image || ''}`).join(',')}|${krcHoldings.map(t => `${t.ticker}:${t.balance}`).join(',')}|${locked.map(v => v.address + ':' + (v.fundedSompi || 0)).join(',')}|${pnlKey}`;
+  const key = `${balanceSompi}|${kccHoldings.map(t => `${t.ticker}:${t.balance}:${t.image || ''}`).join(',')}|${krcHoldings.map(t => `${t.ticker}:${t.balance}`).join(',')}|${locked.map(v => v.address + ':' + (v.fundedSompi || 0)).join(',')}|${pnlKey}|${kkdCellCache.map(c => c.amt + ':' + c.txid).join(',')}`;
   const box = $('holdings');
   paintUtxoCount();
   if (box?.dataset.key === key) return;
@@ -1957,6 +1974,7 @@ async function renderTokKcom() {
 }
 
 function vaultStatusLine(v) {
+  if (isDdPayVault(v)) return 'Incoming DD credit · ' + (vaultTokenLabel(v) || 'KKDAG');
   const tok = vaultTokenLabel(v);
   const locked = vaultLockedSompi(v);
   const amt = tok || (locked ? formatAmount(locked) + ' KAS' : '0 KAS');
@@ -2094,7 +2112,9 @@ function renderVault() {
     </button>`).join('');
   const empty = showVaultHistory
     ? 'Nothing finished yet. Swept capsules land here.'
-    : 'No vaults yet. Tap Time Capsule to lock a little KAS for a few minutes — a safe first try.';
+    : (isTttTreasuryWallet()
+      ? 'No DD pay-ins listed yet. Incoming KKDAG cells appear here — Home still shows the combined bag.'
+      : 'No vaults yet. Tap Time Capsule to lock a little KAS for a few minutes — a safe first try.');
   $('vault-mine').innerHTML = mine.length
     ? mine.map(v => `
       <div class="row token-row vault-card${showVaultHistory ? ' history' : ''}">
@@ -2107,7 +2127,7 @@ function renderVault() {
           <button class="nav-btn ghost" data-vault="${esc(v.address || '')}">Info</button>
           ${showVaultHistory ? '' : (isDcaVault(v)
             ? `<button class="nav-btn" data-deldca="${esc(v.address || '')}">Delete</button>`
-            : `<button class="nav-btn" data-sweep="${esc(v.address || '')}">Sweep</button>`)}
+            : `<button class="nav-btn" data-sweep="${esc(v.address || '')}">${isDdPayVault(v) ? 'Send' : 'Sweep'}</button>`)}
         </div>
       </div>`).join('')
     : `<div class="empty vault-empty">${empty}</div>`;
@@ -2750,6 +2770,35 @@ function paintTreasuryHome() {
   const n = Math.floor(kkdagsHeld(kccHoldings));
   const lab = $('dd-treasury-lab');
   if (lab) lab.textContent = 'DD treasury · ' + n.toLocaleString() + ' KKDAG';
+  refreshDdInbox().catch(() => {});
+}
+
+async function refreshDdInbox() {
+  if (!wallet?.address || !isTttTreasuryWallet()) {
+    kkdCellCache = [];
+    return;
+  }
+  kkdCellCache = await kkdagCellsFor(wallet.address);
+  for (const c of kkdCellCache) {
+    if (!c.pAddr) continue;
+    const exists = loadVaults().some(v => v.address === c.pAddr || (v.txId === c.txid && String(v.cellIndex) === String(c.index)));
+    if (exists) continue;
+    saveVault({
+      type: 'ddpay',
+      name: 'DD pay-in · ' + Number(c.amt).toLocaleString() + ' KKDAG',
+      address: c.pAddr,
+      tick: 'KKDAG',
+      tokenAmount: String(c.amt),
+      decimals: 0,
+      asset: 'kcc20',
+      status: 'locked',
+      txId: c.txid,
+      cellIndex: c.index,
+      owner: wallet.address
+    });
+  }
+  if (currentTab === 'home') renderHoldings();
+  if (currentTab === 'vault') renderVault();
 }
 
 async function treasuryKkdagOnChain() {
@@ -3889,6 +3938,7 @@ async function refreshTokenHoldings() {
   rememberActiveSnap();
   ingestNewKcc20Cells().catch(() => {});
   ingestKronActivity(addr).catch(() => {});
+  refreshDdInbox().catch(() => {});
   if (currentTab === 'home') renderHome();
   if (currentTab === 'tokens') renderTokens();
   if (currentTab === 'you') renderProfile();
@@ -9272,6 +9322,11 @@ function bind() {
       openLockTimer(vault);
       return;
     }
+    const dd = e.target.closest('[data-dd-cell]');
+    if (dd?.dataset.ddCell) {
+      openTreasurySweep().catch(err => toast(errText(err)));
+      return;
+    }
     const row = e.target.closest('[data-token-key], [data-ticker]');
     if (!row) return;
     if (row.dataset.ticker === 'KAS') { openKasSheet(); return; }
@@ -9316,6 +9371,14 @@ function bind() {
       e.stopPropagation();
       const vault = loadVaults().find(v => v.address === sweepBtn.dataset.sweep);
       if (!vault) { toast('Vault not found'); return; }
+      if (isDdPayVault(vault)) {
+        openSend({
+          assetKey: 'kcc20:KKDAG',
+          destination: otherWallets().find(w => !sameAddrPayload(w.address, TTT_TREASURY))?.address || '',
+          amount: String(vault.tokenAmount || '')
+        });
+        return;
+      }
       unlockVault(vault).catch(err => { toast(errText(err)); });
       return;
     }

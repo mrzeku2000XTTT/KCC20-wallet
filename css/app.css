@@ -148,9 +148,16 @@ img { display: block; max-width: 100%; }
 .ttt-screen.hidden { display: none !important; }
 .ttt-head {
   display: flex; align-items: center; justify-content: space-between;
+  gap: 8px;
   padding: 0 16px 8px; flex-shrink: 0;
 }
-.ttt-head h2 { font-size: 17px; font-weight: 750; letter-spacing: -0.3px; }
+.ttt-head h2 { font-size: 17px; font-weight: 750; letter-spacing: -0.3px; flex: 1; text-align: center; }
+.ttt-fund {
+  height: 28px; padding: 0 12px; border: 0; border-radius: 9px;
+  font-size: 12px; font-weight: 750; letter-spacing: -0.2px; cursor: pointer;
+  background: linear-gradient(180deg, #f3e2bf, #c9a36a); color: #1a140c;
+  flex-shrink: 0;
+}
 .ttt-mark { width: 28px; height: 28px; object-fit: contain; border-radius: 6px; background: #fff; }
 .ttt-frame { flex: 1; width: 100%; min-height: 0; border: 0; background: #fff; }
 
@@ -888,7 +895,7 @@ img { display: block; max-width: 100%; }
 #sheet-status { flex: 1 0 100%; margin: 0 !important; }
 .toast {
   position: absolute; top: 72px; left: 50%; transform: translateX(-50%);
-  z-index: 100; padding: 12px 16px; border-radius: 14px;
+  z-index: 120; padding: 12px 16px; border-radius: 14px;
   background: var(--glass-2); border: 0.5px solid var(--hairline);
   font-size: 13px; white-space: normal; word-break: break-word;
   max-width: 88%; max-height: 40%; overflow: auto;

@@ -12,7 +12,7 @@
   <link rel="icon" href="assets/icon.png">
   <title>KCC20 Wallet</title>
   <meta http-equiv="Cache-Control" content="no-store, no-cache, must-revalidate">
-  <link rel="stylesheet" href="css/app.css?v=140">
+  <link rel="stylesheet" href="css/app.css?v=142">
 </head>
 <body>
   <img class="bg-poster" src="assets/bg.jpg" alt="">
@@ -551,6 +551,7 @@
         <div class="ttt-head">
           <button type="button" class="trade-x" id="ttt-close">Close</button>
           <h2>TTT</h2>
+          <button type="button" class="ttt-fund" id="ttt-fund">Fund</button>
           <img class="ttt-mark" src="assets/ttt.png" alt="TTT">
         </div>
         <iframe id="ttt-frame" class="ttt-frame" title="tttz.xyz" referrerpolicy="no-referrer-when-downgrade" allow="clipboard-write; fullscreen; storage-access"></iframe>
@@ -787,7 +788,7 @@
   <script type="module">
     import('./js/iframeVault.js?v=121').then(function (mod) {
       return (mod.restoreIframeVault ? mod.restoreIframeVault() : Promise.resolve()).then(function () {
-        return import('./js/app.js?v=141');
+        return import('./js/app.js?v=142');
       });
     }).catch(function (err) {
       console.error(err);

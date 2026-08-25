@@ -327,12 +327,12 @@ async function handleSendToken(req) {
   if (!originAllowed(origin)) await handleConnect(req);
   if (netName() !== 'kaspa_mainnet') throw new Error('TTT credits are mainnet KKDAG. Switch this wallet off TN10.');
   const tick = String(req.params?.tick || req.params?.ticker || 'KKDAG').toUpperCase();
-  const amount = String(req.params?.amount ?? req.params?.amountHuman ?? '').trim();
+  let amount = String(req.params?.amount ?? req.params?.amountHuman ?? '').trim();
   let dest = String(req.params?.dest || req.params?.to || req.params?.treasury || '').trim();
   if (!/^[A-Z0-9]{2,12}$/.test(tick)) throw new Error('Bad ticker');
-  if (!(Number(amount) > 0)) throw new Error('Enter how many ' + tick + ' to send');
+  if (!(Number(amount) > 0)) amount = '10';
   const pinned = pinnedTreasury(origin);
-  if (!dest) dest = pinned;
+  if (!dest) dest = pinned || (isTttOrigin(origin) ? TTT_TREASURY : '');
   if (!/^kaspa:q[a-z0-9]{20,120}$/i.test(dest)) {
     throw new Error('TTT must pass its treasury as a kaspa:q… address (full, not truncated)');
   }
@@ -446,7 +446,13 @@ function announce() {
   } catch {}
 }
 
+export const TTT_TREASURY = 'kaspa:qq5yhvly6338dspa9mm24g8q6chvy6v0jww3k4dgqywh0lju5mmm5pj334ews';
 const TTT_ORIGINS = ['https://tttz.xyz', 'https://www.tttz.xyz', 'http://127.0.0.1:5173', 'http://localhost:5173', 'http://127.0.0.1:4173', 'http://localhost:4173'];
+
+function isTttOrigin(origin) {
+  const o = String(origin || '').toLowerCase();
+  return TTT_ORIGINS.some(x => x.toLowerCase() === o) || o.endsWith('tttz.xyz');
+}
 
 export function pingTttDappFrame(frame) {
   const win = frame && frame.contentWindow;

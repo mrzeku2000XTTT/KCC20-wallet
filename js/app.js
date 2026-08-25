@@ -24,7 +24,7 @@ import {
   newHashlockSecret, checkinHop, currentHop, parseXmssKit, p2shFromRedeemHex, spendXmssVault,
   disconnectRpc, buildDcaDrips, sendKasMany, releaseDcaDrip, cancelDcaDrip, isMassError
 } from './tx.js?v=135';
-import { bootDappConnect, pingTttDappFrame } from './dappConnect.js?v=141';
+import { bootDappConnect, pingTttDappFrame, TTT_TREASURY } from './dappConnect.js?v=142';
 import { schedulePersistIframeVault, bootIframeVaultWatch } from './iframeVault.js?v=120';
 import { kronMarkets, quoteKronTrade, executeKronTrade, formatKasSompi, lookupKronTick, liveQuote, tradeCostLines, attachKronLogos, kronCandles, quoteKcc20Bridge, executeKcc20Bridge, formatTokenRaw } from './kronTrade.js?v=140';
 import {
@@ -56,9 +56,9 @@ import {
   rememberLaunch, loadLaunched, cookOwnerBalances, cookDeployed,
   cookTickOf, cookBookLevels
 } from './atrade.js?v=100';
-import { SCORPION_MEMORY } from './scorpionMemory.js?v=141';
+import { SCORPION_MEMORY } from './scorpionMemory.js?v=142';
 
-export const BUILD = '141';
+export const BUILD = '142';
 
 const TOKEN_FALLBACK_LOGO = 'assets/ttt.png';
 
@@ -2677,6 +2677,61 @@ function openTtt() {
   $('ttt-screen')?.classList.remove('hidden');
   $('ttt-screen')?.setAttribute('aria-hidden', 'false');
   $('tabbar')?.classList.remove('show');
+}
+
+function notifyTttTokenSent(payload) {
+  const win = $('ttt-frame')?.contentWindow;
+  if (!win) return;
+  const msg = { ns: 'kcc20', type: 'event', event: 'tokenSent', payload };
+  for (const o of ['https://tttz.xyz', 'https://www.tttz.xyz']) {
+    try { win.postMessage(msg, o); } catch {}
+  }
+}
+
+function openTttFund() {
+  haptic();
+  if (isTestnet()) { toast('TTT credits are mainnet KKDAG. Switch off TN10.'); return; }
+  const have = kkdagsHeld(kccHoldings);
+  if (!(have > 0)) {
+    toast('Buy KKDAG on Home → Tokens first, then Fund TTT');
+    return;
+  }
+  const dest = TTT_TREASURY;
+  const max = Math.floor(have);
+  const start = String(Math.min(10, max) || 1);
+  openSheet('Fund TTT with KKDAG', `
+    <p class="muted" style="text-align:left;padding:0 0 10px;">TTT’s in-app Fund button copies an address. This Sign sheet sends <b>real KKDAG</b> from this wallet to TTT’s treasury.</p>
+    <div class="kv"><span class="k">You hold</span><span class="v">${esc(String(have))} KKDAG</span></div>
+    <div class="kv kv-stack"><span class="k">Treasury</span><span class="v">${esc(dest)}</span></div>
+    <div class="field"><label>Amount (KKDAG)</label>
+      <div class="dest-row">
+        <input id="ttt-fund-amt" type="text" inputmode="decimal" value="${esc(start)}">
+        <button class="max-btn" id="ttt-fund-max" type="button">Max</button>
+      </div>
+    </div>
+  `, {
+    confirm: 'Sign & send',
+    gold: true,
+    onConfirm: async () => {
+      const amount = String($('ttt-fund-amt')?.value || '').trim();
+      if (!(Number(amount) > 0)) throw new Error('Enter how many KKDAG');
+      if (Number(amount) > have + 1e-9) throw new Error('More than you hold');
+      setSheetStatus('Signing KKDAG send…');
+      const result = await dappSendToken({ tick: 'KKDAG', amount, dest });
+      notifyTttTokenSent(result);
+      closeSheet();
+      toast('Sent ' + amount + ' KKDAG to TTT');
+      openSheet('KKDAG sent to TTT', `
+        <div class="kv"><span class="k">Amount</span><span class="v">${esc(amount)} KKDAG</span></div>
+        <div class="kv kv-stack"><span class="k">To</span><span class="v">${esc(dest)}</span></div>
+        ${txidBlock(result.txId)}
+        <p class="muted" style="text-align:left;padding-top:8px;">On-chain send is done. TTT credits that tx after Base44 wires Fund to sendToken (not copy-address).</p>
+      `, { confirm: 'Done', cancel: false, onConfirm: () => closeSheet() });
+    }
+  });
+  $('ttt-fund-max')?.addEventListener('click', () => {
+    if ($('ttt-fund-amt')) $('ttt-fund-amt').value = String(max);
+  });
 }
 
 function closeTtt() {
@@ -9021,6 +9076,7 @@ function bind() {
   });
   click('profile-build', openTtt);
   click('ttt-close', closeTtt);
+  click('ttt-fund', openTttFund);
   click('build-close', closeBuildRoadmap);
   click('build-back', () => showBuildApp('home'));
   click('studio-go', () => generateStudio().catch(err => toast(errText(err))));

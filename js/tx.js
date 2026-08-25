@@ -2268,7 +2268,7 @@ async function cellKasValue(txid, index, hint) {
   throw new Error('Could not load the KAS sitting in this ' + (hint?.tick || 'token') + ' cell. Tap Send now again.');
 }
 
-export async function sendKcc20({ wallet, dest, token, amountHuman, utxos, onStatus }) {
+export async function sendKcc20({ wallet, dest, token, amountHuman, utxos, onStatus, payload = null }) {
   const tick = String(token?.ticker || '').toUpperCase();
   if (!tick) throw new Error('Missing KCC20 ticker');
   if (!isKrcDest(dest)) throw new Error('Destination must be a kaspa: address');
@@ -2482,13 +2482,16 @@ export async function sendKcc20({ wallet, dest, token, amountHuman, utxos, onSta
     ? [...covOutputs, new k.TransactionOutput(kasChange, changeSpk)]
     : covOutputs;
 
+  const payBytes = !payload
+    ? ''
+    : (payload instanceof Uint8Array ? payload : new TextEncoder().encode(String(payload)));
   tx = new k.Transaction({
     version: 1,
     inputs: [...tokenIns, ...kasIns],
     outputs,
     lockTime: 0n,
     gas: 0n,
-    payload: '',
+    payload: (payBytes && payBytes.length && payBytes.length <= 80) ? payBytes : '',
     subnetworkId: NATIVE_SUBNET
   });
   prepInputs(tx, { sigOpCount: 0, computeBudget: 10 });

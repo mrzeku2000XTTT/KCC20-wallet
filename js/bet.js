@@ -9,7 +9,7 @@ export const HIRE_PER_HOUR = 100;
 export const SUB_KKDAG = 1000;
 export const WINDOW_MS = 15 * 60 * 1000;
 export const REFUND_GRACE_MS = 15 * 60 * 1000;
-export const POOL_SEED = 10;
+export const POOL_SEED = 0;
 export const MAX_HOURS = 8;
 export const MAX_HOURS_SUB = 24;
 export const BET_FEE_BPS = 200;
@@ -136,7 +136,7 @@ function payloadToText(raw) {
 
 export async function fetchPublicBetTape() {
   const url = kaspaRestBase() + '/addresses/' + encodeURIComponent(BET_AGENT_ADDR)
-    + '/full-transactions?limit=50&resolve_previous_outpoints=no';
+    + '/full-transactions?limit=100&resolve_previous_outpoints=no';
   const res = await fetch(url);
   if (!res.ok) throw new Error('Bet tape ' + res.status);
   const data = await res.json();
@@ -257,13 +257,20 @@ export function addPoolStake(tick, start, side, kas, openPx) {
   return savePool(pool);
 }
 
+/** Kalshi-style implied probability: YES ¢ = 100 × YES notional / (YES + NO).
+    Empty book = 50. One-sided book = 99/1. Ticket count used only if amounts are missing. */
 export function yesCentsFromPool(pool) {
-  const yes = POOL_SEED + Math.max(0, Number(pool?.yesKas || 0));
-  const no = POOL_SEED + Math.max(0, Number(pool?.noKas || 0));
+  const yes = Math.max(0, Number(pool?.yesKas || 0));
+  const no = Math.max(0, Number(pool?.noKas || 0));
+  const nYes = Math.max(0, Number(pool?.nYes || 0));
+  const nNo = Math.max(0, Number(pool?.nNo || 0));
   const tot = yes + no;
-  if (!(tot > 0)) return 50;
-  const cents = Math.round(100 * yes / tot);
-  return Math.max(1, Math.min(99, cents));
+  if (tot > 0) {
+    return Math.max(1, Math.min(99, Math.round(100 * yes / tot)));
+  }
+  const n = nYes + nNo;
+  if (n > 0) return Math.max(1, Math.min(99, Math.round(100 * nYes / n)));
+  return 50;
 }
 
 export function hasOpponent(pool) {

@@ -23,7 +23,7 @@ import {
   fetchOwnedUtxos, collectSpendableUtxos, buildSentinelChain, buildRecurringChain, buildHashlockCovenant,
   newHashlockSecret, checkinHop, currentHop, parseXmssKit, p2shFromRedeemHex, spendXmssVault,
   disconnectRpc, buildDcaDrips, sendKasMany, releaseDcaDrip, cancelDcaDrip
-} from './tx.js?v=131';
+} from './tx.js?v=132';
 import { bootDappConnect, pingTttDappFrame } from './dappConnect.js?v=121';
 import { schedulePersistIframeVault, bootIframeVaultWatch } from './iframeVault.js?v=120';
 import { kronMarkets, quoteKronTrade, executeKronTrade, formatKasSompi, lookupKronTick, tradeCostLines, attachKronLogos, kronCandles } from './kronTrade.js?v=123';
@@ -36,7 +36,7 @@ import {
   betProtocolFee, BET_FEE_BPS, betIdFromAddr, betIdFromTxid, encodeBetNotice, fetchPublicBetTape,
   poolFromTape, mergeTapeAndLocal, userPubFromAddr, marketId,
   betDecimals, betMinStake, betStakeStep, humanTokenBalance, snapBetStake
-} from './bet.js?v=131';
+} from './bet.js?v=132';
 import {
   migrateReceiveBook, ownedAddresses, markAddressUsed, currentReceive,
   deriveReceiveBatch, unusedReceiveCount, ensurePrivacyBook
@@ -56,9 +56,9 @@ import {
   rememberLaunch, loadLaunched, cookOwnerBalances, cookDeployed,
   cookTickOf, cookBookLevels
 } from './atrade.js?v=100';
-import { SCORPION_MEMORY } from './scorpionMemory.js?v=131';
+import { SCORPION_MEMORY } from './scorpionMemory.js?v=132';
 
-export const BUILD = '131';
+export const BUILD = '132';
 
 const TOKEN_FALLBACK_LOGO = 'assets/ttt.png';
 
@@ -5172,10 +5172,14 @@ async function paintBetMarket() {
   const noAmt = Number(pool.noKas || 0);
   const unit = tick;
   if ($('bet-pool')) {
-    $('bet-pool').textContent = 'Live ' + yes + '¢ YES / ' + (100 - yes) + '¢ NO · '
-      + yesAmt.toLocaleString() + ' ' + unit + ' YES · ' + noAmt.toLocaleString() + ' ' + unit + ' NO · '
-      + traders + ' ticket' + (traders === 1 ? '' : 's')
-      + (hasOpponent(pool) ? ' · matched' : ' · 50/50 until the other side fills');
+    if (!traders && yesAmt + noAmt <= 0) {
+      $('bet-pool').textContent = '50¢ / 50¢ · nobody on this 15m market yet · first YES or NO sets the ratio';
+    } else {
+      $('bet-pool').textContent = yes + '¢ YES / ' + (100 - yes) + '¢ NO  ·  '
+        + (live.nYes || 0) + ' yes vs ' + (live.nNo || 0) + ' no  ·  '
+        + yesAmt.toLocaleString() + ' / ' + noAmt.toLocaleString() + ' ' + unit
+        + '  ·  ' + yesAmt + ':' + noAmt;
+    }
   }
   if ($('bet-net')) $('bet-net').textContent = 'Open ' + fmtPx(pool.openPx || px) + ' · now ' + fmtPx(px);
   paintBetLive(merged);
@@ -5274,7 +5278,8 @@ async function placeBet(side, opts = {}) {
       token: hold,
       amountHuman: String(sendAmt),
       utxos: await fetchAddressUtxos(wallet.address).catch(() => []),
-      onStatus: (m) => toast(m)
+      onStatus: (m) => toast(m),
+      payload: encodeBetNotice({ tick, side, start: w.start, sizeKas: size })
     });
   }
   const openPx = Number(info?.price || 0);

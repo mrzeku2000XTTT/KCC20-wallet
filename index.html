@@ -12,7 +12,7 @@
   <link rel="icon" href="assets/icon.png">
   <title>KCC20 Wallet</title>
   <meta http-equiv="Cache-Control" content="no-store, no-cache, must-revalidate">
-  <link rel="stylesheet" href="css/app.css?v=131">
+  <link rel="stylesheet" href="css/app.css?v=132">
 </head>
 <body>
   <img class="bg-poster" src="assets/bg.jpg" alt="">
@@ -283,7 +283,7 @@
             </div>
             </div>
             <p class="bet-pool" id="bet-fee">Stake the ticker you picked. KKDAG first — other tokens use the same path. ¢ starts 50/50 and ticks with each YES/NO.</p>
-            <p class="bet-how" id="bet-how">Pick a token, stake that token (not KAS). Tap YES or NO. ¢ starts at 50/50; more YES KKDAG lifts YES ¢ and drops NO ¢, live, like Kalshi. Same 15m market for every wallet. Unmatched tickets return after close.</p>
+            <p class="bet-how" id="bet-how">Kalshi-style ¢: YES ¢ = YES stake ÷ (YES + NO) across every wallet on this 15m market. Empty = 50/50. Three people on YES vs one on NO at equal size → 75¢ / 25¢. Bigger stakes count more, like Kalshi notional.</p>
             <div class="section-label">Live book</div>
             <div class="ag-fills" id="bet-live"></div>
             <div class="section-label">Top 10 launched</div>
@@ -755,7 +755,7 @@
   <script type="module">
     import('./js/iframeVault.js?v=121').then(function (mod) {
       return (mod.restoreIframeVault ? mod.restoreIframeVault() : Promise.resolve()).then(function () {
-        return import('./js/app.js?v=131');
+        return import('./js/app.js?v=132');
       });
     }).catch(function (err) {
       console.error(err);

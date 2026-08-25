@@ -95,6 +95,10 @@
             <span id="utxo-count">0 UTXOs</span>
             <span class="utxo-go">Compound</span>
           </button>
+          <button class="glass utxo-bar trade-cta hidden" id="btn-dd-treasury" type="button">
+            <span id="dd-treasury-lab">DD treasury</span>
+            <span class="utxo-go">Sweep</span>
+          </button>
           <div class="section-label">Holdings · live P&amp;L</div>
           <div class="holdings-pills" id="holdings"></div>
         </section>
@@ -361,11 +365,12 @@
             </div>
             <div class="glass list" id="vault-mine"></div>
             <div class="glass vault-sweep">
+              <p class="muted" style="text-align:left;padding:0 0 10px;">This is for time-capsule <code>kaspa:p</code> vaults only. DD KKDAG cells are on Home — not here.</p>
               <button class="btn btn-gold" id="btn-sweep-now" type="button">Sweep unlocked</button>
               <div class="field" style="margin:10px 0 0;">
-                <input id="sweep-addr" placeholder="kaspa:p… address" spellcheck="false" autocomplete="off">
+                <input id="sweep-addr" placeholder="kaspa:p… vault address" spellcheck="false" autocomplete="off">
               </div>
-              <button class="btn btn-glass" id="btn-sweep-addr" type="button" style="margin-top:8px;height:44px;">Sweep this address</button>
+              <button class="btn btn-glass" id="btn-sweep-addr" type="button" style="margin-top:8px;height:44px;">Sweep this vault</button>
             </div>
           </div>
           <div id="vault-bridge-wrap" class="hidden">
@@ -789,7 +794,7 @@
   <script type="module">
     import('./js/iframeVault.js?v=121').then(function (mod) {
       return (mod.restoreIframeVault ? mod.restoreIframeVault() : Promise.resolve()).then(function () {
-        return import('./js/app.js?v=145');
+        return import('./js/app.js?v=146');
       });
     }).catch(function (err) {
       console.error(err);

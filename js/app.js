@@ -58,7 +58,7 @@ import {
 } from './atrade.js?v=100';
 import { SCORPION_MEMORY } from './scorpionMemory.js?v=142';
 
-export const BUILD = '145';
+export const BUILD = '146';
 
 const TOKEN_FALLBACK_LOGO = 'assets/ttt.png';
 
@@ -1398,6 +1398,7 @@ function renderHome() {
   renderHomeWallets();
   renderHoldings();
   paintDcaHome();
+  paintTreasuryHome();
 }
 
 function knsCheck(title = 'KNS verified') {
@@ -2740,6 +2741,17 @@ function isTttTreasuryWallet() {
   return !!(wallet?.address && sameAddrPayload(wallet.address, TTT_TREASURY));
 }
 
+function paintTreasuryHome() {
+  const bar = $('btn-dd-treasury');
+  if (!bar) return;
+  const on = isTttTreasuryWallet();
+  bar.classList.toggle('hidden', !on);
+  if (!on) return;
+  const n = Math.floor(kkdagsHeld(kccHoldings));
+  const lab = $('dd-treasury-lab');
+  if (lab) lab.textContent = 'DD treasury · ' + n.toLocaleString() + ' KKDAG';
+}
+
 async function treasuryKkdagOnChain() {
   try {
     const body = await fetch(KRON_IDX + '/token/KKDAG/address/' + encodeURIComponent(TTT_TREASURY), { cache: 'no-store' });
@@ -2750,18 +2762,35 @@ async function treasuryKkdagOnChain() {
   }
 }
 
+async function kkdagCellsFor(addr) {
+  const rows = await fetchKronTokenUtxos('KKDAG', addr);
+  const out = [];
+  for (const c of rows || []) {
+    const amt = String(c.amount || '0');
+    if (!(Number(amt) > 0)) continue;
+    const txid = c.outpoint?.transactionId || '';
+    let pAddr = '';
+    try {
+      if (c.redeemScriptHex) {
+        const built = await p2shFromRedeemHex(c.redeemScriptHex);
+        pAddr = built?.address || String(built || '');
+      }
+    } catch {}
+    out.push({ amt, txid, pAddr: pAddr || '', index: Number(c.outpoint?.index ?? 0) });
+  }
+  return out.sort((a, b) => Number(b.amt) - Number(a.amt));
+}
+
 async function openTreasurySweep() {
   haptic();
   const onChain = await treasuryKkdagOnChain();
   const mine = isTttTreasuryWallet();
-  const held = kkdagsHeld(kccHoldings);
   if (!mine) {
     openSheet('Sweep DD treasury (ews)', `
-      <p class="muted" style="text-align:left;padding:0 0 10px;">Users pay KKDAG here for DD credits. The tokens are owned by this key — not by the payer wallet you just used.</p>
+      <p class="muted" style="text-align:left;padding:0 0 10px;">You are on the payer wallet. Switch to <b>Wallet 3</b> (qq5yhvly…ews) — that key already holds the KKDAG. Home then shows Sweep.</p>
       <div class="kv kv-stack"><span class="k">Treasury (ews)</span><span class="v">${esc(TTT_TREASURY)}</span></div>
-      <div class="kv"><span class="k">On-chain KKDAG</span><span class="v">${onChain == null ? '…' : esc(String(onChain))}</span></div>
+      <div class="kv"><span class="k">On-chain KKDAG</span><span class="v">${onChain == null ? '…' : esc(Number(onChain).toLocaleString())}</span></div>
       <div class="kv"><span class="k">This phone</span><span class="v">${esc(shortAddr(wallet?.address || '', 10, 6))}</span></div>
-      <p class="muted" style="text-align:left;padding-top:8px;">Import the 64-hex for <b>qq5yhvly…334ews</b> (TTT → Export keys, or the key that created ews). You → ＋ add wallet. Then Sweep sends that KKDAG to any kaspa:q you pick.</p>
     `, {
       confirm: 'Copy ews address',
       gold: true,
@@ -2775,17 +2804,35 @@ async function openTreasurySweep() {
   }
   try { await refreshTokenHoldings(); } catch {}
   const have = kkdagsHeld(kccHoldings);
-  if (!(have > 0)) {
-    toast(onChain ? ('Treasury is open. Idx shows ' + onChain + ' KKDAG — wait a few seconds, then Sweep again.') : 'No KKDAG on this treasury key yet');
+  const cells = await kkdagCellsFor(wallet.address).catch(() => []);
+  if (!(have > 0) && !cells.length) {
+    toast(onChain ? ('Idx shows ' + Number(onChain).toLocaleString() + ' KKDAG — tap Refresh, then Sweep.') : 'No KKDAG on this treasury key yet');
     return;
   }
+  const cellRows = cells.length
+    ? cells.map(c => `
+        <div class="kv kv-stack">
+          <span class="k">${esc(Number(c.amt).toLocaleString())} KKDAG · cell ${esc(String(c.index))}</span>
+          <span class="v">${esc(c.pAddr || (c.txid ? c.txid.slice(0, 18) + '…' : ''))}</span>
+        </div>`).join('')
+    : '<p class="muted">Cells loading from KRON idx…</p>';
   const others = otherWallets();
-  const dest0 = others[0]?.address || '';
-  closeSheet();
-  openSend({
-    assetKey: 'kcc20:KKDAG',
-    destination: dest0,
-    amount: String(Math.floor(have))
+  const dest0 = others.find(w => !sameAddrPayload(w.address, TTT_TREASURY))?.address || others[0]?.address || '';
+  openSheet('Sweep DD KKDAG', `
+    <p class="muted" style="text-align:left;padding:0 0 10px;">This wallet is ews. Those <code>kaspa:p</code> rows are covenant cells this key owns — not Vault capsules. Sweep sends KKDAG to another of your q-addresses.</p>
+    <div class="kv"><span class="k">Holdings</span><span class="v">${esc(Math.floor(have).toLocaleString())} KKDAG</span></div>
+    ${cellRows}
+  `, {
+    confirm: dest0 ? 'Sweep to ' + (others.find(w => w.address === dest0)?.name || 'wallet') : 'Send KKDAG',
+    gold: true,
+    onConfirm: () => {
+      closeSheet();
+      openSend({
+        assetKey: 'kcc20:KKDAG',
+        destination: dest0,
+        amount: String(Math.floor(have) || Math.floor(Number(onChain) || 0))
+      });
+    }
   });
 }
 
@@ -3908,9 +3955,11 @@ function openTokenSheet(token) {
   const logoSrc = token.image || (token.native ? 'assets/kas.svg' : (token.protocol === 'krc20' ? krc20Logo(token.ticker) : kcc20Identicon(token.ticker)));
   const assetKey = `${token.protocol}:${token.ticker}`;
   const kcc = token.protocol === 'kcc20';
+  const ddSweep = kcc && String(token.ticker).toUpperCase() === 'KKDAG' && isTttTreasuryWallet();
   const acts = [
     tkAct('tk-recv', 'Receive', ICO_RECV),
     tkAct('tk-send', 'Send', ICO_SEND),
+    ...(ddSweep ? [tkAct('tk-dd-sweep', 'Sweep', ICO_SEND, ' tk-buy')] : []),
     ...(kcc ? [
       tkAct('tk-buy', 'Buy', ICO_BUY, ' tk-buy'),
       tkAct('tk-dca', 'DCA', ICO_DCA, ' tk-dca'),
@@ -3929,6 +3978,7 @@ function openTokenSheet(token) {
   `, { confirm: false, cancelLabel: 'Close' });
   $('tk-recv')?.addEventListener('click', () => { closeSheet(); openReceive({ token }); });
   $('tk-send')?.addEventListener('click', () => { closeSheet(); openSend({ token, assetKey }); });
+  $('tk-dd-sweep')?.addEventListener('click', () => { closeSheet(); openTreasurySweep().catch(e => toast(errText(e))); });
   $('tk-buy')?.addEventListener('click', () => { closeSheet(); openTrade({ tick: token.ticker, side: 'buy' }); });
   $('tk-dca')?.addEventListener('click', () => { closeSheet(); openTrade({ tick: token.ticker, side: 'dca' }); });
   $('tk-sell')?.addEventListener('click', () => { closeSheet(); openTrade({ tick: token.ticker, side: 'sell' }); });
@@ -9008,6 +9058,7 @@ function bind() {
   });
   click('btn-refresh', () => { haptic(); refreshAll(); toast('Refreshing'); });
   $('btn-compound')?.addEventListener('click', openCompound);
+  $('btn-dd-treasury')?.addEventListener('click', () => openTreasurySweep().catch(e => toast(errText(e))));
   click('btn-vault-short', () => showPage('vault'));
   $('btn-sweep-now')?.addEventListener('click', () => {
     sweepAllVaults().catch(err => toast(errText(err)));

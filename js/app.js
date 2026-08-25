@@ -58,7 +58,7 @@ import {
 } from './atrade.js?v=100';
 import { SCORPION_MEMORY } from './scorpionMemory.js?v=152';
 
-export const BUILD = '155';
+export const BUILD = '156';
 
 const TOKEN_FALLBACK_LOGO = 'assets/ttt.png';
 
@@ -260,6 +260,7 @@ let lastAutoSweep = 0;
 let autoSweepBusy = false;
 const autoSweepTried = new Set();
 const autoSweepTriedAt = new Map();
+const autoSweepFails = new Map();
 const freezeTimers = new Map();
 let kccHoldings = [];
 let krcHoldings = [];
@@ -7388,7 +7389,9 @@ async function refreshVaultBalances() {
 }
 
 function vaultDue(v, daa) {
-  if (!v?.address || v.status === 'swept' || v.type === 'xmss') return false;
+  if (!v?.address || v.status === 'swept' || v.status === 'cancelled' || v.type === 'xmss') return false;
+  if (isDdPayVault(v) || isDcaVault(v)) return false;
+  if (autoSweepFails.get(v.address)?.quiet) return false;
   if (isHopVault(v) && v.params?.beneficiary && v.params.beneficiary !== wallet?.address) return false;
   const at = Number(v.unlockAt || 0);
   if (at && Date.now() + 800 < at) return false;
@@ -7396,6 +7399,16 @@ function vaultDue(v, daa) {
   if (unlock && daa && daa < unlock) return at ? Date.now() >= at : false;
   if (!unlock && !at) return false;
   return true;
+}
+
+function markVaultReturned(v) {
+  if (!v?.address || v.status === 'swept') return;
+  updateVault(v.address, { status: 'swept', fundedSompi: 0 });
+  autoSweepFails.delete(v.address);
+  try { clearTimeout(freezeTimers.get(v.address)); } catch {}
+  freezeTimers.delete(v.address);
+  if (currentTab === 'home') renderHome();
+  if (currentTab === 'vault') renderVault();
 }
 
 function scheduleFreezeWatch(v) {
@@ -7422,18 +7435,26 @@ async function maybeAutoUnlock() {
     const mine = loadVaults().filter(v => v.address && v.type !== 'dca' && v.type !== 'betescrow' && v.type !== 'bet' && (Number(v.unlockDaa) > 0 || Number(v.unlockAt) > 0 || isHopVault(v)));
     for (const v of mine) {
       if (!vaultDue(v, daa)) continue;
+      const fail = autoSweepFails.get(v.address) || { n: 0 };
+      const backoff = Math.min(180000, 15000 * (2 ** Math.min(fail.n, 3)));
       const lastTry = autoSweepTriedAt.get(v.address) || 0;
-      if (lastTry && Date.now() - lastTry < 12000) continue;
+      if (lastTry && Date.now() - lastTry < backoff) continue;
       autoSweepTriedAt.set(v.address, Date.now());
       let utxosV = [];
       try { utxosV = await fetchAddressUtxos(v.address); } catch {}
-      if (!utxosV.length && !isKcc20Vault(v)) continue;
-      toast(isKcc20Vault(v) ? ('Time lock ended — returning ' + (v.tick || 'KCC20') + '…') : 'Time lock ended — returning KAS…');
+      if (!utxosV.length) {
+        markVaultReturned(v);
+        continue;
+      }
+      if (fail.n < 1) {
+        toast(isKcc20Vault(v) ? ('Time lock ended — returning ' + (v.tick || 'KCC20') + '…') : 'Time lock ended — returning KAS…');
+      }
       try {
         const result = isKcc20Vault(v)
           ? await sweepKcc20Capsule({ wallet, vault: v, utxos: utxosV })
           : await sweepVault({ wallet, vault: v, utxos: utxosV });
         updateVault(v.address, { status: 'swept', unlockTxId: result.txId, fundedSompi: 0, tokenAmount: isKcc20Vault(v) ? '0' : v.tokenAmount });
+        autoSweepFails.delete(v.address);
         noteVaultActivity({
           vault: v,
           label: isKcc20Vault(v) ? 'Unfrozen' : 'Unlocked',
@@ -7457,8 +7478,15 @@ async function maybeAutoUnlock() {
         if (currentTab === 'activity') renderActivity(window.__txs || []);
       } catch (e) {
         console.warn('auto-unlock', e);
-        autoSweepTriedAt.set(v.address, Date.now());
-        scheduleFreezeWatch({ ...v, unlockAt: Date.now() + 12000 });
+        const msg = errText(e);
+        const empty = /empty|nothing to unlock|no frozen|no redeem/i.test(msg);
+        const n = (fail.n || 0) + 1;
+        if (empty) {
+          markVaultReturned(v);
+          continue;
+        }
+        autoSweepFails.set(v.address, { n, quiet: n >= 3, lastErr: msg });
+        if (n < 3) scheduleFreezeWatch({ ...v, unlockAt: Date.now() + backoff });
       }
     }
   } catch (e) {

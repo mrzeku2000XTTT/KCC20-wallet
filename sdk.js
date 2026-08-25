@@ -28,6 +28,31 @@
   var network = '';
   var lastState = null;
   var listeners = {};
+  var SESS = 'kcc20_dapp_sess_v1';
+
+  function loadSess() {
+    try { return JSON.parse(sessionStorage.getItem(SESS) || 'null'); } catch (e) { return null; }
+  }
+  function saveSess() {
+    try {
+      sessionStorage.setItem(SESS, JSON.stringify({
+        accounts: accounts,
+        network: network,
+        lastState: lastState,
+        at: Date.now()
+      }));
+    } catch (e) {}
+  }
+  function clearSess() {
+    try { sessionStorage.removeItem(SESS); } catch (e) {}
+  }
+  (function bootSess() {
+    var s = loadSess();
+    if (!s || !Array.isArray(s.accounts) || !s.accounts.length) return;
+    accounts = s.accounts;
+    network = s.network || '';
+    lastState = s.lastState || null;
+  })();
 
   function on(ev, fn) {
     if (!ev || typeof fn !== 'function') return;
@@ -314,6 +339,7 @@
           emit('chainChanged', network);
         }
         if (r && r.balance) emit('balanceChanged', r);
+        saveSess();
         closeAfterUse();
         return accounts;
       });
@@ -323,6 +349,7 @@
         var finish = function () {
           accounts = [];
           lastState = null;
+          clearSess();
           emit('disconnect');
           resolve();
         };

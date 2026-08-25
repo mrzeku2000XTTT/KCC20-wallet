@@ -1,44 +1,62 @@
-# Base44 prompt — remove TTT PIN pad; KCC20 popup signs
+# Base44 prompt — stop auto wallet popups on App Store
 
-Paste into the **tttz.xyz Base44 agent**. App: `https://tttz.xyz/kcc20test` and App Store v2 Connect/Pay.
+Paste into the **tttz.xyz Base44 agent**. App Store v2, RMX, kcc20test, every app.
 
-## Delete the PIN keypad on TTT
+## The bug
 
-The modal **“Enter KCC20 PIN” / “Confirm to send 10 KKDAG from your KCC20 wallet”** on tttz.xyz must **go**. TTT must **never** collect a PIN.
+You are calling `window.kcc20.connect()` / `window.kasware.requestAccounts()` on **page load**, **route change**, and **when the user opens another app**. That opens the KCC20 popup. Do **not** do that.
 
-Signing is **only** in the KCC20 Wallet popup (`window.kcc20`). That window already asks for PIN.
+The user is already connected for the **tab**. Switching apps must **not** connect again.
 
-**Pay with KCC20** should be:
+## Allowed calls (only these, and only on a button the user just tapped)
+
+Load once in the App Store **shell** (not inside every app iframe):
+
+```html
+<script src="https://kcc-20-wallet.vercel.app/sdk.js"></script>
+```
+
+| User tap | Call | Do not call |
+|---|---|---|
+| **Connect KCC20** button | `await window.kcc20.connect()` then `getState()` | never on load / never when opening an app |
+| **Disconnect** | `await window.kcc20.disconnect()` | never on route change |
+| **Pay / Fund / Send token** | `await window.kcc20.sendToken({ tick, amount, dest })` | never until they tap Pay |
+| **Sign a PSKT you built** | `await window.kcc20.signPskt({ txJsonString, options: { signInputs } })` | never on load |
+| **Broadcast** (optional) | `await window.kcc20.pushTx(signed)` | — |
+
+Future custom methods the wallet team adds (same rule: **only on that button click**). Examples they may add later: `signMessage`, `signPskt`, `sendToken`. Until then, do not invent calls.
+
+## After connect, keep the session
 
 ```js
+// OK anytime, does NOT open a window if already connected:
 const kcc = window.kcc20;
-if (!kcc) throw new Error('Load https://kcc-20-wallet.vercel.app/sdk.js');
-const paid = await kcc.sendToken({ tick, amount, dest }); // or kcc.payKcc20 / request('payKcc20', { tick, amount, dest })
+const acc = await kcc.getAccounts(); // cached
+const st = await kcc.getState();     // cached; KAS / KKDAG / holdings
 ```
 
-No PIN state, no PIN dots, no local hash, no “Enter KCC20 PIN”. On click, **immediately** call `sendToken` (user-gesture so the popup can open). Then show “Sign in the KCC20 Wallet window…”.
+Use `getAccounts` / `getState` to paint the header on RMX / App Store / kcc20test. **Never** `connect()` to “refresh.”
 
-**Connect** should be only:
+On app change (`/rmx`, `/AppStoreV2`, `/kcc20test`):
 
 ```js
-await window.kcc20.connect();
-const state = await window.kcc20.getState(); // address, kas, kkdags, holdings
+if (window.kcc20 && (window.kcc20.accounts || []).length) {
+  // already connected — just paint the chip. NO connect().
+}
 ```
-
-Disconnect: `await window.kcc20.disconnect()`.
 
 ## Do not
 
-- Do not build a PIN pad.
-- Do not store a PIN on Base44.
-- Do not delay `connect()` / `sendToken()` behind your own modal (that steals the click and the popup stays behind).
-- Do not use KasWare when `window.kcc20` exists.
+- Do not call `connect()` / `requestAccounts()` in `useEffect`, router `onEnter`, app card `onClick` (except the Connect button), or a 8s poll.
+- Do not call `window.kasware.requestAccounts()` — `sdk.js` is `window.kcc20`. KasWare is not the TTT connect UI.
+- Do not open a PIN pad on TTT.
+- Do not disconnect when switching apps.
 
 ## Test
 
-1. Hard-refresh KCC20 PWA (sdk always pops/focuses the wallet on Connect and Pay).
-2. tttz.xyz/kcc20test → Connect → **KCC20 window jumps in front**. Approve there. No PIN on TTT.
-3. Pay 10 KKDAG → **KCC20 window jumps in front** with Sign sheet → PIN **in that window** → send.
-4. Disconnect, Connect again → **new/focused KCC20 popup**, you should not hunt the taskbar.
+1. App Store → tap **Connect KCC20** once → one popup → it closes. Header shows address.
+2. Open RMX, then kcc20test, then another app → **zero** popups. Header still connected.
+3. Tap **Pay** → popup for Sign only → closes.
+4. Disconnect → Connect → one popup again.
 
-If the popup is blocked: “Allow popups for tttz.xyz”.
+Ship that. Popup only for Connect and Pay/Sign clicks.

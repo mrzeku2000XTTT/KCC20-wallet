@@ -39,6 +39,26 @@ export function kaswareEnabled() {
   return !!loadKaswarePref().enabled;
 }
 
+function hasNativeHex(w) {
+  const s = String(w?.privKey || '').replace(/^0x/i, '').trim();
+  return /^[0-9a-fA-F]{64}$/.test(s);
+}
+
+/** Named KasWare chip in this app — no in-app key; extension must sign. */
+export function walletIsKaswareChip(w) {
+  if (!w) return false;
+  if (w.kasware && !hasNativeHex(w)) return true;
+  const theirs = kaswareConnectedAddress();
+  if (!hasNativeHex(w) && theirs && sameKasAddr(w.address, theirs)) return true;
+  return false;
+}
+
+export function setKaswareEnabled(on) {
+  const pref = loadKaswarePref();
+  pref.enabled = !!on;
+  saveKaswarePref(pref);
+}
+
 export function kaswareNetName(net) {
   return (net || networkId()) === 'testnet-10' ? 'kaspa_testnet_10' : 'kaspa_mainnet';
 }
@@ -85,17 +105,33 @@ export function kaswareConnectedAddress() {
 }
 
 export function kaswareSigning(wallet) {
-  if (!kaswareEnabled()) return false;
   if (!isKaswareInstalled()) return false;
+  if (!kaswareEnabled() && !walletIsKaswareChip(wallet)) return false;
   const mine = wallet?.address || '';
   const theirs = kaswareConnectedAddress();
+  if (walletIsKaswareChip(wallet) && mine && theirs && sameKasAddr(mine, theirs)) return true;
+  if (walletIsKaswareChip(wallet) && mine && !theirs) return true;
+  if (!kaswareEnabled()) return false;
   if (mine && theirs && sameKasAddr(mine, theirs)) return true;
   if (mine && !theirs) return true;
   return false;
 }
 
+/** When Home is the KasWare-named chip, arm the Settings toggle so Compound/Send pop the extension. */
+export async function autoArmKaswareForWallet(w) {
+  if (!walletIsKaswareChip(w)) return false;
+  if (!isKaswareInstalled()) return false;
+  const pref = loadKaswarePref();
+  pref.enabled = true;
+  if (w?.address) pref.address = pref.address || w.address;
+  saveKaswarePref(pref);
+  try { await ensureKaswareSigner(w); } catch {}
+  return true;
+}
+
 export async function ensureKaswareSigner(wallet) {
-  if (!kaswareEnabled()) return false;
+  if (!kaswareEnabled() && !walletIsKaswareChip(wallet)) return false;
+  if (!kaswareEnabled()) setKaswareEnabled(true);
   const p = kaswareProvider();
   if (!p) throw new Error('KasWare is not in this browser. Open Chrome/Edge with the KasWare extension, then toggle it on in Settings.');
   await syncKaswareNetwork();

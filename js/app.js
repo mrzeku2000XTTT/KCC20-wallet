@@ -46,8 +46,8 @@ import { runPhoneStudio, runServerStudio } from './studio.js?v=89';
 import {
   isKaswareInstalled, isDesktopBrowser, kaswareEnabled, kaswareSigning, kaswareConnectedAddress,
   connectKasware, disconnectKasware, bindKaswareEvents, loadKaswarePref, compoundWithKasware,
-  ensureKaswareSigner, syncKaswareNetwork
-} from './kasware.js?v=100';
+  ensureKaswareSigner, syncKaswareNetwork, walletIsKaswareChip, autoArmKaswareForWallet
+} from './kasware.js?v=159';
 import {
   cookMarkets, cookQuote, cookWrappers, pickWrappedMarketId, cookOrderbook, cookCandles,
   cookDeploy, cookBuildOrder, cookFillOrder, cookSweep, cookWrap, cookMint,
@@ -58,7 +58,7 @@ import {
 } from './atrade.js?v=100';
 import { SCORPION_MEMORY } from './scorpionMemory.js?v=152';
 
-export const BUILD = '158';
+export const BUILD = '159';
 
 const TOKEN_FALLBACK_LOGO = 'assets/ttt.png';
 
@@ -1188,6 +1188,9 @@ async function activateWallet(w, { toastMsg } = {}) {
   pinUnlockedFor = '';
   sessionUnlocked = false;
   $('tabbar')?.classList.remove('show');
+  if (walletIsKaswareChip(wallet)) {
+    try { await autoArmKaswareForWallet(wallet); } catch {}
+  }
   if (wallet.kasware && kaswareSigning(wallet)) {
     pinUnlockedFor = wallet.id;
     sessionUnlocked = true;
@@ -6075,7 +6078,7 @@ async function compoundForBet() {
   if ((utxos || []).length < 3) return utxos || [];
   toast('Merging UTXOs so Kaspa accepts the bet…');
   try {
-    await compoundUtxos({ wallet, utxos, signWithKasware: kaswareEnabled() });
+    await compoundUtxos({ wallet, utxos, signWithKasware: kaswareSigning(wallet) || walletIsKaswareChip(wallet) });
   } catch (e) {
     if (!isMassError(e)) throw e;
     throw new Error('Kaspa rejected storage mass. Home → Compound, then hire/bet again.');
@@ -7303,7 +7306,8 @@ function openCompound() {
   const n = Array.isArray(utxos) ? utxos.length : 0;
   if (n < 2) { toast('Already one UTXO'); return; }
   const feeEst = 0.0045 + n * 0.00015;
-  const kw = kaswareSigning(wallet);
+  if (walletIsKaswareChip(wallet)) autoArmKaswareForWallet(wallet).catch(() => {});
+  const kw = kaswareSigning(wallet) || walletIsKaswareChip(wallet);
   openSheet('Compound UTXOs', `
     <div class="kv"><span class="k">Wallet</span><span class="v">${esc(wallet?.name || 'This wallet')}</span></div>
     <div class="kv"><span class="k">Network</span><span class="v">${isTestnet() ? 'TN10' : 'mainnet'}</span></div>
@@ -7329,7 +7333,11 @@ function applyCompoundLocal(result) {
 async function runCompound() {
   toast('Connecting to Kaspa…');
   try {
-    const kw = kaswareSigning(wallet);
+    if (walletIsKaswareChip(wallet)) {
+      setSheetStatus('Arming KasWare to sign this chip…');
+      await autoArmKaswareForWallet(wallet);
+    }
+    const kw = kaswareSigning(wallet) || walletIsKaswareChip(wallet);
     if (kw) {
       setSheetStatus('Matching KasWare to ' + (isTestnet() ? 'TN10' : 'mainnet') + '…');
       await ensureKaswareSigner(wallet);
@@ -9803,15 +9811,16 @@ async function init() {
     }
     if (wallet.kasware && isKaswareInstalled()) {
       try {
+        await autoArmKaswareForWallet(wallet);
         const p = window.kasware;
         let accounts = [];
         try { accounts = await p.getAccounts(); } catch {}
         let addr = Array.isArray(accounts) ? accounts[0] : accounts;
-        if (!addr && kaswareEnabled()) {
+        if (!addr) {
           const linked = await connectKasware();
           addr = linked.address;
         }
-        if (addr && addr === wallet.address) {
+        if (addr && sameAddrPayload(addr, wallet.address)) {
           pinUnlockedFor = wallet.id;
           sessionUnlocked = true;
         }

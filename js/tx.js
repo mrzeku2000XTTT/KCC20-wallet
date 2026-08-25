@@ -1567,7 +1567,7 @@ export async function collectSpendableUtxos(wallet) {
   for (const row of ownedSpendRows(wallet)) {
     try { add(await fetchAddressUtxos(row.address), row); } catch {}
   }
-  if (kaswareSigning(wallet)) {
+  if (kaswareSigning(wallet) || wallet?.kasware) {
     try { add(await fetchKaswareUtxos(wallet.address), { address: wallet.address }); } catch {}
   }
   return [...map.values()];
@@ -1869,7 +1869,7 @@ async function buildSingleOutputCompound(k, entries, dest, rpc) {
 
 export async function compoundUtxos({ wallet, utxos, signWithKasware = false }) {
   const k = await loadKaspaSdk();
-  const external = !!(signWithKasware || (kaswareSigning(wallet) && !wallet?.privKey));
+  const external = !!(signWithKasware || kaswareSigning(wallet) || (wallet?.kasware && !wallet?.privKey));
   const seen = new Set();
   let entries = spendEntriesFrom(utxos, wallet, { allowWatch: external }).filter(e => {
     if (!isP2pkAddr(e.address, wallet.address)) return false;
@@ -1878,7 +1878,13 @@ export async function compoundUtxos({ wallet, utxos, signWithKasware = false }) 
     seen.add(key);
     return true;
   });
-  if (entries.length < 2) throw new Error('Already one UTXO — nothing to compound');
+  if (entries.length < 2) {
+    const raw = (utxos || []).length;
+    if (raw >= 2 && !external) {
+      throw new Error('This chip has no in-app key. Stay on KasWare — Compound will pop the extension to merge.');
+    }
+    throw new Error('Already one UTXO — nothing to compound');
+  }
   entries = [...entries].sort((a, b) => (a.amount < b.amount ? 1 : -1));
   const { rpc, url } = await connectPublicNode();
   let tx = await buildSingleOutputCompound(k, entries, wallet.address, rpc);

@@ -24,7 +24,7 @@ import {
   newHashlockSecret, checkinHop, currentHop, parseXmssKit, p2shFromRedeemHex, spendXmssVault,
   disconnectRpc, buildDcaDrips, sendKasMany, releaseDcaDrip, cancelDcaDrip, isMassError
 } from './tx.js?v=158';
-import { bootDappConnect, pingTttDappFrame, TTT_TREASURY } from './dappConnect.js?v=162';
+import { bootDappConnect, pingTttDappFrame, TTT_TREASURY } from './dappConnect.js?v=163';
 import { schedulePersistIframeVault, bootIframeVaultWatch } from './iframeVault.js?v=120';
 import { kronMarkets, quoteKronTrade, executeKronTrade, formatKasSompi, lookupKronTick, liveQuote, tradeCostLines, attachKronLogos, kronCandles, kronLogoFor, quoteKcc20Bridge, executeKcc20Bridge, formatTokenRaw } from './kronTrade.js?v=140';
 import {
@@ -58,7 +58,7 @@ import {
 } from './atrade.js?v=100';
 import { SCORPION_MEMORY } from './scorpionMemory.js?v=152';
 
-export const BUILD = '162';
+export const BUILD = '163';
 
 const TOKEN_FALLBACK_LOGO = 'assets/ttt.png';
 
@@ -773,6 +773,35 @@ function sessionOpen() {
   return !!wallet && pinUnlockedFor === wallet.id;
 }
 
+const UNLOCK_AT_KEY = 'kcc20_unlocked_v1';
+
+function persistSession() {
+  if (!wallet?.id) return;
+  try { localStorage.setItem(UNLOCK_AT_KEY, JSON.stringify({ id: wallet.id, at: Date.now() })); } catch {}
+}
+
+function clearPersistedSession() {
+  try { localStorage.removeItem(UNLOCK_AT_KEY); } catch {}
+}
+
+function restorePersistedSession() {
+  try {
+    const r = JSON.parse(localStorage.getItem(UNLOCK_AT_KEY) || 'null');
+    if (!r?.id || !r.at) return false;
+    if (Date.now() - Number(r.at) > 45 * 60 * 1000) return false;
+    if (!wallet) return false;
+    pinUnlockedFor = wallet.id;
+    sessionUnlocked = true;
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function isDappPopup() {
+  try { return new URLSearchParams(location.search).get('dapp') === '1'; } catch { return false; }
+}
+
 function hidePinLock() {
   $('pin-lock')?.classList.add('hidden');
   $('pin-lock')?.setAttribute('aria-hidden', 'true');
@@ -988,6 +1017,7 @@ async function submitPin() {
 async function finishPinUnlock() {
   sessionUnlocked = true;
   if (wallet?.id) pinUnlockedFor = wallet.id;
+  persistSession();
   hidePinLock();
   if (wallet?.address) await unlockToHome();
 }
@@ -999,6 +1029,7 @@ function lockNow() {
   stopAgentLoop();
   pinUnlockedFor = '';
   sessionUnlocked = false;
+  clearPersistedSession();
   $('tabbar')?.classList.remove('show');
   if (!loadPin()) beginPinFlow('set');
   else beginPinFlow('unlock');
@@ -1188,11 +1219,10 @@ async function activateWallet(w, { toastMsg } = {}) {
   pinUnlockedFor = '';
   sessionUnlocked = false;
   $('tabbar')?.classList.remove('show');
-  const dappPopup = (() => { try { return new URLSearchParams(location.search).get('dapp') === '1'; } catch { return false; } })();
-  if (walletIsKaswareChip(wallet) && !dappPopup) {
+  if (walletIsKaswareChip(wallet) && !isDappPopup()) {
     try { await autoArmKaswareForWallet(wallet); } catch {}
   }
-  if (wallet.kasware && (kaswareSigning(wallet) || dappPopup)) {
+  if (restorePersistedSession() || (wallet.kasware && (kaswareSigning(wallet) || isDappPopup()))) {
     pinUnlockedFor = wallet.id;
     sessionUnlocked = true;
     await unlockToHome();
@@ -1355,6 +1385,7 @@ function dappHooks() {
 
 async function unlockToHome() {
   if (wallet?.address) setVaultOwner(wallet.address);
+  persistSession();
   purgeDdPayVaults();
   $('page-lock').classList.remove('active');
   showPage('home');
@@ -9808,19 +9839,23 @@ async function init() {
   if (saved) hydrateNativeKey(saved);
   const hasLocalKey = !!(saved?.address && hexKey(saved.privKey));
   const kaswareOnly = !!(saved?.address && saved?.kasware && !hexKey(saved.privKey));
-  if (hasLocalKey || kaswareOnly) {
+  const hasAnyWallet = !!(saved?.address);
+  if (hasLocalKey || kaswareOnly || hasAnyWallet) {
     wallet = migratePinOnto(saved);
     hydrateNativeKey(wallet);
     applyWalletNetwork(wallet);
     hydrateFromSnap(wallet.address);
-    if (kaswareOnly || (saved.kasware && kaswareSigning(wallet))) {
+    if (restorePersistedSession() || isDappPopup()) {
+      pinUnlockedFor = wallet.id;
+      sessionUnlocked = true;
+    } else if (kaswareOnly || (saved.kasware && kaswareSigning(wallet))) {
       pinUnlockedFor = wallet.id;
       sessionUnlocked = true;
     } else if (!loadPin()) beginPinFlow('set');
     else beginPinFlow('unlock');
   }
   try { await loadCryptoLibs(); } catch { toast('Signing library delayed — check network'); }
-  if (hasLocalKey || kaswareOnly) {
+  if (hasLocalKey || kaswareOnly || hasAnyWallet) {
     wallet = migratePinOnto(saved);
     hydrateNativeKey(wallet);
     if (wallet.privKey && !wallet.pubKey) {
@@ -9831,8 +9866,7 @@ async function init() {
         saveWallet();
       } catch {}
     }
-    const dappPopup = (() => { try { return new URLSearchParams(location.search).get('dapp') === '1'; } catch { return false; } })();
-    if (wallet.kasware && isKaswareInstalled() && !dappPopup) {
+    if (wallet.kasware && isKaswareInstalled() && !isDappPopup()) {
       try {
         await autoArmKaswareForWallet(wallet);
         const p = window.kasware;
@@ -9848,7 +9882,7 @@ async function init() {
           sessionUnlocked = true;
         }
       } catch {}
-    } else if (dappPopup && wallet.kasware) {
+    } else if (isDappPopup() && wallet) {
       pinUnlockedFor = wallet.id;
       sessionUnlocked = true;
     }

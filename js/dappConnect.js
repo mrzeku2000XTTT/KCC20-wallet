@@ -312,7 +312,7 @@ async function handleGetState(req) {
 }
 
 async function handleSign(req) {
-  const w = await ensureUnlocked();
+  let w = await ensureUnlocked();
   const origin = req.origin;
   if (!originAllowed(origin)) {
     await handleConnect(req);
@@ -455,7 +455,7 @@ function destIsTreasury(dest) {
 }
 
 async function handleSendToken(req) {
-  const w = await ensureUnlocked();
+  let w = await ensureUnlocked();
   const origin = req.origin;
   if (!originAllowed(origin)) await handleConnect(req);
   if (netName() !== 'kaspa_mainnet') throw new Error('KCC20 pay is mainnet. Switch this wallet off TN10.');

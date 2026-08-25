@@ -789,4 +789,72 @@ export function formatKasSompi(n) {
   return (Number(n || 0n) / 1e8).toLocaleString(undefined, { maximumFractionDigits: 4 });
 }
 
+export function formatTokenRaw(raw, decimals) {
+  const d = Math.max(0, Number(decimals) || 0);
+  const n = Number(raw || 0) / (10 ** d);
+  if (!Number.isFinite(n)) return '0';
+  if (d === 0) return String(Math.round(n));
+  return n.toLocaleString(undefined, { maximumFractionDigits: Math.min(6, d) });
+}
+
+function kasHumanFromSompi(sompi) {
+  const n = Number(sompi || 0n) / 1e8;
+  if (!Number.isFinite(n) || n <= 0) return '0';
+  return n.toFixed(8).replace(/0+$/, '').replace(/\.$/, '');
+}
+
+/**
+ * Canonical KCC20↔KCC20 route: sell FROM for KAS on KRON (curve or pool), then buy TO.
+ * No wrap, no L2, no custody. KAS is the only canonical hop KRON covenants support.
+ */
+export async function quoteKcc20Bridge({ fromTick, toTick, amount }) {
+  const from = String(fromTick || '').trim().toUpperCase();
+  const to = String(toTick || '').trim().toUpperCase();
+  if (!from || !to) throw new Error('Pick FROM and TO tickers');
+  if (from === to) throw new Error('Pick two different KCC20 tokens');
+  const sell = await quoteKronTrade({ tick: from, side: 'sell', amount });
+  const kasGross = BigInt(sell.net || sell.kasOut || 0);
+  const hopReserve = 50_000_000n;
+  if (kasGross <= hopReserve + 10_000_000n) {
+    throw new Error('Sell proceeds are too small to buy the other token after KRON + network fees');
+  }
+  const kasForBuy = kasGross - hopReserve;
+  const buy = await quoteKronTrade({ tick: to, side: 'buy', amount: kasHumanFromSompi(kasForBuy) });
+  return {
+    fromTick: from,
+    toTick: to,
+    amount: String(amount),
+    sell,
+    buy,
+    kasGross,
+    kasForBuy,
+    hopReserve
+  };
+}
+
+export async function executeKcc20Bridge({ wallet, fromTick, toTick, amount, utxos, onStatus, forceKasware = false }) {
+  const quoted = await quoteKcc20Bridge({ fromTick, toTick, amount });
+  onStatus?.('Leg 1/2: selling ' + quoted.fromTick + ' for KAS on KRON…');
+  const sell = await executeKronTrade({
+    wallet, tick: quoted.fromTick, side: 'sell', amount: String(amount),
+    utxos, onStatus, forceKasware
+  });
+  onStatus?.('Waiting for KAS hop to land…');
+  for (let i = 0; i < 8; i++) {
+    await new Promise(r => setTimeout(r, 900));
+    try {
+      const rest = await fetchAddressUtxos(wallet.address);
+      if (rest?.length) break;
+    } catch {}
+  }
+  const kasHuman = kasHumanFromSompi(quoted.kasForBuy);
+  onStatus?.('Leg 2/2: buying ' + quoted.toTick + ' with ' + kasHuman + ' KAS…');
+  const fresh = await fetchAddressUtxos(wallet.address).catch(() => []);
+  const buy = await executeKronTrade({
+    wallet, tick: quoted.toTick, side: 'buy', amount: kasHuman,
+    utxos: fresh, onStatus, forceKasware
+  });
+  return { sell, buy, quote: quoted };
+}
+
 export { errText as kronErr };

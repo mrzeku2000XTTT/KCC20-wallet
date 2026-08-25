@@ -12,7 +12,7 @@
   <link rel="icon" href="assets/icon.png">
   <title>KCC20 Wallet</title>
   <meta http-equiv="Cache-Control" content="no-store, no-cache, must-revalidate">
-  <link rel="stylesheet" href="css/app.css?v=135">
+  <link rel="stylesheet" href="css/app.css?v=136">
 </head>
 <body>
   <img class="bg-poster" src="assets/bg.jpg" alt="">
@@ -349,6 +349,7 @@
             <button class="on" data-vtab="create" type="button">Create</button>
             <button data-vtab="mine" type="button">Vaults</button>
             <button data-vtab="life" type="button">Life</button>
+            <button data-vtab="bridge" type="button">Bridge</button>
           </div>
           <div id="vault-create">
             <div class="vault-grid" id="vault-products"></div>
@@ -366,6 +367,27 @@
               </div>
               <button class="btn btn-glass" id="btn-sweep-addr" type="button" style="margin-top:8px;height:44px;">Sweep this address</button>
             </div>
+          </div>
+          <div id="vault-bridge-wrap" class="hidden">
+            <p class="bet-how" id="br-how">Canonical KCC20 bridge: sell FROM on KRON for KAS, then buy TO. No wrap, no L2, no custody. Every KCC20 is priced in KAS on a curve or locked pool. You sign both legs.</p>
+            <div class="at-row">
+              <label class="field grow"><span>From</span>
+                <input id="br-from" value="KKDAG" spellcheck="false" autocomplete="off">
+              </label>
+              <label class="field grow"><span>To</span>
+                <input id="br-to" value="KRON" spellcheck="false" autocomplete="off">
+              </label>
+            </div>
+            <div class="at-row">
+              <label class="field grow"><span id="br-amt-lab">Amount (KKDAG)</span>
+                <input id="br-amt" type="number" min="1" step="1" value="1" inputmode="decimal">
+              </label>
+              <button class="btn btn-glass" id="br-flip" type="button" style="height:44px;margin-top:18px;flex:0 0 52px;">⇄</button>
+            </div>
+            <p class="at-quote" id="br-quote">Pick two KCC20 tickers and tap Quote.</p>
+            <button class="btn btn-glass" id="br-quote-btn" type="button">Quote bridge</button>
+            <button class="btn btn-gold" id="br-go" type="button" style="margin-top:8px;">Bridge</button>
+            <p class="bet-pool" id="br-st"></p>
           </div>
           <div id="vault-life-wrap" class="hidden">
             <div class="life-filters" id="life-filters"></div>
@@ -755,7 +777,7 @@
   <script type="module">
     import('./js/iframeVault.js?v=121').then(function (mod) {
       return (mod.restoreIframeVault ? mod.restoreIframeVault() : Promise.resolve()).then(function () {
-        return import('./js/app.js?v=135');
+        return import('./js/app.js?v=136');
       });
     }).catch(function (err) {
       console.error(err);

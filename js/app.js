@@ -26,7 +26,7 @@ import {
 } from './tx.js?v=135';
 import { bootDappConnect, pingTttDappFrame } from './dappConnect.js?v=121';
 import { schedulePersistIframeVault, bootIframeVaultWatch } from './iframeVault.js?v=120';
-import { kronMarkets, quoteKronTrade, executeKronTrade, formatKasSompi, lookupKronTick, tradeCostLines, attachKronLogos, kronCandles } from './kronTrade.js?v=123';
+import { kronMarkets, quoteKronTrade, executeKronTrade, formatKasSompi, lookupKronTick, tradeCostLines, attachKronLogos, kronCandles, quoteKcc20Bridge, executeKcc20Bridge, formatTokenRaw } from './kronTrade.js?v=136';
 import {
   BET_AGENT_ADDR, TTT_TICK, WINDOW_MS, windowBounds, fmtRemain,
   kkdagsHeld, isKcc20Pass, hireCost, maxHireHours,
@@ -56,9 +56,9 @@ import {
   rememberLaunch, loadLaunched, cookOwnerBalances, cookDeployed,
   cookTickOf, cookBookLevels
 } from './atrade.js?v=100';
-import { SCORPION_MEMORY } from './scorpionMemory.js?v=135';
+import { SCORPION_MEMORY } from './scorpionMemory.js?v=136';
 
-export const BUILD = '135';
+export const BUILD = '136';
 
 const TOKEN_FALLBACK_LOGO = 'assets/ttt.png';
 
@@ -1787,12 +1787,86 @@ function setVaultTab(tab) {
   $('vault-create')?.classList.toggle('hidden', tab !== 'create');
   $('vault-mine-wrap')?.classList.toggle('hidden', tab !== 'mine');
   $('vault-life-wrap')?.classList.toggle('hidden', tab !== 'life');
+  $('vault-bridge-wrap')?.classList.toggle('hidden', tab !== 'bridge');
   if (tab === 'life') {
     renderLifeVaults();
     if ($('chat-input')) $('chat-input').placeholder = 'Lock 1000 KAS for rent until Sep 1 9:00 UTC…';
+  } else if (tab === 'bridge') {
+    syncBridgeLabels();
+    if ($('chat-input')) $('chat-input').placeholder = 'Bridge 20 KKDAG to KRON…';
   } else if ($('chat-input')) {
     $('chat-input').placeholder = 'Tell Argent what to lock…';
   }
+}
+
+function syncBridgeLabels() {
+  const from = String($('br-from')?.value || 'KKDAG').trim().toUpperCase();
+  const hold = holdingForTick(from);
+  const dec = betDecimals(hold);
+  if ($('br-amt-lab')) $('br-amt-lab').textContent = 'Amount (' + (from || 'TOKEN') + ')';
+  const amt = $('br-amt');
+  if (amt) {
+    amt.min = String(betMinStake(dec));
+    amt.step = String(betStakeStep(dec));
+  }
+}
+
+let lastBridgeQuote = null;
+
+async function quoteBridgeUi() {
+  if (isTestnet()) { toast('Bridge is mainnet KRON only'); return; }
+  const from = String($('br-from')?.value || '').trim().toUpperCase();
+  const to = String($('br-to')?.value || '').trim().toUpperCase();
+  const amt = $('br-amt')?.value;
+  const el = $('br-quote');
+  if (el) el.textContent = 'Quoting KRON…';
+  try {
+    const q = await quoteKcc20Bridge({ fromTick: from, toTick: to, amount: amt });
+    lastBridgeQuote = q;
+    const sellKas = formatKasSompi(q.kasGross);
+    const hopKas = formatKasSompi(q.kasForBuy);
+    const outTok = formatTokenRaw(q.buy.tokenOut, q.buy.decimals);
+    const sellVenue = q.sell.graduated ? 'pool' : 'curve';
+    const buyVenue = q.buy.graduated ? 'pool' : 'curve';
+    if (el) {
+      el.textContent = amt + ' ' + from + ' → ~' + sellKas + ' KAS (' + sellVenue + ') → ~'
+        + outTok + ' ' + to + ' (' + buyVenue + '). Uses ~' + hopKas
+        + ' KAS for the buy after fees. Two signatures. This app never holds the tokens.';
+    }
+  } catch (e) {
+    lastBridgeQuote = null;
+    if (el) el.textContent = errText(e);
+    toast(errText(e));
+  }
+}
+
+async function runBridge() {
+  if (isTestnet()) { toast('Bridge is mainnet KRON only'); return; }
+  if (!wallet) { toast('Unlock a wallet'); return; }
+  const from = String($('br-from')?.value || '').trim().toUpperCase();
+  const to = String($('br-to')?.value || '').trim().toUpperCase();
+  const amt = $('br-amt')?.value;
+  const hold = holdingForTick(from);
+  if (!hold || hold.native) throw new Error('Need ' + from + ' in this wallet');
+  try { await requirePin('Bridge ' + amt + ' ' + from + ' → ' + to); }
+  catch (e) { if (errText(e) === 'cancelled') return; throw e; }
+  if ($('br-st')) $('br-st').textContent = 'Bridging…';
+  const res = await executeKcc20Bridge({
+    wallet, fromTick: from, toTick: to, amount: amt,
+    utxos: await fetchAddressUtxos(wallet.address).catch(() => []),
+    forceKasware: kaswareEnabled(),
+    onStatus: (m) => { toast(m); if ($('br-st')) $('br-st').textContent = m; }
+  });
+  afterTx();
+  const sellId = res?.sell?.txId || '';
+  const buyId = res?.buy?.txId || '';
+  if ($('br-st')) {
+    $('br-st').innerHTML = 'Done. Sell '
+      + (isRealTxId(sellId) ? `<a href="${esc(explorerTx(sellId))}" target="_blank" rel="noopener">${esc(sellId.slice(0, 10))}…</a>` : '')
+      + ' · Buy '
+      + (isRealTxId(buyId) ? `<a href="${esc(explorerTx(buyId))}" target="_blank" rel="noopener">${esc(buyId.slice(0, 10))}…</a>` : '');
+  }
+  toast(from + ' → ' + to + ' bridged');
 }
 
 let showVaultHistory = false;
@@ -8608,6 +8682,18 @@ function bind() {
     const btn = e.target.closest('[data-vtab]');
     if (btn?.dataset.vtab) { haptic(); setVaultTab(btn.dataset.vtab); }
   });
+  click('br-quote-btn', () => quoteBridgeUi().catch(err => toast(errText(err))));
+  click('br-go', () => runBridge().catch(err => toast(errText(err))));
+  click('br-flip', () => {
+    const a = $('br-from')?.value;
+    const b = $('br-to')?.value;
+    if ($('br-from')) $('br-from').value = b || 'KRON';
+    if ($('br-to')) $('br-to').value = a || 'KKDAG';
+    syncBridgeLabels();
+    lastBridgeQuote = null;
+  });
+  $('br-from')?.addEventListener('input', syncBridgeLabels);
+  $('br-from')?.addEventListener('change', syncBridgeLabels);
   $('vault-hist-seg')?.addEventListener('click', e => {
     const btn = e.target.closest('[data-vhist]');
     if (!btn?.dataset.vhist) return;

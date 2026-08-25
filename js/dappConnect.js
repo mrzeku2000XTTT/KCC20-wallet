@@ -142,6 +142,21 @@ function reply(req, result, error) {
       location.href = ret + (ret.includes('#') ? '&' : '#') + 'kcc20=' + encodeURIComponent(JSON.stringify({ ns: NS, ...msg }));
     } catch {}
   }
+  if (!error) maybeCloseDappPopup(req.method);
+}
+
+function maybeCloseDappPopup(method) {
+  try {
+    if (window.parent && window.parent !== window) return;
+    if (!pageParams().dapp) return;
+    if (!window.opener) return;
+    const closeAfter = {
+      connect: 1, requestAccounts: 1, signPskt: 1, signPsbt: 1, pushTx: 1,
+      sendToken: 1, sendKcc20: 1, payToken: 1, payKcc20: 1, fundCredits: 1
+    };
+    if (!closeAfter[String(method || '')]) return;
+    setTimeout(() => { try { window.close(); } catch {} }, 220);
+  } catch {}
 }
 
 function summarizePskt(json) {

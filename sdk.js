@@ -231,6 +231,11 @@
     sendToken: 1, sendKcc20: 1, payToken: 1, payKcc20: 1, fundCredits: 1
   };
 
+  function closeAfterUse() {
+    if (inWalletBrowser()) return;
+    setTimeout(function () { closeWalletWindow(); }, 180);
+  }
+
   function rpc(method, params) {
     return new Promise(function (resolve, reject) {
       var interactive = !!INTERACTIVE[method];
@@ -306,6 +311,7 @@
           emit('chainChanged', network);
         }
         if (r && r.balance) emit('balanceChanged', r);
+        closeAfterUse();
         return accounts;
       });
     },
@@ -365,10 +371,10 @@
       });
     },
     signPskt: function (a, b) {
-      return rpc('signPskt', parseSignArgs(a, b));
+      return rpc('signPskt', parseSignArgs(a, b)).then(function (r) { closeAfterUse(); return r; });
     },
     signPsbt: function (a, b) {
-      return rpc('signPskt', parseSignArgs(a, b));
+      return rpc('signPskt', parseSignArgs(a, b)).then(function (r) { closeAfterUse(); return r; });
     },
     getUtxoEntries: function (address) {
       return rpc('getUtxoEntries', { address: address || '' });
@@ -421,7 +427,7 @@
       return rpc('getTokenBalance', { tick: tick || 'KKDAG' });
     },
     sendToken: function (opts) {
-      return rpc('sendToken', opts || {});
+      return rpc('sendToken', opts || {}).then(function (r) { closeAfterUse(); return r; });
     },
     isEmbedded: function () {
       return inWalletBrowser();
@@ -437,7 +443,7 @@
       var s = (json && typeof json === 'object')
         ? String(json.txJsonString || json.signedTx || json.tx || '')
         : String(json || '');
-      return rpc('pushTx', { txJsonString: s });
+      return rpc('pushTx', { txJsonString: s }).then(function (r) { closeAfterUse(); return r; });
     },
     request: function (method, params) {
       var m = String(method || '');

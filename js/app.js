@@ -58,7 +58,7 @@ import {
 } from './atrade.js?v=100';
 import { SCORPION_MEMORY } from './scorpionMemory.js?v=152';
 
-export const BUILD = '152';
+export const BUILD = '153';
 
 const TOKEN_FALLBACK_LOGO = 'assets/ttt.png';
 
@@ -129,7 +129,13 @@ function isLifeVault(v) {
 }
 
 function isDdPayVault(v) {
-  return v?.type === 'ddpay';
+  if (!v) return false;
+  if (v.type === 'ddpay') return true;
+  return /^DD pay-in/i.test(String(v.name || ''));
+}
+
+function purgeDdPayVaults() {
+  return purgeVaultsWhere(isDdPayVault);
 }
 
 function isDcaVault(v) {
@@ -1320,6 +1326,7 @@ function dappHooks() {
 
 async function unlockToHome() {
   if (wallet?.address) setVaultOwner(wallet.address);
+  purgeDdPayVaults();
   $('page-lock').classList.remove('active');
   showPage('home');
   $('tabbar').classList.add('show');
@@ -2172,7 +2179,8 @@ function setVaultHistory(on) {
 }
 
 function renderVault() {
-  const all = loadVaults().filter(v => !isLifeVault(v));
+  purgeDdPayVaults();
+  const all = loadVaults().filter(v => !isLifeVault(v) && !isDdPayVault(v));
   const history = all.filter(isVaultHistory);
   const live = all.filter(v => !isVaultHistory(v));
   const mine = showVaultHistory ? history : live;
@@ -2183,9 +2191,7 @@ function renderVault() {
     </button>`).join('');
   const empty = showVaultHistory
     ? 'Nothing finished yet. Swept capsules land here.'
-    : (isTttTreasuryWallet()
-      ? 'No DD pay-ins listed yet. Incoming KKDAG cells appear here — Home still shows the combined bag.'
-      : 'No vaults yet. Tap Time Capsule to lock a little KAS for a few minutes — a safe first try.');
+    : 'No vaults yet. Tap Time Capsule to lock a little KAS for a few minutes — a safe first try.';
   $('vault-mine').innerHTML = mine.length
     ? mine.map(v => `
       <div class="row token-row vault-card${showVaultHistory ? ' history' : ''}">
@@ -2198,7 +2204,7 @@ function renderVault() {
           <button class="nav-btn ghost" data-vault="${esc(v.address || '')}">Info</button>
           ${showVaultHistory ? '' : (isDcaVault(v)
             ? `<button class="nav-btn" data-deldca="${esc(v.address || '')}">Delete</button>`
-            : `<button class="nav-btn" data-sweep="${esc(v.address || '')}">${isDdPayVault(v) ? 'Send' : 'Sweep'}</button>`)}
+            : `<button class="nav-btn" data-sweep="${esc(v.address || '')}">Sweep</button>`)}
         </div>
       </div>`).join('')
     : `<div class="empty vault-empty">${empty}</div>`;
@@ -2893,24 +2899,7 @@ async function refreshDdInbox() {
     return;
   }
   kkdCellCache = await kkdagCellsFor(wallet.address);
-  for (const c of kkdCellCache) {
-    if (!c.pAddr) continue;
-    const exists = loadVaults().some(v => v.address === c.pAddr || (v.txId === c.txid && String(v.cellIndex) === String(c.index)));
-    if (exists) continue;
-    saveVault({
-      type: 'ddpay',
-      name: 'DD pay-in · ' + Number(c.amt).toLocaleString() + ' KKDAG',
-      address: c.pAddr,
-      tick: 'KKDAG',
-      tokenAmount: String(c.amt),
-      decimals: 0,
-      asset: 'kcc20',
-      status: 'locked',
-      txId: c.txid,
-      cellIndex: c.index,
-      owner: wallet.address
-    });
-  }
+  purgeDdPayVaults();
   if (currentTab === 'home') renderHoldings();
   if (currentTab === 'vault') renderVault();
 }
@@ -9664,11 +9653,8 @@ function bind() {
       const vault = loadVaults().find(v => v.address === sweepBtn.dataset.sweep);
       if (!vault) { toast('Vault not found'); return; }
       if (isDdPayVault(vault)) {
-        openSend({
-          assetKey: 'kcc20:KKDAG',
-          destination: otherWallets().find(w => !sameAddrPayload(w.address, TTT_TREASURY))?.address || '',
-          amount: String(vault.tokenAmount || '')
-        });
+        purgeDdPayVaults();
+        renderVault();
         return;
       }
       unlockVault(vault).catch(err => { toast(errText(err)); });
@@ -9722,6 +9708,7 @@ async function init() {
   setInterval(setClock, 1000);
   loadSnaps();
   try { wipeTestDcaNow(); } catch {}
+  try { purgeDdPayVaults(); } catch {}
   try { bind(); } catch (e) {
     console.error(e);
     window.__kccBound = false;

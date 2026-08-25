@@ -128,30 +128,23 @@
       + '&return=' + encodeURIComponent(location.href.split('#')[0]);
   }
 
+  function userClicked() {
+    try {
+      if (navigator.userActivation && 'isActive' in navigator.userActivation) {
+        return !!navigator.userActivation.isActive;
+      }
+    } catch (e) {}
+    return true;
+  }
+
   function grabNamedWallet() {
     if (inWalletBrowser()) return window.parent;
     if (child && !child.closed) return child;
-    var w = null;
-    try { w = window.open('', 'kcc20-wallet'); } catch (e) {}
-    if (!w || w.closed || w === window) return null;
-    try {
-      var href = String(w.location.href || '');
-      if (!href || href === 'about:blank') {
-        try { w.close(); } catch (e2) {}
-        return null;
-      }
-    } catch (e) {
-      /* cross-origin: this is the KCC20 popup we opened */
-    }
-    return w;
+    return null;
   }
 
   function closeWalletWindow() {
     if (inWalletBrowser()) return;
-    var w = grabNamedWallet();
-    if (w && w !== window) {
-      try { w.close(); } catch (e) {}
-    }
     if (child && !child.closed && child !== window) {
       try { child.close(); } catch (e) {}
     }
@@ -167,9 +160,12 @@
   function raiseWalletWindow() {
     if (inWalletBrowser()) return window.parent;
     if (child && !child.closed) {
-      try { child.focus(); } catch (e) {}
+      if (userClicked()) {
+        try { child.focus(); } catch (e) {}
+      }
       return child;
     }
+    if (!userClicked()) return null;
     var url = walletUrl();
     var w = null;
     try {
@@ -245,8 +241,12 @@
           reject(new Error('Connect KCC20 Wallet first'));
           return;
         }
-        try { location.href = 'web+kcc20:' + method + '?from=' + encodeURIComponent(location.origin); } catch (e) {}
-        reject(new Error('Allow popups for KCC20 Wallet, or open ' + ORIGIN + ' and install the PWA.'));
+        if (userClicked()) {
+          try { location.href = 'web+kcc20:' + method + '?from=' + encodeURIComponent(location.origin); } catch (e) {}
+        }
+        reject(new Error(userClicked()
+          ? ('Allow popups for KCC20 Wallet, or open ' + ORIGIN)
+          : 'Tap Connect KCC20 Wallet'));
         return;
       }
       if (interactive) {
@@ -301,6 +301,9 @@
     off: off,
     connect: function () {
       if (accounts.length) return Promise.resolve(accounts.slice());
+      if (!inWalletBrowser() && !userClicked()) {
+        return Promise.reject(new Error('Tap Connect KCC20 Wallet'));
+      }
       return rpc('connect').then(function (r) {
         accounts = (r && r.accounts) || [];
         network = (r && r.network) || '';

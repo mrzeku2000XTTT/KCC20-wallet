@@ -56,9 +56,9 @@ import {
   rememberLaunch, loadLaunched, cookOwnerBalances, cookDeployed,
   cookTickOf, cookBookLevels
 } from './atrade.js?v=100';
-import { SCORPION_MEMORY } from './scorpionMemory.js?v=136';
+import { SCORPION_MEMORY } from './scorpionMemory.js?v=137';
 
-export const BUILD = '136';
+export const BUILD = '137';
 
 const TOKEN_FALLBACK_LOGO = 'assets/ttt.png';
 
@@ -1829,9 +1829,10 @@ async function quoteBridgeUi() {
     const sellVenue = q.sell.graduated ? 'pool' : 'curve';
     const buyVenue = q.buy.graduated ? 'pool' : 'curve';
     if (el) {
-      el.textContent = amt + ' ' + from + ' → ~' + sellKas + ' KAS (' + sellVenue + ') → ~'
-        + outTok + ' ' + to + ' (' + buyVenue + '). Uses ~' + hopKas
-        + ' KAS for the buy after fees. Two signatures. This app never holds the tokens.';
+      el.innerHTML = '<b>Not P2P</b> — you swap against KRON covenants, not a person.<br>'
+        + '1. Sell <b>' + esc(amt) + ' ' + esc(from) + '</b> on the KRON <b>' + esc(sellVenue) + '</b> → about <b>' + esc(sellKas) + ' KAS</b>.<br>'
+        + '2. Keep ~0.5 KAS for the second network fee, then buy <b>' + esc(to) + '</b> on the <b>' + esc(buyVenue) + '</b> with ~<b>' + esc(hopKas) + ' KAS</b> → about <b>' + esc(outTok) + ' ' + esc(to) + '</b>.<br>'
+        + 'You sign both Kaspa txs. This wallet never takes custody.';
     }
   } catch (e) {
     lastBridgeQuote = null;

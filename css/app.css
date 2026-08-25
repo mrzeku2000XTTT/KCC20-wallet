@@ -1037,6 +1037,8 @@ img { display: block; max-width: 100%; }
 #vault-life-wrap { flex: 1; min-height: 0; overflow-y: auto; -webkit-overflow-scrolling: touch; padding-bottom: 70px; }
 #vault-bridge-wrap { flex: 1; min-height: 0; overflow-y: auto; -webkit-overflow-scrolling: touch; padding-bottom: 80px; }
 #vault-bridge-wrap .field { margin-bottom: 8px; }
+#vault-bridge-wrap .at-help { margin: 0 0 10px; }
+#vault-bridge-wrap .at-quote { min-height: 4.2em; }
 .life-filters {
   display: flex; gap: 6px; overflow-x: auto; margin: 0 0 8px; padding-bottom: 2px;
   -webkit-overflow-scrolling: touch; scrollbar-width: none;

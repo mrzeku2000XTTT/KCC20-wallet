@@ -12,7 +12,7 @@
   <link rel="icon" href="assets/icon.png">
   <title>KCC20 Wallet</title>
   <meta http-equiv="Cache-Control" content="no-store, no-cache, must-revalidate">
-  <link rel="stylesheet" href="css/app.css?v=136">
+  <link rel="stylesheet" href="css/app.css?v=137">
 </head>
 <body>
   <img class="bg-poster" src="assets/bg.jpg" alt="">
@@ -369,7 +369,16 @@
             </div>
           </div>
           <div id="vault-bridge-wrap" class="hidden">
-            <p class="bet-how" id="br-how">Canonical KCC20 bridge: sell FROM on KRON for KAS, then buy TO. No wrap, no L2, no custody. Every KCC20 is priced in KAS on a curve or locked pool. You sign both legs.</p>
+            <details class="at-help" id="br-help" open>
+              <summary>How this bridge works</summary>
+              <ul>
+                <li><b>Not P2P.</b> You are not matched to another person. You trade against KRON’s on-chain curve or locked AMM pool — a covenant on Kaspa L1.</li>
+                <li><b>Not a chain wrap.</b> This is not Ethereum↔Kaspa. Both tokens are already KCC20. The only hop is <b>KAS</b>, because KRON has no token↔token pool.</li>
+                <li><b>Two legs, two signatures.</b> 1) Sell FROM for KAS. 2) Buy TO with that KAS. Keys stay in this wallet. We never hold the funds.</li>
+                <li><b>Curve vs pool.</b> New tokens trade on a bonding <b>curve</b>. After graduation they trade on a locked <b>pool</b>. The quote names which venue each token uses.</li>
+                <li><b>Read the quote.</b> <em>1000 KKDAG → ~10 KAS (curve) → ~899 KRON (pool)</em> means: sell 1000 KKDAG on the curve for about 10 KAS, keep ~0.5 KAS for the second network fee, spend ~9.5 KAS on the KRON pool, receive about 899 KRON.</li>
+              </ul>
+            </details>
             <div class="at-row">
               <label class="field grow"><span>From</span>
                 <input id="br-from" value="KKDAG" spellcheck="false" autocomplete="off">
@@ -384,7 +393,7 @@
               </label>
               <button class="btn btn-glass" id="br-flip" type="button" style="height:44px;margin-top:18px;flex:0 0 52px;">⇄</button>
             </div>
-            <p class="at-quote" id="br-quote">Pick two KCC20 tickers and tap Quote.</p>
+            <div class="at-quote" id="br-quote">Pick two KCC20 tickers and tap Quote. Open “How this bridge works” if the numbers are unclear.</div>
             <button class="btn btn-glass" id="br-quote-btn" type="button">Quote bridge</button>
             <button class="btn btn-gold" id="br-go" type="button" style="margin-top:8px;">Bridge</button>
             <p class="bet-pool" id="br-st"></p>
@@ -777,7 +786,7 @@
   <script type="module">
     import('./js/iframeVault.js?v=121').then(function (mod) {
       return (mod.restoreIframeVault ? mod.restoreIframeVault() : Promise.resolve()).then(function () {
-        return import('./js/app.js?v=136');
+        return import('./js/app.js?v=137');
       });
     }).catch(function (err) {
       console.error(err);

@@ -58,7 +58,7 @@ import {
 } from './atrade.js?v=100';
 import { SCORPION_MEMORY } from './scorpionMemory.js?v=142';
 
-export const BUILD = '144';
+export const BUILD = '145';
 
 const TOKEN_FALLBACK_LOGO = 'assets/ttt.png';
 
@@ -2727,12 +2727,65 @@ function openTttFund() {
         <div class="kv"><span class="k">Amount</span><span class="v">${esc(amount)} KKDAG</span></div>
         <div class="kv kv-stack"><span class="k">To</span><span class="v">${esc(dest)}</span></div>
         ${txidBlock(result.txId)}
-        <p class="muted" style="text-align:left;padding-top:8px;">On-chain send is done. TTT credits that tx after Base44 wires Fund to sendToken (not copy-address).</p>
+        <p class="muted" style="text-align:left;padding-top:8px;">KKDAG is in the treasury cell (kaspa:p on explorers). Owner is ews <b>qq5yhvly…334ews</b>. This payer wallet cannot spend it. Open the treasury key in KCC20 (You → add wallet → paste that hex) and tap Sweep.</p>
       `, { confirm: 'Done', cancel: false, onConfirm: () => closeSheet() });
     }
   });
   $('ttt-fund-max')?.addEventListener('click', () => {
     if ($('ttt-fund-amt')) $('ttt-fund-amt').value = String(max);
+  });
+}
+
+function isTttTreasuryWallet() {
+  return !!(wallet?.address && sameAddrPayload(wallet.address, TTT_TREASURY));
+}
+
+async function treasuryKkdagOnChain() {
+  try {
+    const body = await fetch(KRON_IDX + '/token/KKDAG/address/' + encodeURIComponent(TTT_TREASURY), { cache: 'no-store' });
+    const j = await body.json();
+    return Number(j?.result?.balance ?? 0);
+  } catch {
+    return null;
+  }
+}
+
+async function openTreasurySweep() {
+  haptic();
+  const onChain = await treasuryKkdagOnChain();
+  const mine = isTttTreasuryWallet();
+  const held = kkdagsHeld(kccHoldings);
+  if (!mine) {
+    openSheet('Sweep DD treasury (ews)', `
+      <p class="muted" style="text-align:left;padding:0 0 10px;">Users pay KKDAG here for DD credits. The tokens are owned by this key — not by the payer wallet you just used.</p>
+      <div class="kv kv-stack"><span class="k">Treasury (ews)</span><span class="v">${esc(TTT_TREASURY)}</span></div>
+      <div class="kv"><span class="k">On-chain KKDAG</span><span class="v">${onChain == null ? '…' : esc(String(onChain))}</span></div>
+      <div class="kv"><span class="k">This phone</span><span class="v">${esc(shortAddr(wallet?.address || '', 10, 6))}</span></div>
+      <p class="muted" style="text-align:left;padding-top:8px;">Import the 64-hex for <b>qq5yhvly…334ews</b> (TTT → Export keys, or the key that created ews). You → ＋ add wallet. Then Sweep sends that KKDAG to any kaspa:q you pick.</p>
+    `, {
+      confirm: 'Copy ews address',
+      gold: true,
+      onConfirm: async () => {
+        await navigator.clipboard.writeText(TTT_TREASURY);
+        toast('Treasury address copied');
+        closeSheet();
+      }
+    });
+    return;
+  }
+  try { await refreshTokenHoldings(); } catch {}
+  const have = kkdagsHeld(kccHoldings);
+  if (!(have > 0)) {
+    toast(onChain ? ('Treasury is open. Idx shows ' + onChain + ' KKDAG — wait a few seconds, then Sweep again.') : 'No KKDAG on this treasury key yet');
+    return;
+  }
+  const others = otherWallets();
+  const dest0 = others[0]?.address || '';
+  closeSheet();
+  openSend({
+    assetKey: 'kcc20:KKDAG',
+    destination: dest0,
+    amount: String(Math.floor(have))
   });
 }
 
@@ -9079,6 +9132,7 @@ function bind() {
   click('profile-build', openTtt);
   click('ttt-close', closeTtt);
   click('ttt-fund', openTttFund);
+  click('ttt-sweep', () => openTreasurySweep().catch(e => toast(errText(e))));
   click('build-close', closeBuildRoadmap);
   click('build-back', () => showBuildApp('home'));
   click('studio-go', () => generateStudio().catch(err => toast(errText(err))));

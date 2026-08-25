@@ -158,6 +158,9 @@ img { display: block; max-width: 100%; }
   background: linear-gradient(180deg, #f3e2bf, #c9a36a); color: #1a140c;
   flex-shrink: 0;
 }
+.ttt-sweep {
+  background: rgba(255,255,255,0.12); color: #f3e2bf;
+}
 .ttt-mark { width: 28px; height: 28px; object-fit: contain; border-radius: 6px; background: #fff; }
 .ttt-frame { flex: 1; width: 100%; min-height: 0; border: 0; background: #fff; }
 

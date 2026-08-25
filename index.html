@@ -12,7 +12,7 @@
   <link rel="icon" href="assets/icon.png">
   <title>KCC20 Wallet</title>
   <meta http-equiv="Cache-Control" content="no-store, no-cache, must-revalidate">
-  <link rel="stylesheet" href="css/app.css?v=160">
+  <link rel="stylesheet" href="css/app.css?v=164">
 </head>
 <body>
   <img class="bg-poster" src="assets/bg.jpg" alt="">
@@ -61,6 +61,19 @@
           <button class="btn btn-glass" id="lock-net" type="button" style="margin-bottom:12px;">Network: Mainnet</button>
           <div class="notice">Same hex key on Testnet-10 becomes a kaspatest: address so you can sign Cook / Scorpion natively. KasWare is optional.</div>
         </section>
+        <div class="boot-veil" id="boot-veil">Opening wallet…</div>
+        <script>
+        (function () {
+          var has = false;
+          try {
+            var list = localStorage.getItem('kcc20_wallets_v2');
+            if (list && list.length > 4 && list !== '[]') has = true;
+            var one = localStorage.getItem('kcc20_wallet_v1') || localStorage.getItem('scorpion_wallet');
+            if (one && one.indexOf('address') !== -1) has = true;
+          } catch (e) {}
+          if (has) document.documentElement.classList.add('has-wallet');
+        })();
+        </script>
 
         <!-- HOME -->
         <section class="page home-fit" id="page-home">
@@ -800,7 +813,7 @@
   <script type="module">
     import('./js/iframeVault.js?v=121').then(function (mod) {
       return (mod.restoreIframeVault ? mod.restoreIframeVault() : Promise.resolve()).then(function () {
-        return import('./js/app.js?v=163');
+        return import('./js/app.js?v=164');
       });
     }).catch(function (err) {
       console.error(err);

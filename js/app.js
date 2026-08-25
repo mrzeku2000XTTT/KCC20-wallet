@@ -58,7 +58,7 @@ import {
 } from './atrade.js?v=100';
 import { SCORPION_MEMORY } from './scorpionMemory.js?v=152';
 
-export const BUILD = '163';
+export const BUILD = '164';
 
 const TOKEN_FALLBACK_LOGO = 'assets/ttt.png';
 
@@ -812,7 +812,12 @@ function hidePinLock() {
   if (sessionOpen()) $('tabbar')?.classList.add('show');
 }
 
+function markBooted() {
+  document.documentElement.classList.add('booted');
+}
+
 function beginPinFlow(mode, purpose) {
+  markBooted();
   pinMode = mode || 'unlock';
   pinBuffer = '';
   if (mode !== 'confirm' && mode !== 'change-confirm') pinPending = '';
@@ -1384,6 +1389,7 @@ function dappHooks() {
 }
 
 async function unlockToHome() {
+  markBooted();
   if (wallet?.address) setVaultOwner(wallet.address);
   persistSession();
   purgeDdPayVaults();
@@ -9906,6 +9912,7 @@ async function init() {
     }
     await unlockToHome();
   } else {
+    markBooted();
     showPage('lock');
     $('tabbar').classList.remove('show');
     $('nav-title').textContent = 'KCC20';

@@ -26,6 +26,20 @@
 }
 
 * { box-sizing: border-box; margin: 0; padding: 0; -webkit-tap-highlight-color: transparent; }
+html.has-wallet #page-lock .list,
+html.has-wallet #page-lock .notice,
+html.has-wallet #lock-net,
+html.has-wallet #import-box { display: none !important; }
+.boot-veil {
+  display: none;
+  position: absolute; inset: 0; z-index: 70;
+  place-items: center; align-content: center;
+  background: rgba(5,5,6,.72);
+  color: var(--gold-2); font-size: 14px; font-weight: 650;
+  text-align: center; padding: 24px;
+}
+html.has-wallet:not(.booted) .boot-veil { display: grid; }
+
 html, body {
   height: 100%;
   background: #050506 url("../assets/bg.jpg") center 32% / cover no-repeat;

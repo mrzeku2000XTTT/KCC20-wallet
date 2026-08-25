@@ -241,7 +241,10 @@
         accounts = (r && r.accounts) || [];
         network = (r && r.network) || '';
         emit('accountsChanged', accounts);
-        if (network) emit('networkChanged', network);
+        if (network) {
+          emit('networkChanged', network);
+          emit('chainChanged', network);
+        }
         return accounts;
       });
     },
@@ -272,6 +275,7 @@
       return rpc('switchNetwork', { network: net }).then(function (r) {
         network = typeof r === 'string' ? r : (r && r.network) || String(net || '');
         emit('networkChanged', network);
+        emit('chainChanged', network);
         if (r && r.accounts) {
           accounts = r.accounts;
           emit('accountsChanged', accounts);
@@ -306,6 +310,18 @@
     isEmbedded: function () {
       return inWalletBrowser();
     },
+    requestAccounts: function () {
+      return api.connect();
+    },
+    removeListener: function (ev, fn) {
+      off(ev, fn);
+    },
+    pushTx: function (json) {
+      var s = (json && typeof json === 'object')
+        ? String(json.txJsonString || json.signedTx || json.tx || '')
+        : String(json || '');
+      return rpc('pushTx', { txJsonString: s });
+    },
     request: function (method, params) {
       var m = String(method || '');
       var p = params || {};
@@ -332,6 +348,7 @@
         });
       }
       if (m === 'signPskt' || m === 'signPsbt') return api.signPskt(p, p.options);
+      if (m === 'pushTx' || m === 'broadcast') return api.pushTx(p.txJsonString || p.signedTx || p);
       if (m === 'getHoldings' || m === 'getKcc20Holdings') return api.getHoldings();
       if (m === 'getTokenBalance' || m === 'getKcc20Balance') return api.getTokenBalance(p.tick || p.ticker || 'KKDAG');
       if (m === 'sendToken' || m === 'sendKcc20' || m === 'payToken' || m === 'payKcc20' || m === 'fundCredits') {
@@ -350,5 +367,52 @@
   consumeHashResult();
   try {
     root.dispatchEvent(new CustomEvent('kcc20#initialized', { detail: api }));
+  } catch (e) {}
+
+  var kipUuid = (function () {
+    try {
+      if (root.crypto && root.crypto.randomUUID) return root.crypto.randomUUID();
+    } catch (e) {}
+    return 'kcc20-' + Date.now().toString(36) + '-' + Math.random().toString(16).slice(2);
+  })();
+  var kipIcon = 'data:image/svg+xml,' + encodeURIComponent(
+    '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64"><rect width="64" height="64" rx="14" fill="#c9a36a"/><text x="32" y="42" text-anchor="middle" font-size="26" font-family="system-ui,sans-serif" fill="#1a140c">K</text></svg>'
+  );
+  var kipProvider = {
+    requestAccounts: function () { return api.connect(); },
+    getAccounts: function () { return api.getAccounts(); },
+    getNetwork: function () {
+      return api.getNetwork().then(function (n) {
+        n = String(n || '');
+        if (/testnet/.test(n)) return 'testnet-10';
+        if (n === 'mainnet' || n === 'kaspa_mainnet') return 'mainnet';
+        return n || 'mainnet';
+      });
+    },
+    switchNetwork: function (id) { return api.switchNetwork(id); },
+    getPublicKey: function () { return api.getPublicKey(); },
+    signPskt: function (a, b) { return api.signPskt(a, b); },
+    pushTx: function (json) { return api.pushTx(json); },
+    disconnect: function () { return api.disconnect(); },
+    on: on,
+    removeListener: off
+  };
+  function announceKip12() {
+    try {
+      var info = Object.freeze({
+        id: 'kcc20-wallet',
+        name: 'KCC20 Wallet',
+        icon: kipIcon,
+        methods: ['kaspa:signPskt', 'kaspa:requestAccounts'],
+        uuid: kipUuid,
+        rdns: 'app.kcc20.wallet'
+      });
+      var detail = Object.freeze({ info: info, provider: kipProvider });
+      root.dispatchEvent(new CustomEvent('kaspa:provider', { detail: detail }));
+    } catch (e) {}
+  }
+  try {
+    root.addEventListener('kaspa:requestProvider', announceKip12);
+    announceKip12();
   } catch (e) {}
 })(typeof window !== 'undefined' ? window : this);

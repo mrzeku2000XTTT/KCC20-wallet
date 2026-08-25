@@ -3103,7 +3103,27 @@ function toRawLocal(human, decimals) {
   return raw.toString();
 }
 
-/** Sign a dApp PSKT JSON with the native key. Never returns the private key. */
+function payloadOfKaspaAddr(a) {
+  return String(a || '').replace(/^kaspa(test)?:/i, '').toLowerCase();
+}
+
+function psktInputAddr(inp) {
+  const u = inp?.utxo || inp?.utxoEntry || {};
+  return String(u.address || inp?.address || '');
+}
+
+function psktHasSig(inp) {
+  try {
+    const s = hexish(inp?.signatureScript);
+    return !!(s && s.length >= 20);
+  } catch {
+    return false;
+  }
+}
+
+/** Sign a dApp PSKT JSON with the native key. Never returns the private key.
+ *  KIP-12: sign only listed inputs. If the dApp omits signInputs, sign only
+ *  unsigned inputs owned by this wallet — never re-sign covenant / P2SH inputs. */
 export async function signPsktJson({ wallet, txJsonString, signInputs }) {
   const k = await loadKaspaSdk();
   const json = String(txJsonString || '');
@@ -3116,15 +3136,53 @@ export async function signPsktJson({ wallet, txJsonString, signInputs }) {
   }
   const priv = privKeyFromWallet(k, wallet);
   const n = tx.inputs.length;
-  const listed = Array.isArray(signInputs) ? signInputs : [];
-  const want = listed.length
-    ? new Set(listed.map(s => Number(s.index)))
-    : new Set([...Array(n).keys()]);
+  const listed = (Array.isArray(signInputs) ? signInputs : []).filter(s => Number.isFinite(Number(s.index)));
+  const want = new Set();
+  if (listed.length) {
+    for (const s of listed) {
+      const i = Number(s.index);
+      if (i >= 0 && i < n) want.add(i);
+    }
+  } else {
+    const mine = payloadOfKaspaAddr(wallet.address);
+    for (let i = 0; i < n; i++) {
+      if (psktHasSig(tx.inputs[i])) continue;
+      if (mine && payloadOfKaspaAddr(psktInputAddr(tx.inputs[i])) === mine) want.add(i);
+    }
+  }
+  if (!want.size) {
+    throw new Error('No inputs for this wallet to sign. Pass options.signInputs with this wallet’s input indexes (do not list covenant inputs).');
+  }
   for (let i = 0; i < n; i++) {
     if (!want.has(i)) continue;
+    const row = listed.find(s => Number(s.index) === i);
+    const sighash = Number(row?.sighashType ?? 1);
+    if (sighash !== 1 && sighash !== k.SighashType?.All) {
+      throw new Error('This wallet only signs SIGHASH_ALL (1). Input ' + i + ' asked for ' + sighash);
+    }
     const sig = hexish(k.createInputSignature(tx, i, priv, k.SighashType.All));
     if (!sig || sig.length < 20) throw new Error('Empty signature on input ' + i);
     tx.inputs[i].signatureScript = sig;
   }
   return tx.serializeToSafeJSON();
+}
+
+/** Broadcast a signed Safe-JSON transaction. Used by dApp pushTx. */
+export async function pushSignedPskt(txJsonString) {
+  const k = await loadKaspaSdk();
+  const json = String(txJsonString || '');
+  if (!json) throw new Error('No signed transaction to broadcast');
+  let tx;
+  try {
+    tx = k.Transaction.deserializeFromSafeJSON(json);
+  } catch {
+    throw new Error('Signed PSKT could not be read');
+  }
+  const { rpc, url } = await connectPublicNode();
+  const txId = await submitSignedRpc(k, rpc, url, tx, {
+    sigOpCount: 0,
+    computeBudget: 10,
+    lockTime: Number(tx.lockTime || 0)
+  });
+  return { txId, node: url };
 }

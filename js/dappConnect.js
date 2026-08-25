@@ -1,14 +1,14 @@
 /* dApp connect host: popup / protocol-handler session for window.kcc20 (sdk.js). */
 import { networkId } from './crypto.js?v=100';
-import { fetchAddressUtxos, fetchAddressBalance, signPsktJson } from './tx.js?v=119';
+import { fetchAddressUtxos, fetchAddressBalance, signPsktJson, pushSignedPskt } from './tx.js?v=154';
 import { kaswareSigning, signPsktWithKasware } from './kasware.js?v=100';
 
 const ALLOW_KEY = 'kcc20_dapp_allow_v1';
 const TREASURY_KEY = 'kcc20_dapp_treasury_v1';
 const NS = 'kcc20';
 const HOST_METHODS = [
-  'connect', 'disconnect', 'getAccounts', 'getNetwork', 'getPublicKey',
-  'switchNetwork', 'signPskt', 'signPsbt', 'getUtxoEntries', 'getBalance',
+  'connect', 'requestAccounts', 'disconnect', 'getAccounts', 'getNetwork', 'getPublicKey',
+  'switchNetwork', 'signPskt', 'signPsbt', 'pushTx', 'getUtxoEntries', 'getBalance',
   'getTokenBalance', 'getHoldings', 'sendToken', 'sendKcc20', 'payToken', 'payKcc20', 'fundCredits'
 ];
 
@@ -202,7 +202,7 @@ async function handleConnect(req) {
       origin,
       approveLabel: 'Connect',
       body:
-        '<p class="muted" style="text-align:left;padding:0 0 8px;">This TTT app wants your Kaspa address. Keys stay in this wallet. Nothing is sent to a server.</p>'
+        '<p class="muted" style="text-align:left;padding:0 0 8px;">This dApp wants your Kaspa address. Keys stay in this wallet. Nothing is sent to a server.</p>'
         + '<div class="kv"><span class="k">App</span><span class="v">' + esc(req.name || (String(origin).includes('tttz.xyz') ? 'TTT' : origin)) + '</span></div>'
         + '<div class="kv"><span class="k">Wallet</span><span class="v">' + esc(w.name || 'Wallet') + '</span></div>'
         + '<div class="kv kv-stack"><span class="k">Address</span><span class="v">' + esc(w.address) + '</span></div>'
@@ -232,7 +232,7 @@ async function handleSign(req) {
     origin,
     approveLabel: 'Sign',
     body:
-      '<p class="muted" style="text-align:left;padding:0 0 8px;">Review this PSKT. Signing happens on this device (or KasWare). The dApp never sees your key.</p>'
+      '<p class="muted" style="text-align:left;padding:0 0 8px;">Review this PSKT. Signing happens on this device. The dApp never sees your key. Covenant inputs stay unsigned.</p>'
       + '<div class="kv"><span class="k">dApp</span><span class="v">' + esc(req.name || origin) + '</span></div>'
       + '<div class="kv"><span class="k">Wallet</span><span class="v">' + esc(w.address) + '</span></div>'
       + '<div class="kv"><span class="k">Network</span><span class="v">' + esc(netName()) + '</span></div>'
@@ -245,6 +245,28 @@ async function handleSign(req) {
     return await signPsktWithKasware(json, inputs);
   }
   return await signPsktJson({ wallet: w, txJsonString: json, signInputs: inputs });
+}
+
+async function handlePushTx(req) {
+  const w = await ensureUnlocked();
+  const origin = req.origin;
+  if (!originAllowed(origin)) await handleConnect(req);
+  const json = String(req.params?.txJsonString || req.params?.signedTx || '');
+  if (!json) throw new Error('dApp sent an empty signed transaction');
+  await showOverlay({
+    title: 'Broadcast transaction',
+    origin,
+    approveLabel: 'Broadcast',
+    body:
+      '<p class="muted" style="text-align:left;padding:0 0 8px;">Submit this already-signed PSKT to a public Kaspa node. The dApp does not get your key.</p>'
+      + '<div class="kv"><span class="k">dApp</span><span class="v">' + esc(req.name || origin) + '</span></div>'
+      + '<div class="kv"><span class="k">Wallet</span><span class="v">' + esc(w.address) + '</span></div>'
+      + '<div class="kv"><span class="k">Network</span><span class="v">' + esc(netName()) + '</span></div>'
+      + '<div class="kv"><span class="k">Tx</span><span class="v">' + esc(summarizePskt(json)) + '</span></div>'
+  });
+  const res = await pushSignedPskt(json);
+  try { hooks?.afterTx?.(); } catch {}
+  return res;
 }
 
 async function handleSwitch(req) {
@@ -375,7 +397,7 @@ async function handleSendToken(req) {
 
 async function dispatch(req) {
   const method = String(req.method || '');
-  if (method === 'connect') return handleConnect(req);
+  if (method === 'connect' || method === 'requestAccounts') return handleConnect(req);
   if (method === 'getAccounts') {
     const w = await ensureUnlocked();
     if (!originAllowed(req.origin)) return handleConnect(req);
@@ -394,6 +416,7 @@ async function dispatch(req) {
   }
   if (method === 'switchNetwork') return handleSwitch(req);
   if (method === 'signPskt' || method === 'signPsbt') return handleSign(req);
+  if (method === 'pushTx' || method === 'broadcast') return handlePushTx(req);
   if (method === 'getUtxoEntries') return handleGetUtxos(req);
   if (method === 'getBalance') return handleGetBalance(req);
   if (method === 'getHoldings' || method === 'getKcc20Holdings') return handleHoldings(req);

@@ -34,6 +34,7 @@
       <button class="ghost" id="hold" type="button">Holdings</button>
       <button class="ghost" id="kkdag" type="button">KKDAG</button>
       <button class="ghost" id="sign" type="button">Sign PSKT</button>
+      <button class="ghost" id="push" type="button">Push signed</button>
       <button class="ghost" id="disc" type="button">Disconnect</button>
     </div>
     <textarea id="pskt" placeholder='Paste a PSKT JSON string (txJsonString) to test signPskt'></textarea>
@@ -59,6 +60,10 @@
     document.getElementById('sign').onclick = () => {
       const json = document.getElementById('pskt').value.trim();
       api().signPskt({ txJsonString: json, options: { signInputs: [] } }).then(log).catch(e => log(e.message));
+    };
+    document.getElementById('push').onclick = () => {
+      const json = document.getElementById('pskt').value.trim();
+      api().pushTx(json).then(log).catch(e => log(e.message));
     };
     document.getElementById('disc').onclick = () => api().disconnect().then(() => log('disconnected')).catch(e => log(e.message));
   </script>

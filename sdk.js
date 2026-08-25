@@ -128,15 +128,28 @@
       + '&return=' + encodeURIComponent(location.href.split('#')[0]);
   }
 
-  function ensureChild() {
+  function raiseWalletWindow(reopen) {
     if (inWalletBrowser()) return window.parent;
-    if (child && !child.closed) return child;
     var url = walletUrl();
-    child = window.open(url, 'kcc20-wallet', popupFeatures());
-    if (!child) {
-      try { child = window.open(url, 'kcc20-wallet'); } catch (e) { child = null; }
+    if (reopen && child && !child.closed) {
+      try { child.close(); } catch (e) {}
+      child = null;
     }
-    return child;
+    var w = null;
+    try {
+      // Same window name + user click brings an existing popup to the front (Chrome/Edge).
+      w = window.open((child && !child.closed) ? '' : url, 'kcc20-wallet', popupFeatures());
+    } catch (e) {}
+    if (!w) {
+      try { w = window.open(url, 'kcc20-wallet'); } catch (e) {}
+    }
+    if (w && !w.closed) child = w;
+    try { if (child && !child.closed) child.focus(); } catch (e) {}
+    return (child && !child.closed) ? child : null;
+  }
+
+  function ensureChild() {
+    return raiseWalletWindow(false);
   }
 
   function waitReady(win) {
@@ -182,14 +195,21 @@
     });
   }
 
+  var INTERACTIVE = {
+    connect: 1, requestAccounts: 1, signPskt: 1, signPsbt: 1, pushTx: 1, switchNetwork: 1,
+    sendToken: 1, sendKcc20: 1, payToken: 1, payKcc20: 1, fundCredits: 1
+  };
+
   function rpc(method, params) {
     return new Promise(function (resolve, reject) {
-      var win = ensureChild();
+      var reopen = method === 'connect' || method === 'requestAccounts';
+      var win = INTERACTIVE[method] ? raiseWalletWindow(reopen) : ensureChild();
       if (!win) {
         try { location.href = 'web+kcc20:' + method + '?from=' + encodeURIComponent(location.origin); } catch (e) {}
         reject(new Error('Allow popups for KCC20 Wallet, or open ' + ORIGIN + ' and install the PWA.'));
         return;
       }
+      try { win.focus(); } catch (e) {}
       waitReady(win).then(function () {
         var id = uid();
         pending[id] = {
@@ -254,10 +274,20 @@
     disconnect: function () {
       return rpc('disconnect').then(function () {
         accounts = [];
+        lastState = null;
         emit('disconnect');
+        if (!inWalletBrowser() && child && !child.closed) {
+          try { child.close(); } catch (e) {}
+        }
+        child = null;
       }).catch(function () {
         accounts = [];
+        lastState = null;
         emit('disconnect');
+        if (!inWalletBrowser() && child && !child.closed) {
+          try { child.close(); } catch (e) {}
+        }
+        child = null;
       });
     },
     getAccounts: function () {

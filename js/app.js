@@ -58,7 +58,7 @@ import {
 } from './atrade.js?v=100';
 import { SCORPION_MEMORY } from './scorpionMemory.js?v=142';
 
-export const BUILD = '147';
+export const BUILD = '148';
 
 const TOKEN_FALLBACK_LOGO = 'assets/ttt.png';
 
@@ -1244,6 +1244,18 @@ async function dappSendToken({ tick, amount, dest }) {
     txId: result.txId || '',
     label: 'TTT credits'
   });
+  if (dest && sameAddrPayload(dest, TTT_TREASURY)) {
+    pushTokenActivity({
+      dir: 'in',
+      tick: t,
+      protocol: 'kcc20',
+      amount: String(raw),
+      decimals: token.decimals,
+      txId: result.txId || '',
+      label: 'DD pay-in',
+      note: 'From ' + shortAddr(wallet.address, 10, 6) + ' · KCC20 cell, not kaspa.org q-history'
+    }, TTT_TREASURY);
+  }
   afterTx();
   return {
     txId: result.txId,
@@ -2474,6 +2486,32 @@ async function ingestNewKcc20Cells({ ticks } = {}) {
     }
     if (dirty) saveKnownCells(known, addr);
   }));
+}
+
+async function ingestKcc20CellActivity(addr) {
+  const use = addr || wallet?.address;
+  if (!use || isTestnet()) return;
+  let ticks = [...new Set((kccHoldings || []).map(t => String(t.ticker || '').toUpperCase()).filter(Boolean))].slice(0, 8);
+  if (sameAddrPayload(use, TTT_TREASURY) && !ticks.includes('KKDAG')) ticks = ['KKDAG', ...ticks];
+  for (const tick of ticks) {
+    const cells = await fetchKronTokenUtxos(tick, use).catch(() => []);
+    for (const c of cells || []) {
+      const amt = String(c.amount || '0');
+      const txId = c.outpoint?.transactionId || '';
+      if (!(Number(amt) > 0) || !txId) continue;
+      const dd = sameAddrPayload(use, TTT_TREASURY) && tick === 'KKDAG';
+      pushTokenActivity({
+        dir: 'in',
+        tick,
+        protocol: 'kcc20',
+        amount: amt,
+        decimals: Number(c.dec ?? 0),
+        txId,
+        label: dd ? 'DD pay-in' : 'Received',
+        note: dd ? 'Covenant cell on ews — kaspa.org q-page will not list this' : 'KCC20 cell'
+      }, use);
+    }
+  }
 }
 
 async function ingestKronActivity(addr) {
@@ -3938,6 +3976,7 @@ async function refreshTokenHoldings() {
   rememberActiveSnap();
   ingestNewKcc20Cells().catch(() => {});
   ingestKronActivity(addr).catch(() => {});
+  ingestKcc20CellActivity(addr).catch(() => {});
   refreshDdInbox().catch(() => {});
   if (currentTab === 'home') renderHome();
   if (currentTab === 'tokens') renderTokens();

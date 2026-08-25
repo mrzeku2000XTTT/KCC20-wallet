@@ -23,7 +23,7 @@ import {
   fetchOwnedUtxos, collectSpendableUtxos, buildSentinelChain, buildRecurringChain, buildHashlockCovenant,
   newHashlockSecret, checkinHop, currentHop, parseXmssKit, p2shFromRedeemHex, spendXmssVault,
   disconnectRpc, buildDcaDrips, sendKasMany, releaseDcaDrip, cancelDcaDrip
-} from './tx.js?v=129';
+} from './tx.js?v=130';
 import { bootDappConnect, pingTttDappFrame } from './dappConnect.js?v=121';
 import { schedulePersistIframeVault, bootIframeVaultWatch } from './iframeVault.js?v=120';
 import { kronMarkets, quoteKronTrade, executeKronTrade, formatKasSompi, lookupKronTick, tradeCostLines, attachKronLogos, kronCandles } from './kronTrade.js?v=123';
@@ -35,7 +35,7 @@ import {
   refundMinutesFromNow, refundAtMs, dueBetGroups, patchBet, winSideFromPrices,
   betProtocolFee, BET_FEE_BPS, betIdFromAddr, encodeBetNotice, fetchPublicBetTape,
   poolFromTape, mergeTapeAndLocal, userPubFromAddr, marketId
-} from './bet.js?v=129';
+} from './bet.js?v=130';
 import {
   migrateReceiveBook, ownedAddresses, markAddressUsed, currentReceive,
   deriveReceiveBatch, unusedReceiveCount, ensurePrivacyBook
@@ -55,9 +55,9 @@ import {
   rememberLaunch, loadLaunched, cookOwnerBalances, cookDeployed,
   cookTickOf, cookBookLevels
 } from './atrade.js?v=100';
-import { SCORPION_MEMORY } from './scorpionMemory.js?v=129';
+import { SCORPION_MEMORY } from './scorpionMemory.js?v=130';
 
-export const BUILD = '129';
+export const BUILD = '130';
 
 const TOKEN_FALLBACK_LOGO = 'assets/ttt.png';
 
@@ -284,6 +284,7 @@ let agentPreview = null;
 let betTimer = null;
 let betHireTimer = null;
 let betBusy = false;
+let betAbort = false;
 let betFocus = 'KKDAG';
 let dcaTimer = null;
 let dcaBusy = false;
@@ -5196,6 +5197,9 @@ function resumeBetHireIfAny() {
   ensureBetHireLoop();
   const job = loadBetHire();
   if (job?.on && Number(job.until || 0) > Date.now() && sessionOpen()) {
+    if (/storage mass|small UTXOs/i.test(String(job.last || ''))) {
+      saveBetHire({ ...job, lastWindow: windowBounds().start, last: 'paused — Compound on Home, then hire again' });
+    }
     tickBetHire().catch(() => {});
     toast('Bet agent resumed · ' + (job.tick || TTT_TICK));
   } else {
@@ -5203,19 +5207,32 @@ function resumeBetHireIfAny() {
   }
 }
 
+function betErr(e) {
+  const t = errText(e);
+  if (/storage mass/i.test(t)) return 'Too many small UTXOs. Home → Compound, then tap YES/NO.';
+  if (/Need .* KAS to fund/i.test(t)) return t;
+  return t;
+}
+
 async function placeBet(side, opts = {}) {
+  if (betAbort && opts.skipPin) return;
   if (isTestnet()) { toast('Bets are mainnet KRON only'); return; }
   if (!wallet) { toast('Unlock a wallet'); return; }
   const tick = String(opts.tick || betTickNow()).toUpperCase();
-  const sizeKas = Number(opts.sizeKas != null ? opts.sizeKas : ($('bet-size')?.value || 0.15));
+  const sizeKas = Number(opts.sizeKas != null ? opts.sizeKas : ($('bet-size')?.value || $('bet-hire-kas')?.value || 0.15));
   if (!(sizeKas >= 0.15)) { toast('Stake at least 0.15 KAS'); return; }
+  const feeKas = betProtocolFee(sizeKas);
+  const need = Number(kasToSompi(sizeKas) + kasToSompi(feeKas) + 500000n) / 1e8;
+  if (Number(balanceSompi || 0) / 1e8 < need) {
+    toast('Fund this wallet with at least ' + need.toFixed(2) + ' KAS first');
+    return;
+  }
   const info = await lookupKronTick(tick);
   const w = windowBounds();
   if (!opts.skipPin) {
     try { await requirePin((side === 'yes' ? 'YES' : 'NO') + ' ' + sizeKas + ' KAS on ' + tick); }
     catch (e) { if (errText(e) === 'cancelled') return; toast(errText(e)); return; }
   }
-  const feeKas = betProtocolFee(sizeKas);
   toast('Locking ' + sizeKas + ' KAS in a new escrow · ' + feeKas + ' KAS fee to KCC20');
   setVaultOwner(wallet.address);
   const built = await buildBetEscrowCovenant({
@@ -5279,7 +5296,14 @@ async function hireBetAgent() {
   let hours = Math.max(1, Math.round(Number($('bet-hours')?.value || 1)));
   hours = Math.min(hours, maxHireHours(sub));
   const cost = hireCost(hours, sub);
-  const sizeKas = Number($('bet-size')?.value || 0.15);
+  const sizeKas = Number($('bet-hire-kas')?.value || $('bet-size')?.value || 0.15);
+  if (!(sizeKas >= 0.15)) throw new Error('Set KAS per bet (min 0.15) and fund this wallet first');
+  if ($('bet-size')) $('bet-size').value = String(sizeKas);
+  const feeKas = betProtocolFee(sizeKas);
+  const needKas = Number(kasToSompi(sizeKas) + kasToSompi(feeKas) + 500000n) / 1e8;
+  if (Number(balanceSompi || 0) / 1e8 < needKas) {
+    throw new Error('Fund this wallet with at least ' + needKas.toFixed(2) + ' KAS first, then hire');
+  }
   const held = kkdagsHeld(kccHoldings);
   if (cost > 0 && held < cost) throw new Error('Need ' + cost + ' KKDAG to hire. This wallet has ' + Math.floor(held));
   try { await requirePin('Hire Scorpion ' + hours + 'h on ' + tick); }
@@ -5299,28 +5323,35 @@ async function hireBetAgent() {
     });
     payTxId = sent?.txId || '';
   }
+  betAbort = false;
   saveBetHire({
     on: true, tick, hours, sizeKas, mode: 'auto',
     until: Date.now() + hours * 3600000,
-    paid: cost, payTxId, lastWindow: 0, last: 'hired', fills: [],
+    paid: cost, payTxId, lastWindow: windowBounds().start, last: 'hired · next 15m', fills: [],
     startedAt: Date.now(), pass: sub
   });
   afterTx();
   ensureBetHireLoop();
   startBetUi();
-  toast('Agent hired ' + hours + 'h on ' + tick);
+  toast('Agent hired ' + hours + 'h · ' + sizeKas + ' KAS each window · starts next 15m');
   paintBetHireStatus();
-  tickBetHire().catch(e => toast(errText(e)));
 }
 
 function stopBetHire() {
+  betAbort = true;
+  betBusy = false;
   const job = loadBetHire();
-  if (job) saveBetHire({ ...job, on: false, last: 'stopped' });
+  saveBetHire({ ...(job || {}), on: false, last: 'stopped' });
   paintBetHireStatus();
   toast('Bet agent stopped');
 }
 
 async function tickBetHire() {
+  if (betAbort) {
+    const job = loadBetHire();
+    if (job?.on) saveBetHire({ ...job, on: false, last: 'stopped' });
+    return;
+  }
   if (atPane === 'bet') paintBetMarket().catch(() => {});
   else tickBetSettle().catch(() => {});
   if (betBusy) return;
@@ -5346,19 +5377,26 @@ async function tickBetHire() {
     const side = job.mode === 'no' ? 'no' : (job.mode === 'yes' ? 'yes' : (yes >= 50 ? 'yes' : 'no'));
     job.last = 'window ' + side.toUpperCase() + ' · ' + yes + '¢';
     saveBetHire(job);
+    if (betAbort || !loadBetHire()?.on) return;
     const row = await placeBet(side, { skipPin: true, tick: job.tick, sizeKas: Number(job.sizeKas || 0.15) });
     job.lastWindow = w.start;
-    job.fills = (job.fills || []).concat({
-      t: Date.now(), side, px: row?.openPx, txId: row?.txId || ''
-    }).slice(-12);
-    job.last = side.toUpperCase() + ' escrow · ' + String(row?.txId || '').slice(0, 10);
+    if (row) {
+      job.fills = (job.fills || []).concat({
+        t: Date.now(), side, px: row?.openPx, txId: row?.txId || ''
+      }).slice(-12);
+      job.last = side.toUpperCase() + ' escrow · ' + String(row?.txId || '').slice(0, 10);
+    } else {
+      job.last = 'waiting for fund / PIN';
+    }
     saveBetHire(job);
     paintBetHireStatus();
   } catch (e) {
     const j = loadBetHire() || job;
-    j.last = errText(e);
+    j.lastWindow = windowBounds().start;
+    j.last = betErr(e);
     saveBetHire(j);
     paintBetHireStatus();
+    toast(betErr(e));
   } finally {
     betBusy = false;
   }
@@ -8296,12 +8334,19 @@ function bind() {
   });
   click('at-tokens-btn', () => { haptic(); setAtPane(atPane === 'tokens' ? 'book' : 'tokens'); });
   click('at-bet-btn', () => { haptic(); setAtPane(atPane === 'bet' ? 'book' : 'bet'); });
-  click('bet-yes', () => placeBet('yes').catch(err => toast(errText(err))));
-  click('bet-no', () => placeBet('no').catch(err => toast(errText(err))));
-  click('bet-hire', () => hireBetAgent().catch(err => toast(errText(err))));
-  click('bet-stop', () => stopBetHire());
+  click('bet-yes', () => placeBet('yes').catch(err => toast(betErr(err))));
+  click('bet-no', () => placeBet('no').catch(err => toast(betErr(err))));
+  click('bet-hire', () => hireBetAgent().catch(err => toast(betErr(err))));
+  click('bet-stop', () => { haptic(); stopBetHire(); });
   $('bet-hours')?.addEventListener('input', paintBetCost);
-  $('bet-size')?.addEventListener('input', paintBetCost);
+  $('bet-size')?.addEventListener('input', () => {
+    if ($('bet-hire-kas') && $('bet-size').value) $('bet-hire-kas').value = $('bet-size').value;
+    paintBetCost();
+  });
+  $('bet-hire-kas')?.addEventListener('input', () => {
+    if ($('bet-size') && $('bet-hire-kas').value) $('bet-size').value = $('bet-hire-kas').value;
+    paintBetCost();
+  });
   $('bet-tick')?.addEventListener('change', () => paintBetMarket().catch(() => {}));
   $('bet-fills')?.addEventListener('click', e => {
     if (e.target.closest('a')) return;

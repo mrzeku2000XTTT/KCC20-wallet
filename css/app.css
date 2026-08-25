@@ -324,6 +324,12 @@ img { display: block; max-width: 100%; }
 #at-bet { flex: 1; min-height: 0; overflow-y: auto; display: flex; flex-direction: column; gap: 0; }
 #at-bet.hidden { display: none !important; }
 #at-bet > * { flex-shrink: 0; }
+#at-bet-play {
+  position: sticky; top: 0; z-index: 4;
+  padding: 0 0 8px; margin: 0 0 6px;
+  background: rgba(8, 8, 10, 0.94);
+  backdrop-filter: blur(14px);
+}
 #at-bet .glass.list { flex: 0 0 auto; }
 .bet-q {
   font-size: 17px; font-weight: 750; line-height: 1.28; letter-spacing: -0.3px;

@@ -12,7 +12,7 @@
   <link rel="icon" href="assets/icon.png">
   <title>KCC20 Wallet</title>
   <meta http-equiv="Cache-Control" content="no-store, no-cache, must-revalidate">
-  <link rel="stylesheet" href="css/app.css?v=129">
+  <link rel="stylesheet" href="css/app.css?v=130">
 </head>
 <body>
   <img class="bg-poster" src="assets/bg.jpg" alt="">
@@ -259,6 +259,7 @@
           </div>
 
           <div id="at-bet" class="hidden">
+            <div id="at-bet-play">
             <p class="bet-q" id="bet-q">Will <b>KKDAG</b> close higher than it opened this 15 minutes?</p>
             <div class="bet-meta">
               <span class="bet-clock" id="bet-clock">15:00</span>
@@ -280,7 +281,8 @@
                 <input id="bet-size" type="number" min="0.15" step="0.05" value="0.15">
               </label>
             </div>
-            <p class="bet-pool" id="bet-fee">Tap YES or NO → new covenant++ escrow. Bet #id is that kaspa:p, truncated. Keys stay in this wallet.</p>
+            </div>
+            <p class="bet-pool" id="bet-fee">Tap YES or NO. Need KAS in this wallet first. Compound on Home if the node rejects storage mass.</p>
             <p class="bet-how" id="bet-how">You make the bet — not a house. Every wallet on the same token and 15m UTC window is in one market (like Kalshi’s event). YES/NO starts 50/50 and the ¢ is the shared pool, posted on-chain with the fee (no keys). Unmatched tickets refund. Matched losers pay winners after KRON idx close.</p>
             <div class="section-label">Live book</div>
             <div class="ag-fills" id="bet-live"></div>
@@ -289,10 +291,13 @@
             <div class="section-label">Your tickets</div>
             <div class="ag-fills" id="bet-fills"></div>
             <div class="section-label">Hire Scorpion better</div>
-            <p class="at-tiny">Pay <b>KKDAG</b> (TTT token) to hire Scorpion. It locks your KAS bets each 15m while this wallet stays unlocked. PIN once. Hold ≥ 1,000 KKDAG for extra hours + 1 hour free. The escrow agent settles covenants after close.</p>
+            <p class="at-tiny">Fund KAS in this wallet first. Set KAS per 15m bet. Hire pays KKDAG (0 if you hold ≥ 1,000). PIN once. Auto starts on the <b>next</b> 15m window — Stop ends it immediately.</p>
             <div class="at-row">
               <label class="field small"><span>Hours</span>
                 <input id="bet-hours" type="number" min="1" max="24" step="1" value="1">
+              </label>
+              <label class="field small"><span>KAS / bet</span>
+                <input id="bet-hire-kas" type="number" min="0.15" step="0.05" value="0.15">
               </label>
               <label class="field grow"><span>Hire cost</span>
                 <input id="bet-cost" value="100 KKDAG" disabled>
@@ -750,7 +755,7 @@
   <script type="module">
     import('./js/iframeVault.js?v=121').then(function (mod) {
       return (mod.restoreIframeVault ? mod.restoreIframeVault() : Promise.resolve()).then(function () {
-        return import('./js/app.js?v=129');
+        return import('./js/app.js?v=130');
       });
     }).catch(function (err) {
       console.error(err);

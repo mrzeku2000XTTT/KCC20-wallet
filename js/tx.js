@@ -484,9 +484,35 @@ export async function sendKasMany({ wallet, outputs, utxos, signWithKasware = fa
   if (!entries.length) throw new Error('No UTXOs yet — receive KAS first');
   entries = [...entries].sort((a, b) => (a.amount < b.amount ? 1 : -1));
   const totalOut = dests.reduce((a, o) => a + o.amount, 0n);
-  const payBytes = payload == null || payload === ''
+  const feeGuess = 800_000n + BigInt(dests.length) * 50_000n;
+  const dust = 200_000n;
+  let chosen = [];
+  let sum = 0n;
+  let massOk = false;
+  for (const e of entries) {
+    chosen.push(e);
+    sum += e.amount;
+    if (sum < totalOut + feeGuess) continue;
+    const change = sum - totalOut - feeGuess;
+    const outAmts = dests.map(d => d.amount);
+    if (change > dust) outAmts.push(change);
+    if (storageMassOk(k, chosen.map(x => x.amount), outAmts)) {
+      massOk = true;
+      break;
+    }
+    if (chosen.length >= 4) break;
+  }
+  if (sum < totalOut + feeGuess) {
+    throw new Error('Need ' + (Number(totalOut + feeGuess) / 1e8).toFixed(2) + ' KAS to fund this (stake + fee + network).');
+  }
+  if (!massOk) {
+    throw new Error('Too many small UTXOs to lock a bet. Home → Compound, then tap YES/NO.');
+  }
+  entries = chosen;
+  let payBytes = payload == null || payload === ''
     ? null
     : (payload instanceof Uint8Array ? payload : new TextEncoder().encode(String(payload)));
+  if (payBytes && payBytes.length > 80) payBytes = null;
   const { rpc, url } = await connectPublicNode();
   const net = networkId();
   const feeRate = await nodeFeeRate(rpc);
@@ -506,6 +532,23 @@ export async function sendKasMany({ wallet, outputs, utxos, signWithKasware = fa
     pendingList = built.transactions || [];
   } catch (e) {
     lastErr = errText(e);
+    if (payBytes) {
+      payBytes = null;
+      try {
+        const built = await k.createTransactions({
+          entries,
+          outputs: dests,
+          changeAddress: wallet.address,
+          priorityFee: 0n,
+          feeRate,
+          sigOpCount: 1,
+          networkId: net
+        });
+        pendingList = built.transactions || [];
+      } catch (e2) {
+        lastErr = errText(e2);
+      }
+    }
   }
   if (!pendingList.length) {
     const fee = 800_000n + BigInt(dests.length) * 50_000n;

@@ -42,12 +42,12 @@ function withKaspaPrefix(body) {
   return 'kaspa:' + b;
 }
 
-/** Public memo on the fee tx. No keys, no redeem script. */
+/** Short public memo for ¢. Full addresses stay off the tx so storage mass stays under 500k. */
 export function encodeBetNotice(row) {
   const tick = String(row.tick || '').toUpperCase().replace(/\|/g, '');
   const side = row.side === 'yes' ? 'Y' : 'N';
   const sompi = Math.round(Number(row.sizeKas || 0) * 1e8);
-  return ['B1', tick, side, String(row.start || 0), String(sompi), addrPayload(row.vaultAddr), addrPayload(row.userAddr), String(row.unlockDaa || 0)].join('|');
+  return ['B1', tick, side, String(row.start || 0), String(sompi)].join('|');
 }
 
 export function decodeBetNotice(text) {
@@ -55,25 +55,29 @@ export function decodeBetNotice(text) {
   const i = raw.indexOf('B1|');
   const s = i >= 0 ? raw.slice(i) : raw;
   const p = s.split('|');
-  if (p[0] !== 'B1' || p.length < 8) return null;
+  if (p[0] !== 'B1' || p.length < 5) return null;
   const tick = String(p[1] || '').toUpperCase();
   if (!/^[A-Z0-9]{2,12}$/.test(tick)) return null;
   const start = Number(p[3] || 0);
-  const vaultAddr = withKaspaPrefix(p[5]);
-  const userAddr = withKaspaPrefix(p[6]);
-  if (!vaultAddr.startsWith('kaspa:p') || !userAddr.startsWith('kaspa:q')) return null;
-  return {
+  const row = {
     tick,
     side: p[2] === 'Y' ? 'yes' : 'no',
     start,
     end: start + WINDOW_MS,
     sizeKas: Number(p[4] || 0) / 1e8,
-    vaultAddr,
-    userAddr,
-    unlockDaa: Number(p[7] || 0),
-    betId: betIdFromAddr(vaultAddr),
     public: true
   };
+  if (p.length >= 8) {
+    const vaultAddr = withKaspaPrefix(p[5]);
+    const userAddr = withKaspaPrefix(p[6]);
+    if (vaultAddr.startsWith('kaspa:p') && userAddr.startsWith('kaspa:q')) {
+      row.vaultAddr = vaultAddr;
+      row.userAddr = userAddr;
+      row.unlockDaa = Number(p[7] || 0);
+      row.betId = betIdFromAddr(vaultAddr);
+    }
+  }
+  return row;
 }
 
 export function userPubFromAddr(addr) {
@@ -110,9 +114,11 @@ export async function fetchPublicBetTape() {
     const inner = tx.transaction || tx;
     const text = payloadToText(inner.payload || tx.payload || '');
     const row = decodeBetNotice(text);
-    if (!row || seen.has(row.vaultAddr)) continue;
-    seen.add(row.vaultAddr);
+    if (!row) continue;
     row.txId = inner.transaction_id || tx.transaction_id || inner.txId || tx.txId || '';
+    const key = row.vaultAddr || row.txId || text;
+    if (seen.has(key)) continue;
+    seen.add(key);
     out.push(row);
   }
   return out;

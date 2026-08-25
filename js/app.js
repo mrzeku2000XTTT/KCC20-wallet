@@ -58,7 +58,7 @@ import {
 } from './atrade.js?v=100';
 import { SCORPION_MEMORY } from './scorpionMemory.js?v=152';
 
-export const BUILD = '160';
+export const BUILD = '161';
 
 const TOKEN_FALLBACK_LOGO = 'assets/ttt.png';
 
@@ -1188,10 +1188,11 @@ async function activateWallet(w, { toastMsg } = {}) {
   pinUnlockedFor = '';
   sessionUnlocked = false;
   $('tabbar')?.classList.remove('show');
-  if (walletIsKaswareChip(wallet)) {
+  const dappPopup = (() => { try { return new URLSearchParams(location.search).get('dapp') === '1'; } catch { return false; } })();
+  if (walletIsKaswareChip(wallet) && !dappPopup) {
     try { await autoArmKaswareForWallet(wallet); } catch {}
   }
-  if (wallet.kasware && kaswareSigning(wallet)) {
+  if (wallet.kasware && (kaswareSigning(wallet) || dappPopup)) {
     pinUnlockedFor = wallet.id;
     sessionUnlocked = true;
     await unlockToHome();
@@ -1314,9 +1315,6 @@ async function switchDappWallet(id) {
   setVaultOwner(w.address);
   hydrateFromSnap(w.address);
   rememberDappAccount(w.address);
-  if (walletIsKaswareChip(wallet)) {
-    try { await autoArmKaswareForWallet(wallet); } catch {}
-  }
   try { await refreshTokenHoldings(); } catch {}
   if (currentTab === 'home') renderHome();
   return wallet;
@@ -9833,7 +9831,8 @@ async function init() {
         saveWallet();
       } catch {}
     }
-    if (wallet.kasware && isKaswareInstalled()) {
+    const dappPopup = (() => { try { return new URLSearchParams(location.search).get('dapp') === '1'; } catch { return false; } })();
+    if (wallet.kasware && isKaswareInstalled() && !dappPopup) {
       try {
         await autoArmKaswareForWallet(wallet);
         const p = window.kasware;
@@ -9849,6 +9848,9 @@ async function init() {
           sessionUnlocked = true;
         }
       } catch {}
+    } else if (dappPopup && wallet.kasware) {
+      pinUnlockedFor = wallet.id;
+      sessionUnlocked = true;
     }
     if (sessionOpen() || (wallet.kasware && kaswareSigning(wallet))) {
       pinUnlockedFor = wallet.id;

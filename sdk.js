@@ -158,10 +158,19 @@
     child = null;
   }
 
-  function raiseWalletWindow(reopen) {
+  function liveWalletWindow() {
     if (inWalletBrowser()) return window.parent;
+    if (child && !child.closed) return child;
+    return null;
+  }
+
+  function raiseWalletWindow() {
+    if (inWalletBrowser()) return window.parent;
+    if (child && !child.closed) {
+      try { child.focus(); } catch (e) {}
+      return child;
+    }
     var url = walletUrl();
-    if (reopen) closeWalletWindow();
     var w = null;
     try {
       w = window.open(url, 'kcc20-wallet', popupFeatures());
@@ -172,10 +181,6 @@
     if (w && !w.closed) child = w;
     try { if (child && !child.closed) child.focus(); } catch (e) {}
     return (child && !child.closed) ? child : null;
-  }
-
-  function ensureChild() {
-    return raiseWalletWindow(false);
   }
 
   function waitReady(win) {
@@ -228,14 +233,20 @@
 
   function rpc(method, params) {
     return new Promise(function (resolve, reject) {
-      var reopen = method === 'connect' || method === 'requestAccounts';
-      var win = INTERACTIVE[method] ? raiseWalletWindow(reopen) : ensureChild();
+      var interactive = !!INTERACTIVE[method];
+      var win = interactive ? raiseWalletWindow() : liveWalletWindow();
       if (!win) {
+        if (!interactive) {
+          reject(new Error('Connect KCC20 Wallet first'));
+          return;
+        }
         try { location.href = 'web+kcc20:' + method + '?from=' + encodeURIComponent(location.origin); } catch (e) {}
         reject(new Error('Allow popups for KCC20 Wallet, or open ' + ORIGIN + ' and install the PWA.'));
         return;
       }
-      try { win.focus(); } catch (e) {}
+      if (interactive) {
+        try { win.focus(); } catch (e) {}
+      }
       waitReady(win).then(function () {
         var id = uid();
         pending[id] = {
@@ -284,6 +295,7 @@
     on: on,
     off: off,
     connect: function () {
+      if (accounts.length) return Promise.resolve(accounts.slice());
       return rpc('connect').then(function (r) {
         accounts = (r && r.accounts) || [];
         network = (r && r.network) || '';
@@ -362,20 +374,36 @@
       return rpc('getUtxoEntries', { address: address || '' });
     },
     getBalance: function (address) {
+      if (!liveWalletWindow() && lastState && lastState.balance) {
+        return Promise.resolve(lastState.balance);
+      }
       return rpc('getBalance', { address: address || '' });
     },
     getPublicKey: function () {
       return rpc('getPublicKey');
     },
     getHoldings: function () {
+      if (!liveWalletWindow() && lastState && lastState.holdings) {
+        return Promise.resolve({
+          address: lastState.address,
+          network: lastState.network,
+          holdings: lastState.holdings
+        });
+      }
       return rpc('getHoldings');
     },
     getState: function () {
+      if (lastState && lastState.address && !liveWalletWindow()) {
+        return Promise.resolve(lastState);
+      }
       return rpc('getState').then(function (r) {
         lastState = r || lastState;
         if (r && r.accounts) accounts = r.accounts;
         if (r && r.network) network = r.network;
         return r;
+      }).catch(function (e) {
+        if (lastState && lastState.address) return lastState;
+        throw e;
       });
     },
     detect: function () {
@@ -399,6 +427,7 @@
       return inWalletBrowser();
     },
     requestAccounts: function () {
+      if (accounts.length) return Promise.resolve(accounts.slice());
       return api.connect();
     },
     removeListener: function (ev, fn) {
@@ -500,9 +529,9 @@
     on: on,
     removeListener: off
   };
-  if (inWalletBrowser() || !root.kasware) {
-    root.kasware = shimKasware;
-  }
+  /* Always route TTT “KasWare” connect buttons through this PWA.
+     Do not trigger the Opera/Chrome KasWare extension on Connect. */
+  root.kasware = shimKasware;
 
   var kipUuid = (function () {
     try {

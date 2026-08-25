@@ -327,6 +327,9 @@ async function handleSendToken(req) {
   const origin = req.origin;
   if (!originAllowed(origin)) await handleConnect(req);
   if (netName() !== 'kaspa_mainnet') throw new Error('TTT credits are mainnet KKDAG. Switch this wallet off TN10.');
+  if (typeof hooks.isTreasuryPayer === 'function' && hooks.isTreasuryPayer()) {
+    throw new Error('Home chip is ews (treasury). Switch to Wallet 1 (ax6) on Home, then Fund. Treasury never pays.');
+  }
   const tick = String(req.params?.tick || req.params?.ticker || 'KKDAG').toUpperCase();
   let amount = String(req.params?.amount ?? req.params?.amountHuman ?? '').trim();
   let dest = String(req.params?.dest || req.params?.to || req.params?.treasury || '').trim();
@@ -349,17 +352,17 @@ async function handleSendToken(req) {
   if (Number(amount) > have + 1e-9) {
     throw new Error('Need ' + amount + ' ' + tick + '. This wallet holds ' + have);
   }
+  const payerLine = (typeof hooks.payerLabel === 'function' && hooks.payerLabel()) || (w.name || 'Wallet') + ' · ' + (w.address || '');
   await showOverlay({
-    title: 'Pay ' + tick + ' to TTT',
+    title: 'Pay ' + amount + ' ' + tick + ' from this chip',
     origin,
-    approveLabel: 'Sign & send',
+    approveLabel: 'Sign ' + amount + ' ' + tick,
     body:
-      '<p class="muted" style="text-align:left;padding:0 0 8px;">This is a real KCC20 send to TTT’s treasury. Credits appear in the iframe after this tx confirms. Keys stay in this wallet.</p>'
-      + '<div class="kv"><span class="k">App</span><span class="v">' + esc(req.name || origin) + '</span></div>'
-      + '<div class="kv"><span class="k">Token</span><span class="v">' + esc(tick) + ' · KCC20</span></div>'
-      + '<div class="kv"><span class="k">Amount</span><span class="v">' + esc(amount) + ' ' + esc(tick) + '</span></div>'
-      + '<div class="kv"><span class="k">You hold</span><span class="v">' + esc(String(have)) + ' ' + esc(tick) + '</span></div>'
-      + '<div class="kv kv-stack"><span class="k">Treasury</span><span class="v">' + esc(dest) + '</span></div>'
+      '<p class="muted" style="text-align:left;padding:0 0 8px;"><b>Paying from the Home wallet chip only.</b> If this is ews, Reject and switch to ax6.</p>'
+      + '<div class="kv kv-stack"><span class="k">PAYING FROM</span><span class="v">' + esc(payerLine) + '</span></div>'
+      + '<div class="kv"><span class="k">This bag holds</span><span class="v">' + esc(String(have)) + ' ' + esc(tick) + '</span></div>'
+      + '<div class="kv"><span class="k">Send</span><span class="v">' + esc(amount) + ' ' + esc(tick) + '</span></div>'
+      + '<div class="kv kv-stack"><span class="k">TO treasury (ews)</span><span class="v">' + esc(dest) + '</span></div>'
   });
   if (typeof hooks.requirePin === 'function' && !kaswareSigning(w)) {
     await hooks.requirePin('Sign TTT ' + tick + ' payment');

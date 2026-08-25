@@ -24,7 +24,7 @@ import {
   newHashlockSecret, checkinHop, currentHop, parseXmssKit, p2shFromRedeemHex, spendXmssVault,
   disconnectRpc, buildDcaDrips, sendKasMany, releaseDcaDrip, cancelDcaDrip, isMassError
 } from './tx.js?v=144';
-import { bootDappConnect, pingTttDappFrame, TTT_TREASURY } from './dappConnect.js?v=149';
+import { bootDappConnect, pingTttDappFrame, TTT_TREASURY } from './dappConnect.js?v=150';
 import { schedulePersistIframeVault, bootIframeVaultWatch } from './iframeVault.js?v=120';
 import { kronMarkets, quoteKronTrade, executeKronTrade, formatKasSompi, lookupKronTick, liveQuote, tradeCostLines, attachKronLogos, kronCandles, quoteKcc20Bridge, executeKcc20Bridge, formatTokenRaw } from './kronTrade.js?v=140';
 import {
@@ -58,7 +58,7 @@ import {
 } from './atrade.js?v=100';
 import { SCORPION_MEMORY } from './scorpionMemory.js?v=142';
 
-export const BUILD = '149';
+export const BUILD = '150';
 
 const TOKEN_FALLBACK_LOGO = 'assets/ttt.png';
 
@@ -1222,31 +1222,24 @@ function dappHoldingsList() {
 async function dappSendToken({ tick, amount, dest }) {
   const t = String(tick || 'KKDAG').toUpperCase();
   if (isTestnet()) throw new Error('TTT credits are mainnet KKDAG');
-  const payer = walletForDapp();
+  const payer = wallet;
   if (!payer?.address) throw new Error('Unlock KCC20 Wallet first');
   if (kaswareSigning(payer) && !hexKey(payer.privKey)) {
     throw new Error('Import this key into KCC20 Wallet (not KasWare-only) to send KCC20');
   }
   const destOk = validateKaspaAddress(dest, networkId());
   if (!destOk.isValid) throw new Error(destOk.error || 'Bad treasury address');
-  if (sameAddrPayload(payer.address, dest)) {
-    throw new Error('Fund pays TO ews. You are on the treasury key. Switch to Wallet 1 (ax6) and Fund from there.');
+  if (sameAddrPayload(payer.address, TTT_TREASURY) || sameAddrPayload(payer.address, dest)) {
+    throw new Error('This chip is ews (treasury). Fund must spend Wallet 1 (ax6). Switch the Home wallet chip to ax6, then Fund 10 KKDAG.');
   }
-  if (sameAddrPayload(payer.address, TTT_TREASURY)) {
-    throw new Error('Refusing to spend ews treasury from TTT Fund. Switch to the payer wallet (ax6).');
-  }
-  const token = sameAddrPayload(payer.address, wallet?.address)
-    ? holdingForTick(t)
-    : (kccHoldings.find(x => String(x.ticker).toUpperCase() === t) || { ticker: t, protocol: 'kcc20', decimals: 0, balance: '0' });
-  if (!token || token.native) throw new Error('Buy ' + t + ' on Home → Tokens, then fund TTT');
+  const token = holdingForTick(t);
+  if (!token || token.native) throw new Error('Buy ' + t + ' on Home → Tokens with this wallet, then fund TTT');
   const human = String(amount || '').trim();
   const raw = toTokenRaw(human, token.decimals);
-  if (sameAddrPayload(payer.address, wallet?.address) && BigInt(raw) > BigInt(token.balance || '0')) {
-    throw new Error('More than you hold');
-  }
+  if (BigInt(raw) > BigInt(token.balance || '0')) throw new Error('More than this wallet holds');
   await loadKaspaSdk();
   await pingPublicNode();
-  toast('Sending ' + human + ' ' + t + ' from ' + shortAddr(payer.address, 8, 6) + ' to TTT…');
+  toast('Paying ' + human + ' ' + t + ' from ' + (payer.name || 'wallet') + ' · ' + shortAddr(payer.address, 8, 6));
   let availableUtxos = [];
   try { availableUtxos = await fetchOwnedUtxos(payer); } catch {}
   if (!availableUtxos.length) {
@@ -1256,7 +1249,7 @@ async function dappSendToken({ tick, amount, dest }) {
   const result = await sendKcc20({
     wallet: payer,
     dest,
-    token: { ...token, ticker: t, protocol: 'kcc20' },
+    token,
     amountHuman: human,
     utxos: availableUtxos,
     onStatus: (m) => toast(m)
@@ -1281,7 +1274,7 @@ async function dappSendToken({ tick, amount, dest }) {
       decimals: token.decimals,
       txId: result.txId || '',
       label: 'DD pay-in',
-      note: 'From ' + shortAddr(wallet.address, 10, 6) + ' · KCC20 cell, not kaspa.org q-history'
+      note: 'From ' + shortAddr(payer.address, 10, 6) + ' · KCC20 cell, not kaspa.org q-history'
     }, TTT_TREASURY);
   }
   afterTx();
@@ -1298,8 +1291,10 @@ async function dappSendToken({ tick, amount, dest }) {
 
 function dappHooks() {
   return {
-    getWallet: () => walletForDapp(),
+    getWallet: () => wallet,
     rememberDappAccount,
+    payerLabel: () => (wallet?.name || 'Wallet') + ' · ' + (wallet?.address || ''),
+    isTreasuryPayer: () => !!(wallet?.address && sameAddrPayload(wallet.address, TTT_TREASURY)),
     sessionOpen,
     requirePin,
     toast,
@@ -2781,6 +2776,10 @@ function notifyTttTokenSent(payload) {
 function openTttFund() {
   haptic();
   if (isTestnet()) { toast('TTT credits are mainnet KKDAG. Switch off TN10.'); return; }
+  if (isTttTreasuryWallet()) {
+    toast('Home chip is ews. Switch to Wallet 1 (ax6) — treasury never Funds.');
+    return;
+  }
   const have = kkdagsHeld(kccHoldings);
   if (!(have > 0)) {
     toast('Buy KKDAG on Home → Tokens first, then Fund TTT');
@@ -2790,9 +2789,10 @@ function openTttFund() {
   const max = Math.floor(have);
   const start = String(Math.min(10, max) || 1);
   openSheet('Fund TTT with KKDAG', `
-    <p class="muted" style="text-align:left;padding:0 0 10px;">TTT’s in-app Fund button copies an address. This Sign sheet sends <b>real KKDAG</b> from this wallet to TTT’s treasury.</p>
-    <div class="kv"><span class="k">You hold</span><span class="v">${esc(String(have))} KKDAG</span></div>
-    <div class="kv kv-stack"><span class="k">Treasury</span><span class="v">${esc(dest)}</span></div>
+    <p class="muted" style="text-align:left;padding:0 0 10px;"><b>PAYING FROM ${esc(wallet?.name || 'this wallet')}</b> — the Home chip. Treasury ews never signs this.</p>
+    <div class="kv kv-stack"><span class="k">From</span><span class="v">${esc(wallet?.address || '')}</span></div>
+    <div class="kv"><span class="k">This bag holds</span><span class="v">${esc(String(have))} KKDAG</span></div>
+    <div class="kv kv-stack"><span class="k">To ews</span><span class="v">${esc(dest)}</span></div>
     <div class="field"><label>Amount (KKDAG)</label>
       <div class="dest-row">
         <input id="ttt-fund-amt" type="text" inputmode="decimal" value="${esc(start)}">

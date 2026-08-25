@@ -4,7 +4,13 @@ import { fetchAddressUtxos, fetchAddressBalance, signPsktJson } from './tx.js?v=
 import { kaswareSigning, signPsktWithKasware } from './kasware.js?v=100';
 
 const ALLOW_KEY = 'kcc20_dapp_allow_v1';
+const TREASURY_KEY = 'kcc20_dapp_treasury_v1';
 const NS = 'kcc20';
+const HOST_METHODS = [
+  'connect', 'disconnect', 'getAccounts', 'getNetwork', 'getPublicKey',
+  'switchNetwork', 'signPskt', 'signPsbt', 'getUtxoEntries', 'getBalance',
+  'getTokenBalance', 'getHoldings', 'sendToken', 'sendKcc20', 'payToken', 'payKcc20', 'fundCredits'
+];
 
 let hooks = null;
 let booted = false;
@@ -55,6 +61,22 @@ function forgetOrigin(origin) {
   const map = loadAllow();
   delete map[origin];
   saveAllow(map);
+}
+
+function loadTreasuryMap() {
+  try { return JSON.parse(localStorage.getItem(TREASURY_KEY) || '{}') || {}; } catch { return {}; }
+}
+
+function pinnedTreasury(origin) {
+  const row = loadTreasuryMap()[origin];
+  return row?.dest || '';
+}
+
+function pinTreasury(origin, dest) {
+  if (!origin || !dest) return;
+  const map = loadTreasuryMap();
+  map[origin] = { dest, at: Date.now() };
+  localStorage.setItem(TREASURY_KEY, JSON.stringify(map));
 }
 
 function pageParams() {
@@ -262,6 +284,91 @@ async function handleGetBalance(req) {
   return { confirmed: sompi, unconfirmed: 0, address: addr };
 }
 
+function serializeHolding(t) {
+  if (!t) return null;
+  const tick = String(t.ticker || t.tick || '').toUpperCase();
+  const dec = Math.max(0, Number(t.decimals || 0));
+  const raw = String(t.balance || t.raw || '0');
+  const human = Number(raw) / (10 ** dec);
+  return {
+    tick,
+    name: t.name || tick,
+    decimals: dec,
+    raw,
+    balance: Number.isFinite(human) ? String(human) : '0',
+    protocol: t.native ? 'kas' : (t.protocol || 'kcc20')
+  };
+}
+
+async function handleHoldings(req) {
+  const w = await ensureUnlocked();
+  if (!originAllowed(req.origin)) await handleConnect(req);
+  const list = typeof hooks.getHoldings === 'function' ? await hooks.getHoldings() : [];
+  return {
+    address: w.address,
+    network: netName(),
+    holdings: (list || []).map(serializeHolding).filter(Boolean)
+  };
+}
+
+async function handleTokenBalance(req) {
+  const w = await ensureUnlocked();
+  if (!originAllowed(req.origin)) await handleConnect(req);
+  const tick = String(req.params?.tick || req.params?.ticker || 'KKDAG').toUpperCase();
+  if (!/^[A-Z0-9]{2,12}$/.test(tick)) throw new Error('Bad ticker');
+  let row = null;
+  if (typeof hooks.getTokenBalance === 'function') row = await hooks.getTokenBalance(tick);
+  return serializeHolding(row) || { tick, name: tick, decimals: 0, raw: '0', balance: '0', protocol: tick === 'KAS' ? 'kas' : 'kcc20', address: w.address };
+}
+
+async function handleSendToken(req) {
+  const w = await ensureUnlocked();
+  const origin = req.origin;
+  if (!originAllowed(origin)) await handleConnect(req);
+  if (netName() !== 'kaspa_mainnet') throw new Error('TTT credits are mainnet KKDAG. Switch this wallet off TN10.');
+  const tick = String(req.params?.tick || req.params?.ticker || 'KKDAG').toUpperCase();
+  const amount = String(req.params?.amount ?? req.params?.amountHuman ?? '').trim();
+  let dest = String(req.params?.dest || req.params?.to || req.params?.treasury || '').trim();
+  if (!/^[A-Z0-9]{2,12}$/.test(tick)) throw new Error('Bad ticker');
+  if (!(Number(amount) > 0)) throw new Error('Enter how many ' + tick + ' to send');
+  const pinned = pinnedTreasury(origin);
+  if (!dest) dest = pinned;
+  if (!/^kaspa:q[a-z0-9]{20,120}$/i.test(dest)) {
+    throw new Error('TTT must pass its treasury as a kaspa:q… address (full, not truncated)');
+  }
+  dest = dest.toLowerCase();
+  if (pinned && pinned !== dest) {
+    throw new Error('Treasury for this app is already pinned. Pass the same kaspa:q address.');
+  }
+  const hold = typeof hooks.getTokenBalance === 'function' ? await hooks.getTokenBalance(tick) : null;
+  const have = Number(serializeHolding(hold)?.balance || 0);
+  if (!(have > 0)) {
+    throw new Error('This wallet has 0 ' + tick + '. Buy ' + tick + ' on Home → Tokens in KCC20 Wallet, then tap Fund again.');
+  }
+  if (Number(amount) > have + 1e-9) {
+    throw new Error('Need ' + amount + ' ' + tick + '. This wallet holds ' + have);
+  }
+  await showOverlay({
+    title: 'Pay ' + tick + ' to TTT',
+    origin,
+    approveLabel: 'Sign & send',
+    body:
+      '<p class="muted" style="text-align:left;padding:0 0 8px;">This is a real KCC20 send to TTT’s treasury. Credits appear in the iframe after this tx confirms. Keys stay in this wallet.</p>'
+      + '<div class="kv"><span class="k">App</span><span class="v">' + esc(req.name || origin) + '</span></div>'
+      + '<div class="kv"><span class="k">Token</span><span class="v">' + esc(tick) + ' · KCC20</span></div>'
+      + '<div class="kv"><span class="k">Amount</span><span class="v">' + esc(amount) + ' ' + esc(tick) + '</span></div>'
+      + '<div class="kv"><span class="k">You hold</span><span class="v">' + esc(String(have)) + ' ' + esc(tick) + '</span></div>'
+      + '<div class="kv kv-stack"><span class="k">Treasury</span><span class="v">' + esc(dest) + '</span></div>'
+  });
+  if (typeof hooks.requirePin === 'function' && !kaswareSigning(w)) {
+    await hooks.requirePin('Sign TTT ' + tick + ' payment');
+  }
+  if (typeof hooks.sendToken !== 'function') throw new Error('Wallet cannot send KCC20 from this session');
+  const result = await hooks.sendToken({ tick, amount, dest, origin });
+  pinTreasury(origin, dest);
+  return result;
+}
+
 async function dispatch(req) {
   const method = String(req.method || '');
   if (method === 'connect') return handleConnect(req);
@@ -284,6 +391,11 @@ async function dispatch(req) {
   if (method === 'signPskt' || method === 'signPsbt') return handleSign(req);
   if (method === 'getUtxoEntries') return handleGetUtxos(req);
   if (method === 'getBalance') return handleGetBalance(req);
+  if (method === 'getHoldings' || method === 'getKcc20Holdings') return handleHoldings(req);
+  if (method === 'getTokenBalance' || method === 'getKcc20Balance') return handleTokenBalance(req);
+  if (method === 'sendToken' || method === 'sendKcc20' || method === 'payToken' || method === 'payKcc20' || method === 'fundCredits') {
+    return handleSendToken(req);
+  }
   throw new Error('Unknown method ' + method);
 }
 
@@ -294,7 +406,7 @@ function onMessage(ev) {
   if (msg.type === 'hello') {
     sourceWin = ev.source || window.opener;
     sourceOrigin = ev.origin;
-    postTo(sourceWin, ev.origin, { type: 'ready', origin: location.origin });
+    postTo(sourceWin, ev.origin, { type: 'ready', origin: location.origin, browser: 'kcc20', methods: HOST_METHODS });
     return;
   }
   if (msg.type !== 'req' || !msg.id) return;
@@ -322,12 +434,13 @@ function onMessage(ev) {
 function announce() {
   const { from } = pageParams();
   const target = from && isHttpOrigin(from) ? from : '';
-  if (window.opener && target) postTo(window.opener, target, { type: 'ready', origin: location.origin });
+  const ready = { type: 'ready', origin: location.origin, browser: 'kcc20', methods: HOST_METHODS };
+  if (window.opener && target) postTo(window.opener, target, ready);
   try {
     if (window.parent && window.parent !== window) {
       const parentOrigin = target || (document.referrer ? new URL(document.referrer).origin : '');
       if (parentOrigin && isHttpOrigin(parentOrigin)) {
-        postTo(window.parent, parentOrigin, { type: 'ready', origin: location.origin });
+        postTo(window.parent, parentOrigin, ready);
       }
     }
   } catch {}
@@ -338,7 +451,7 @@ const TTT_ORIGINS = ['https://tttz.xyz', 'https://www.tttz.xyz', 'http://127.0.0
 export function pingTttDappFrame(frame) {
   const win = frame && frame.contentWindow;
   if (!win) return;
-  const payload = { type: 'host-ready', origin: location.origin, browser: 'kcc20' };
+  const payload = { type: 'host-ready', origin: location.origin, browser: 'kcc20', methods: HOST_METHODS };
   TTT_ORIGINS.forEach((o) => { try { postTo(win, o, payload); } catch {} });
 }
 

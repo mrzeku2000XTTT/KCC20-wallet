@@ -294,6 +294,18 @@
     getPublicKey: function () {
       return rpc('getPublicKey');
     },
+    getHoldings: function () {
+      return rpc('getHoldings');
+    },
+    getTokenBalance: function (tick) {
+      return rpc('getTokenBalance', { tick: tick || 'KKDAG' });
+    },
+    sendToken: function (opts) {
+      return rpc('sendToken', opts || {});
+    },
+    isEmbedded: function () {
+      return inWalletBrowser();
+    },
     request: function (method, params) {
       var m = String(method || '');
       var p = params || {};
@@ -320,7 +332,12 @@
         });
       }
       if (m === 'signPskt' || m === 'signPsbt') return api.signPskt(p, p.options);
-      return Promise.reject(new Error(m + ' is not supported by this KCC20 PWA build. Use connect / getBalance / signPskt.'));
+      if (m === 'getHoldings' || m === 'getKcc20Holdings') return api.getHoldings();
+      if (m === 'getTokenBalance' || m === 'getKcc20Balance') return api.getTokenBalance(p.tick || p.ticker || 'KKDAG');
+      if (m === 'sendToken' || m === 'sendKcc20' || m === 'payToken' || m === 'payKcc20' || m === 'fundCredits') {
+        return api.sendToken(p);
+      }
+      return Promise.reject(new Error(m + ' is not supported by this KCC20 PWA build. Use connect / getTokenBalance / sendToken.'));
     }
   };
 

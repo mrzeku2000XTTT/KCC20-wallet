@@ -31,6 +31,8 @@
       <button class="ghost" id="network" type="button">Network</button>
       <button class="ghost" id="utxos" type="button">UTXOs</button>
       <button class="ghost" id="bal" type="button">Balance</button>
+      <button class="ghost" id="hold" type="button">Holdings</button>
+      <button class="ghost" id="kkdag" type="button">KKDAG</button>
       <button class="ghost" id="sign" type="button">Sign PSKT</button>
       <button class="ghost" id="disc" type="button">Disconnect</button>
     </div>
@@ -52,6 +54,8 @@
     document.getElementById('network').onclick = () => api().getNetwork().then(log).catch(e => log(e.message));
     document.getElementById('utxos').onclick = () => api().getUtxoEntries().then(log).catch(e => log(e.message));
     document.getElementById('bal').onclick = () => api().getBalance().then(log).catch(e => log(e.message));
+    document.getElementById('hold').onclick = () => api().getHoldings().then(log).catch(e => log(e.message));
+    document.getElementById('kkdag').onclick = () => api().getTokenBalance('KKDAG').then(log).catch(e => log(e.message));
     document.getElementById('sign').onclick = () => {
       const json = document.getElementById('pskt').value.trim();
       api().signPskt({ txJsonString: json, options: { signInputs: [] } }).then(log).catch(e => log(e.message));

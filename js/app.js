@@ -24,7 +24,7 @@ import {
   newHashlockSecret, checkinHop, currentHop, parseXmssKit, p2shFromRedeemHex, spendXmssVault,
   disconnectRpc, buildDcaDrips, sendKasMany, releaseDcaDrip, cancelDcaDrip, isMassError
 } from './tx.js?v=135';
-import { bootDappConnect, pingTttDappFrame } from './dappConnect.js?v=121';
+import { bootDappConnect, pingTttDappFrame } from './dappConnect.js?v=141';
 import { schedulePersistIframeVault, bootIframeVaultWatch } from './iframeVault.js?v=120';
 import { kronMarkets, quoteKronTrade, executeKronTrade, formatKasSompi, lookupKronTick, liveQuote, tradeCostLines, attachKronLogos, kronCandles, quoteKcc20Bridge, executeKcc20Bridge, formatTokenRaw } from './kronTrade.js?v=140';
 import {
@@ -56,9 +56,9 @@ import {
   rememberLaunch, loadLaunched, cookOwnerBalances, cookDeployed,
   cookTickOf, cookBookLevels
 } from './atrade.js?v=100';
-import { SCORPION_MEMORY } from './scorpionMemory.js?v=140';
+import { SCORPION_MEMORY } from './scorpionMemory.js?v=141';
 
-export const BUILD = '140';
+export const BUILD = '141';
 
 const TOKEN_FALLBACK_LOGO = 'assets/ttt.png';
 
@@ -1187,6 +1187,68 @@ async function activateWallet(w, { toastMsg } = {}) {
   beginPinFlow('unlock');
 }
 
+function dappHoldingRow(tick) {
+  const t = holdingForTick(tick);
+  if (!t) return { ticker: String(tick || '').toUpperCase(), decimals: 0, balance: '0', protocol: 'kcc20' };
+  return t;
+}
+
+function dappHoldingsList() {
+  const kas = { ticker: 'KAS', name: 'Kaspa', decimals: 8, balance: String(balanceSompi), protocol: 'kas', native: true };
+  return [kas, ...(kccHoldings || []), ...(krcHoldings || [])];
+}
+
+async function dappSendToken({ tick, amount, dest }) {
+  const t = String(tick || 'KKDAG').toUpperCase();
+  if (isTestnet()) throw new Error('TTT credits are mainnet KKDAG');
+  if (!wallet?.address) throw new Error('Unlock KCC20 Wallet first');
+  if (kaswareSigning(wallet) && !hexKey(wallet.privKey)) {
+    throw new Error('Import this key into KCC20 Wallet (not KasWare-only) to send KCC20');
+  }
+  const destOk = validateKaspaAddress(dest, networkId());
+  if (!destOk.isValid) throw new Error(destOk.error || 'Bad treasury address');
+  const token = holdingForTick(t);
+  if (!token || token.native) throw new Error('Buy ' + t + ' on Home → Tokens, then fund TTT');
+  const human = String(amount || '').trim();
+  const raw = toTokenRaw(human, token.decimals);
+  if (BigInt(raw) > BigInt(token.balance || '0')) throw new Error('More than you hold');
+  await loadKaspaSdk();
+  await pingPublicNode();
+  toast('Sending ' + human + ' ' + t + ' to TTT…');
+  const availableUtxos = wallet.receiveAddrs?.length > 1
+    ? await fetchOwnedUtxos(wallet)
+    : await fetchAddressUtxos(wallet.address);
+  if (!availableUtxos.length) throw new Error('Need a little KAS in this wallet for the send fee');
+  const result = await sendKcc20({
+    wallet,
+    dest,
+    token,
+    amountHuman: human,
+    utxos: availableUtxos,
+    onStatus: (m) => toast(m)
+  });
+  applyLocalTokenDelta(t, token.protocol || 'kcc20', '-' + String(raw));
+  pushTokenActivity({
+    dir: 'out',
+    tick: t,
+    protocol: token.protocol || 'kcc20',
+    amount: String(raw),
+    decimals: token.decimals,
+    txId: result.txId || '',
+    label: 'TTT credits'
+  });
+  afterTx();
+  return {
+    txId: result.txId,
+    tick: t,
+    amount: human,
+    raw: String(raw),
+    dest,
+    from: wallet.address,
+    explorer: result.txId ? ('https://kas.fyi/transaction/' + result.txId) : ''
+  };
+}
+
 function dappHooks() {
   return {
     getWallet: () => wallet,
@@ -1194,7 +1256,20 @@ function dappHooks() {
     requirePin,
     toast,
     applyAppNetwork,
-    hydrateNativeKey
+    hydrateNativeKey,
+    getHoldings: async () => {
+      if (Date.now() - lastTokenFetch > 8000) {
+        try { await refreshTokenHoldings(); } catch {}
+      }
+      return dappHoldingsList();
+    },
+    getTokenBalance: async (tick) => {
+      if (Date.now() - lastTokenFetch > 8000) {
+        try { await refreshTokenHoldings(); } catch {}
+      }
+      return dappHoldingRow(tick);
+    },
+    sendToken: dappSendToken
   };
 }
 

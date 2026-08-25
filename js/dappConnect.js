@@ -1,6 +1,6 @@
 /* dApp connect host: popup / protocol-handler session for window.kcc20 (sdk.js). */
 import { networkId, validateKaspaAddress } from './crypto.js?v=100';
-import { fetchAddressUtxos, fetchAddressBalance, signPsktJson, pushSignedPskt } from './tx.js?v=154';
+import { fetchAddressUtxos, fetchAddressBalance, signPsktJson, pushSignedPskt } from './tx.js?v=165';
 import { kaswareSigning, signPsktWithKasware } from './kasware.js?v=100';
 
 const ALLOW_KEY = 'kcc20_dapp_allow_v1';
@@ -145,17 +145,25 @@ function reply(req, result, error) {
   if (!error) maybeCloseDappPopup(req.method);
 }
 
+function closeDappPopupKeepOpener() {
+  try {
+    if (window.opener && !window.opener.closed) window.opener.focus();
+  } catch {}
+  try { window.blur(); } catch {}
+  setTimeout(() => { try { window.close(); } catch {} }, 40);
+}
+
 function maybeCloseDappPopup(method) {
   try {
     if (window.parent && window.parent !== window) return;
     if (!pageParams().dapp) return;
     if (!window.opener) return;
     const closeAfter = {
-      connect: 1, requestAccounts: 1, signPskt: 1, signPsbt: 1, pushTx: 1,
+      connect: 1, requestAccounts: 1, signPskt: 1, signPsbt: 1, pushTx: 1, disconnect: 1,
       sendToken: 1, sendKcc20: 1, payToken: 1, payKcc20: 1, fundCredits: 1
     };
     if (!closeAfter[String(method || '')]) return;
-    setTimeout(() => { try { window.close(); } catch {} }, 220);
+    setTimeout(() => closeDappPopupKeepOpener(), 50);
   } catch {}
 }
 
@@ -177,6 +185,13 @@ function briefAddr(a) {
   return s.slice(0, 10) + '…' + s.slice(-6);
 }
 
+async function ensureBoundPayer() {
+  if (typeof hooks?.ensureDappPayer === 'function') {
+    try { await hooks.ensureDappPayer(); } catch {}
+  }
+  return hooks?.getWallet?.();
+}
+
 function paintDappWallets() {
   const box = $('dapp-wallets');
   if (!box) return;
@@ -188,9 +203,9 @@ function paintDappWallets() {
     return;
   }
   box.classList.remove('hidden');
-  box.innerHTML = '<p class="dapp-wallets-lab">Sign with a wallet you already added</p>' + list.map(w => {
+  box.innerHTML = '<p class="dapp-wallets-lab">Connected wallet is selected. Tap another chip to switch.</p>' + list.map(w => {
     const on = !!(cur && (w.id === cur.id || String(w.address) === String(cur.address)));
-    return `<button type="button" class="dapp-wchip${on ? ' on' : ''}" data-dapp-wid="${esc(w.id)}"><b>${esc(w.name || 'Wallet')}</b><span>${esc(briefAddr(w.address))}${w.kasware ? ' · KasWare' : ''}</span></button>`;
+    return `<button type="button" class="dapp-wchip${on ? ' on' : ''}" data-dapp-wid="${esc(w.id)}"><b>${esc(w.name || 'Wallet')}</b><span>${esc(briefAddr(w.address))}${w.kasware ? ' · KasWare' : ''}${on ? ' · connected' : ''}</span></button>`;
   }).join('');
 }
 
@@ -256,6 +271,7 @@ function connectBody(w, req, origin) {
 }
 
 async function handleConnect(req) {
+  await ensureBoundPayer();
   let w = await ensureUnlocked();
   const origin = req.origin;
   const many = (typeof hooks.listWallets === 'function' ? hooks.listWallets() : []).length > 1;
@@ -306,12 +322,14 @@ async function walletSnapshot(w) {
 }
 
 async function handleGetState(req) {
+  await ensureBoundPayer();
   const w = await ensureUnlocked();
   if (!originAllowed(req.origin)) return handleConnect(req);
   return walletSnapshot(w);
 }
 
 async function handleSign(req) {
+  await ensureBoundPayer();
   let w = await ensureUnlocked();
   const origin = req.origin;
   if (!originAllowed(origin)) {
@@ -435,6 +453,7 @@ async function handleHoldings(req) {
 }
 
 async function handleTokenBalance(req) {
+  await ensureBoundPayer();
   const w = await ensureUnlocked();
   if (!originAllowed(req.origin)) await handleConnect(req);
   const tick = String(req.params?.tick || req.params?.ticker || 'KKDAG').toUpperCase();
@@ -455,6 +474,7 @@ function destIsTreasury(dest) {
 }
 
 async function handleSendToken(req) {
+  await ensureBoundPayer();
   let w = await ensureUnlocked();
   const origin = req.origin;
   if (!originAllowed(origin)) await handleConnect(req);
@@ -490,6 +510,7 @@ async function handleSendToken(req) {
         + '<div class="kv"><span class="k">This bag holds</span><span class="v">' + esc(String(have)) + ' ' + esc(tick) + '</span></div>'
         + '<div class="kv"><span class="k">Send</span><span class="v">' + esc(amount) + ' ' + esc(tick) + '</span></div>'
         + '<div class="kv kv-stack"><span class="k">' + (toTreasury ? 'TO treasury (ews)' : 'TO') + '</span><span class="v">' + esc(dest) + '</span></div>'
+        + '<p class="muted" style="text-align:left;padding:8px 0 0;">Same as Home → Send. ~0.50 KAS stays locked in the token cell (KRON dust), leftover KAS comes back as change. Network fee is tiny. This is not a KAS payment.</p>'
     };
   };
   let view = await payBody();
@@ -528,6 +549,7 @@ async function dispatch(req) {
   const method = String(req.method || '');
   if (method === 'connect' || method === 'requestAccounts') return handleConnect(req);
   if (method === 'getAccounts') {
+    await ensureBoundPayer();
     const w = await ensureUnlocked();
     if (!originAllowed(req.origin)) return handleConnect(req);
     return { accounts: [w.address] };

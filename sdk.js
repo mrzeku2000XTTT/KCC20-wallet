@@ -170,10 +170,12 @@
 
   function closeWalletWindow() {
     if (inWalletBrowser()) return;
+    try { window.focus(); } catch (e) {}
     if (child && !child.closed && child !== window) {
       try { child.close(); } catch (e) {}
     }
     child = null;
+    try { window.focus(); } catch (e) {}
   }
 
   function liveWalletWindow() {
@@ -254,7 +256,7 @@
 
   function closeAfterUse() {
     if (inWalletBrowser()) return;
-    setTimeout(function () { closeWalletWindow(); }, 180);
+    setTimeout(function () { closeWalletWindow(); }, 280);
   }
 
   function rpc(method, params) {
@@ -370,8 +372,12 @@
             }, '*');
           } catch (e) {}
         }
-        closeWalletWindow();
-        finish();
+        try { window.focus(); } catch (e) {}
+        setTimeout(function () {
+          try { window.focus(); } catch (e) {}
+          closeWalletWindow();
+          finish();
+        }, 200);
       });
     },
     getAccounts: function () {

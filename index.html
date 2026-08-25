@@ -12,7 +12,7 @@
   <link rel="icon" href="assets/icon.png">
   <title>KCC20 Wallet</title>
   <meta http-equiv="Cache-Control" content="no-store, no-cache, must-revalidate">
-  <link rel="stylesheet" href="css/app.css?v=164">
+  <link rel="stylesheet" href="css/app.css?v=165">
 </head>
 <body>
   <img class="bg-poster" src="assets/bg.jpg" alt="">
@@ -813,7 +813,7 @@
   <script type="module">
     import('./js/iframeVault.js?v=121').then(function (mod) {
       return (mod.restoreIframeVault ? mod.restoreIframeVault() : Promise.resolve()).then(function () {
-        return import('./js/app.js?v=164');
+        return import('./js/app.js?v=165');
       });
     }).catch(function (err) {
       console.error(err);

@@ -851,10 +851,14 @@ function txUnderCap(k, tx) {
 }
 
 function pickFeeEntries(entries, need, maxN = 2) {
-  const usable = (entries || []).filter(e => e.amount > 0n).sort((a, b) => (a.amount < b.amount ? 1 : -1));
+  const usable = (entries || []).filter(e => e.amount > 0n && !e.redeemHex);
+  if (!usable.length) return [];
+  const sufficient = usable.filter(e => e.amount >= need).sort((a, b) => (a.amount < b.amount ? -1 : 1));
+  if (sufficient.length) return [sufficient[0]];
+  const byLarge = [...usable].sort((a, b) => (a.amount < b.amount ? 1 : -1));
   const picked = [];
   let sum = 0n;
-  for (const e of usable) {
+  for (const e of byLarge) {
     picked.push(e);
     sum += e.amount;
     if (sum >= need) return picked;
@@ -2160,7 +2164,7 @@ function kasNeedError(moreSompi) {
   const shown = n <= 0.05 ? '0.05' : (n < 1 ? n.toFixed(2) : n.toFixed(1));
   return new Error(
     `Need about ${shown} more KAS in this wallet as a normal UTXO. ` +
-    `Token cells have to carry enough KAS or Kaspa rejects the send (storage mass). ` +
+    `Token cells have to carry enough KAS or Kaspa rejects the send. ` +
     `Receive a bit of KAS here, then tap Send again.`
   );
 }
@@ -2469,7 +2473,10 @@ export async function sendKcc20({ wallet, dest, token, amountHuman, utxos, onSta
     throw new Error('KAS UTXO did not load for this send. Close TTT, tap Refresh on Home, then Fund again.');
   }
 
-  const destPads = [COVENANT_DUST, 75_000_000n, 100_000_000n, 200_000_000n, 500_000_000n, 1_000_000_000n];
+  // Same layout as Home → Send KRON/KCC20: 0.50 KAS dest cell, 0.51 change cell
+  // so equal splits don't blow mass. Never dump the fee UTXO into the cell
+  // (old destPads jumped to 2/5/10 KAS and kasNeedError was misread as mass).
+  const destPads = [COVENANT_DUST, 51_000_000n, 55_000_000n, 60_000_000n, 75_000_000n];
   let lastErr = null;
   for (const destPad of destPads) {
     try {
@@ -2478,8 +2485,8 @@ export async function sendKcc20({ wallet, dest, token, amountHuman, utxos, onSta
       );
       if (spend.outputs[0]) spend.outputs[0].value = destPad;
       if (spend.outputs[1]) {
-        let ch = kron.covenantSelect.continuationValue(destPad + 10_000_000n, selected[0].value);
-        if (ch === destPad) ch = destPad + 10_000_000n;
+        let ch = destPad + 1_000_000n;
+        if (ch < COVENANT_DUST) ch = COVENANT_DUST + 1_000_000n;
         spend.outputs[1].value = ch;
       }
       const covOut = spend.outputs.reduce((s, o) => s + BigInt(o.value), 0n);
@@ -2535,8 +2542,9 @@ export async function sendKcc20({ wallet, dest, token, amountHuman, utxos, onSta
       lastErr = e;
       const m = errText(e);
       if (/null pointer/i.test(m)) throw new Error('KCC20 send failed in the Kaspa engine while building the tx. Hard-refresh and try again.');
+      if (/Need about .* more KAS/i.test(m)) throw e;
       if (!isMassError(e) && !/mass exceeds|storage mass|transaction mass/i.test(m)) throw e;
-      onStatus?.('Storage mass high — retrying with a fatter KAS cell…');
+      onStatus?.('Storage mass high — retrying with a slightly fatter cell…');
     }
   }
   throw lastErr || massSplitError();

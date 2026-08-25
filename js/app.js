@@ -23,8 +23,8 @@ import {
   fetchOwnedUtxos, collectSpendableUtxos, buildSentinelChain, buildRecurringChain, buildHashlockCovenant,
   newHashlockSecret, checkinHop, currentHop, parseXmssKit, p2shFromRedeemHex, spendXmssVault,
   disconnectRpc, buildDcaDrips, sendKasMany, releaseDcaDrip, cancelDcaDrip, isMassError
-} from './tx.js?v=158';
-import { bootDappConnect, pingTttDappFrame, TTT_TREASURY } from './dappConnect.js?v=163';
+} from './tx.js?v=165';
+import { bootDappConnect, pingTttDappFrame, TTT_TREASURY } from './dappConnect.js?v=165';
 import { schedulePersistIframeVault, bootIframeVaultWatch } from './iframeVault.js?v=120';
 import { kronMarkets, quoteKronTrade, executeKronTrade, formatKasSompi, lookupKronTick, liveQuote, tradeCostLines, attachKronLogos, kronCandles, kronLogoFor, quoteKcc20Bridge, executeKcc20Bridge, formatTokenRaw } from './kronTrade.js?v=140';
 import {
@@ -58,7 +58,7 @@ import {
 } from './atrade.js?v=100';
 import { SCORPION_MEMORY } from './scorpionMemory.js?v=152';
 
-export const BUILD = '164';
+export const BUILD = '165';
 
 const TOKEN_FALLBACK_LOGO = 'assets/ttt.png';
 
@@ -1240,7 +1240,9 @@ async function activateWallet(w, { toastMsg } = {}) {
   beginPinFlow('unlock');
 }
 
+const DAPP_BOUND_KEY = 'kcc20_dapp_bound_v1';
 let dappBoundAddr = '';
+try { dappBoundAddr = String(localStorage.getItem(DAPP_BOUND_KEY) || ''); } catch {}
 
 function walletByAddr(addr) {
   if (!addr) return null;
@@ -1249,11 +1251,25 @@ function walletByAddr(addr) {
 }
 
 function walletForDapp() {
+  if (wallet && dappBoundAddr && sameAddrPayload(wallet.address, dappBoundAddr)) return wallet;
   return walletByAddr(dappBoundAddr) || wallet;
 }
 
 function rememberDappAccount(addr) {
   dappBoundAddr = String(addr || '');
+  try {
+    if (dappBoundAddr) localStorage.setItem(DAPP_BOUND_KEY, dappBoundAddr);
+    else localStorage.removeItem(DAPP_BOUND_KEY);
+  } catch {}
+}
+
+async function ensureDappPayer() {
+  try { dappBoundAddr = String(localStorage.getItem(DAPP_BOUND_KEY) || dappBoundAddr || ''); } catch {}
+  const bound = walletByAddr(dappBoundAddr);
+  if (bound && wallet?.id !== bound.id) {
+    await switchDappWallet(bound.id);
+  }
+  return walletForDapp() || wallet;
 }
 
 function dappHoldingRow(tick) {
@@ -1270,7 +1286,7 @@ function dappHoldingsList() {
 async function dappSendToken({ tick, amount, dest }) {
   const t = String(tick || 'KKDAG').toUpperCase();
   if (isTestnet()) throw new Error('TTT credits are mainnet KKDAG');
-  const payer = wallet;
+  const payer = walletForDapp() || wallet;
   if (!payer?.address) throw new Error('Unlock KCC20 Wallet first');
   if (kaswareSigning(payer) && !hexKey(payer.privKey)) {
     throw new Error('This chip is KasWare-only. Switch Home to a native wallet (Wallet 2) that holds ' + t + ', Connect again, then Sign.');
@@ -1291,7 +1307,11 @@ async function dappSendToken({ tick, amount, dest }) {
   await pingPublicNode();
   toast('Paying ' + human + ' ' + t + ' from ' + (payer.name || 'wallet') + ' · ' + shortAddr(payer.address, 8, 6));
   let availableUtxos = [];
-  try { availableUtxos = await fetchOwnedUtxos(payer); } catch {}
+  try {
+    availableUtxos = payer.receiveAddrs?.length > 1
+      ? await fetchOwnedUtxos(payer)
+      : await fetchAddressUtxos(payer.address);
+  } catch {}
   if (!availableUtxos.length) {
     try { availableUtxos = await fetchAddressUtxos(payer.address); } catch {}
   }
@@ -1366,7 +1386,11 @@ function dappHooks() {
     })),
     switchDappWallet,
     rememberDappAccount,
-    payerLabel: () => (wallet?.name || 'Wallet') + ' · ' + (wallet?.address || ''),
+    ensureDappPayer,
+    payerLabel: () => {
+      const w = walletForDapp() || wallet;
+      return (w?.name || 'Wallet') + ' · ' + (w?.address || '');
+    },
     isTreasuryPayer: () => !!(wallet?.address && sameAddrPayload(wallet.address, TTT_TREASURY)),
     sessionOpen,
     requirePin,

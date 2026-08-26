@@ -122,9 +122,10 @@ function hexKey(v) {
 }
 
 function postTo(win, origin, msg) {
-  if (!win) return false;
+  if (!win || !origin || origin === '*') return false;
+  if (!isHttpOrigin(origin) && origin !== location.origin) return false;
   try {
-    win.postMessage({ ns: NS, ...msg }, origin || '*');
+    win.postMessage({ ns: NS, ...msg }, origin);
     return true;
   } catch {
     return false;

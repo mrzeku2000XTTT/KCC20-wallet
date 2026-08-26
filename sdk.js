@@ -530,7 +530,7 @@
               method: 'disconnect',
               params: {},
               from: location.origin
-            }, '*');
+            }, ORIGIN);
           } catch (e) {}
         }
         try { window.focus(); } catch (e) {}

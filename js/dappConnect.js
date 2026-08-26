@@ -9,7 +9,8 @@ const NS = 'kcc20';
 const HOST_METHODS = [
   'connect', 'requestAccounts', 'disconnect', 'getAccounts', 'getNetwork', 'getPublicKey',
   'switchNetwork', 'signPskt', 'signPsbt', 'pushTx', 'getUtxoEntries', 'getBalance',
-  'getTokenBalance', 'getHoldings', 'getState', 'sendToken', 'sendKcc20', 'payToken', 'payKcc20', 'fundCredits'
+  'getTokenBalance', 'getHoldings', 'getState', 'sendToken', 'sendKcc20', 'payToken', 'payKcc20', 'fundCredits',
+  'quoteKron', 'quoteToken', 'buyKron', 'buyToken', 'sellKron', 'sellToken', 'tradeKron', 'tradeToken'
 ];
 
 let hooks = null;
@@ -161,7 +162,8 @@ function maybeCloseDappPopup(method) {
     if (!window.opener) return;
     const closeAfter = {
       connect: 1, requestAccounts: 1, signPskt: 1, signPsbt: 1, pushTx: 1, disconnect: 1,
-      sendToken: 1, sendKcc20: 1, payToken: 1, payKcc20: 1, fundCredits: 1
+      sendToken: 1, sendKcc20: 1, payToken: 1, payKcc20: 1, fundCredits: 1,
+      buyKron: 1, buyToken: 1, sellKron: 1, sellToken: 1, tradeKron: 1, tradeToken: 1
     };
     if (!closeAfter[String(method || '')]) return;
     setTimeout(() => closeDappPopupKeepOpener(), 50);
@@ -546,6 +548,96 @@ async function handleSendToken(req) {
   return result;
 }
 
+function tradeSide(method, params) {
+  const m = String(method || '');
+  if (m === 'sellKron' || m === 'sellToken') return 'sell';
+  const s = String(params?.side || '').toLowerCase();
+  return s === 'sell' ? 'sell' : 'buy';
+}
+
+function tradeAmount(params, side) {
+  if (side === 'buy') {
+    return String(params?.amount ?? params?.kas ?? params?.kasAmount ?? params?.amountKas ?? '').trim();
+  }
+  return String(params?.amount ?? params?.token ?? params?.tokenAmount ?? '').trim();
+}
+
+async function handleQuoteKron(req) {
+  await ensureBoundPayer();
+  const w = await ensureUnlocked();
+  if (!originAllowed(req.origin)) await handleConnect(req);
+  if (netName() !== 'kaspa_mainnet') throw new Error('KRON trade is mainnet. Switch this wallet off TN10.');
+  const tick = String(req.params?.tick || req.params?.ticker || 'KKDAG').toUpperCase();
+  const side = tradeSide(req.method, req.params);
+  const amount = tradeAmount(req.params, side);
+  if (!/^[A-Z0-9]{2,12}$/.test(tick)) throw new Error('Bad ticker');
+  if (!(Number(amount) > 0)) throw new Error('Enter an amount greater than 0');
+  if (typeof hooks.quoteKron !== 'function') throw new Error('Wallet cannot quote KRON');
+  return hooks.quoteKron({ tick, side, amount });
+}
+
+async function handleTradeKron(req) {
+  await ensureBoundPayer();
+  let w = await ensureUnlocked();
+  const origin = req.origin;
+  if (!originAllowed(origin)) await handleConnect(req);
+  if (netName() !== 'kaspa_mainnet') throw new Error('KRON trade is mainnet. Switch this wallet off TN10.');
+  const tick = String(req.params?.tick || req.params?.ticker || 'KKDAG').toUpperCase();
+  const side = tradeSide(req.method, req.params);
+  let amount = tradeAmount(req.params, side);
+  if (!/^[A-Z0-9]{2,12}$/.test(tick)) throw new Error('Bad ticker');
+  if (!(Number(amount) > 0)) amount = side === 'buy' ? '10' : amount;
+  if (!(Number(amount) > 0)) throw new Error('Enter an amount greater than 0');
+  const payBody = async () => {
+    const live = hooks.getWallet?.() || w;
+    const payerLine = (typeof hooks.payerLabel === 'function' && hooks.payerLabel())
+      || (live?.name || 'Wallet') + ' · ' + (live?.address || '');
+    let q = null;
+    let err = '';
+    try {
+      q = typeof hooks.quoteKron === 'function' ? await hooks.quoteKron({ tick, side, amount }) : null;
+    } catch (e) {
+      err = e && e.message ? e.message : String(e);
+    }
+    const line = q
+      ? (side === 'buy'
+        ? (q.kasHuman + ' KAS → ~' + q.tokenHuman + ' ' + tick)
+        : (q.tokenHuman + ' ' + tick + ' → ~' + q.kasHuman + ' KAS'))
+      : (err || 'Quote failed');
+    return {
+      q,
+      err,
+      html:
+        '<p class="muted" style="text-align:left;padding:0 0 8px;"><b>Same as Home → TRADE.</b> Wallet builds the KRON swap. Keys stay here.</p>'
+        + '<div class="kv kv-stack"><span class="k">WALLET</span><span class="v">' + esc(payerLine) + '</span></div>'
+        + '<div class="kv"><span class="k">Side</span><span class="v">' + esc(side.toUpperCase()) + '</span></div>'
+        + '<div class="kv"><span class="k">Token</span><span class="v">' + esc(tick) + (q && q.graduated ? ' · pool' : ' · curve') + '</span></div>'
+        + '<div class="kv kv-stack"><span class="k">Quote</span><span class="v">' + esc(line) + '</span></div>'
+        + '<p class="muted" style="text-align:left;padding:8px 0 0;">KAS pays the curve/pool. Token cells carry ~0.5 KAS dust. Not sendToken (that is a bag transfer).</p>'
+    };
+  };
+  let view = await payBody();
+  await showOverlay({
+    title: (side === 'buy' ? 'Buy ' : 'Sell ') + tick,
+    origin,
+    approveLabel: side === 'buy' ? 'Buy ' + tick : 'Sell ' + tick,
+    body: view.html,
+    onWalletChange: async () => {
+      view = await payBody();
+      if ($('dapp-body')) $('dapp-body').innerHTML = view.html;
+    }
+  });
+  w = hooks.getWallet?.() || w;
+  view = await payBody();
+  if (!view.q) throw new Error(view.err || 'KRON quote failed');
+  if (typeof hooks.hydrateNativeKey === 'function') hooks.hydrateNativeKey(w);
+  if (typeof hooks.requirePin === 'function' && !kaswareSigning(w)) {
+    await hooks.requirePin((side === 'buy' ? 'Buy ' : 'Sell ') + amount + (side === 'buy' ? ' KAS of ' : ' ') + tick);
+  }
+  if (typeof hooks.tradeKron !== 'function') throw new Error('Wallet cannot trade KRON from this session');
+  return hooks.tradeKron({ tick, side, amount });
+}
+
 async function dispatch(req) {
   const method = String(req.method || '');
   if (method === 'connect' || method === 'requestAccounts') return handleConnect(req);
@@ -576,6 +668,10 @@ async function dispatch(req) {
   if (method === 'getTokenBalance' || method === 'getKcc20Balance') return handleTokenBalance(req);
   if (method === 'sendToken' || method === 'sendKcc20' || method === 'payToken' || method === 'payKcc20' || method === 'fundCredits') {
     return handleSendToken(req);
+  }
+  if (method === 'quoteKron' || method === 'quoteToken') return handleQuoteKron(req);
+  if (method === 'buyKron' || method === 'buyToken' || method === 'sellKron' || method === 'sellToken' || method === 'tradeKron' || method === 'tradeToken') {
+    return handleTradeKron(req);
   }
   throw new Error('Unknown method ' + method);
 }

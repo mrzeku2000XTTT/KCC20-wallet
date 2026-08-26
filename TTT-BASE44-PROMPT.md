@@ -21,6 +21,7 @@ Load once in the App Store **shell** (not inside every app iframe):
 | **Connect KCC20** button | `await window.kcc20.connect()` then `getState()` | never on load / never when opening an app |
 | **Disconnect** | `await window.kcc20.disconnect()` | never on route change |
 | **Pay / Fund / Send token** | `await window.kcc20.sendToken({ tick, amount, dest })` | never until they tap Pay |
+| **Buy KRON token** | `await window.kcc20.buyKron({ tick, amount })` | never until they tap Buy. Wallet builds the swap. Not sendToken. |
 | **Sign a PSKT you built** | `await window.kcc20.signPskt({ txJsonString, options: { signInputs } })` | never on load |
 | **Broadcast** (optional) | `await window.kcc20.pushTx(signed)` | — |
 

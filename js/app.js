@@ -24,7 +24,7 @@ import {
   newHashlockSecret, checkinHop, currentHop, parseXmssKit, p2shFromRedeemHex, spendXmssVault,
   disconnectRpc, buildDcaDrips, sendKasMany, releaseDcaDrip, cancelDcaDrip, isMassError
 } from './tx.js?v=167';
-import { bootDappConnect, pingTttDappFrame, TTT_TREASURY } from './dappConnect.js?v=167';
+import { bootDappConnect, pingTttDappFrame, TTT_TREASURY } from './dappConnect.js?v=169';
 import { schedulePersistIframeVault, bootIframeVaultWatch } from './iframeVault.js?v=120';
 import { kronMarkets, quoteKronTrade, executeKronTrade, formatKasSompi, lookupKronTick, liveQuote, tradeCostLines, attachKronLogos, kronCandles, kronLogoFor, quoteKcc20Bridge, executeKcc20Bridge, formatTokenRaw } from './kronTrade.js?v=140';
 import {
@@ -58,7 +58,7 @@ import {
 } from './atrade.js?v=100';
 import { SCORPION_MEMORY } from './scorpionMemory.js?v=152';
 
-export const BUILD = '168';
+export const BUILD = '169';
 
 const TOKEN_FALLBACK_LOGO = 'assets/ttt.png';
 
@@ -1359,6 +1359,97 @@ async function dappSendToken({ tick, amount, dest }) {
   };
 }
 
+function serializeKronQuote(q) {
+  if (!q) return null;
+  const dec = Number(q.decimals || 0);
+  const buy = q.side === 'buy';
+  return {
+    tick: String(q.tick || '').toUpperCase(),
+    side: q.side,
+    graduated: !!q.graduated,
+    decimals: dec,
+    kasIn: q.kasIn != null ? String(q.kasIn) : '',
+    kasOut: q.kasOut != null ? String(q.kasOut) : '',
+    tokenOut: q.tokenOut != null ? String(q.tokenOut) : '',
+    tokenIn: q.tokenIn != null ? String(q.tokenIn) : '',
+    kasHuman: formatKasSompi(buy ? q.kasIn : q.kasOut),
+    tokenHuman: formatTokenRaw(buy ? q.tokenOut : q.tokenIn, dec),
+    price: q.price == null ? null : q.price
+  };
+}
+
+async function dappQuoteKron({ tick, side, amount }) {
+  const t = String(tick || 'KKDAG').toUpperCase();
+  const s = String(side || 'buy').toLowerCase() === 'sell' ? 'sell' : 'buy';
+  const amt = String(amount || '').trim();
+  if (isTestnet()) throw new Error('KRON trade is mainnet. Switch this wallet off TN10.');
+  if (!/^[A-Z0-9]{2,12}$/.test(t) || t.includes('?')) throw new Error('Bad ticker');
+  if (!(Number(amt) > 0)) throw new Error('Enter an amount greater than 0');
+  const q = await quoteKronTrade({ tick: t, side: s, amount: amt });
+  return serializeKronQuote(q);
+}
+
+async function dappTradeKron({ tick, side, amount }) {
+  const t = String(tick || 'KKDAG').toUpperCase();
+  const s = String(side || 'buy').toLowerCase() === 'sell' ? 'sell' : 'buy';
+  const amt = String(amount || '').trim();
+  if (isTestnet()) throw new Error('KRON trade is mainnet. Switch this wallet off TN10.');
+  const payer = walletForDapp() || wallet;
+  if (!payer?.address) throw new Error('Unlock KCC20 Wallet first');
+  if (kaswareSigning(payer) && !hexKey(payer.privKey)) {
+    throw new Error('This chip is KasWare-only. Switch to a native wallet that can sign, then Buy again.');
+  }
+  toast((s === 'buy' ? 'Buying ' : 'Selling ') + t + ' from ' + (payer.name || 'wallet'));
+  let availableUtxos = [];
+  try { availableUtxos = await fetchAddressUtxos(payer.address); } catch {}
+  if (!availableUtxos.length) throw new Error('Need KAS in this wallet for the trade');
+  const result = await executeKronTrade({
+    wallet: payer,
+    tick: t,
+    side: s,
+    amount: amt,
+    utxos: availableUtxos,
+    onStatus: (m) => toast(m)
+  });
+  const q = result.quote;
+  if (q?.side === 'buy' && q.tokenOut != null) {
+    applyLocalTokenDelta(t, 'kcc20', '+' + String(q.tokenOut));
+    pushTokenActivity({
+      dir: 'in',
+      tick: t,
+      protocol: 'kcc20',
+      amount: String(q.tokenOut),
+      decimals: q.decimals,
+      txId: result.txId || '',
+      label: 'KRON buy',
+      note: 'Tap2Tip / dApp'
+    }, payer.address);
+  }
+  if (q?.side === 'sell' && q.tokenIn != null) {
+    applyLocalTokenDelta(t, 'kcc20', '-' + String(q.tokenIn));
+    pushTokenActivity({
+      dir: 'out',
+      tick: t,
+      protocol: 'kcc20',
+      amount: String(q.tokenIn),
+      decimals: q.decimals,
+      txId: result.txId || '',
+      label: 'KRON sell',
+      note: 'Tap2Tip / dApp'
+    }, payer.address);
+  }
+  afterTx();
+  return {
+    txId: result.txId,
+    tick: t,
+    side: s,
+    amount: amt,
+    quote: serializeKronQuote(q),
+    from: payer.address,
+    explorer: result.txId ? ('https://kas.fyi/transaction/' + result.txId) : ''
+  };
+}
+
 async function switchDappWallet(id) {
   const w = loadWalletList().find(x => x.id === id);
   if (!w) throw new Error('Add that wallet in KCC20 first (You → wallets)');
@@ -1408,6 +1499,8 @@ function dappHooks() {
       return dappHoldingRow(tick);
     },
     sendToken: dappSendToken,
+    quoteKron: dappQuoteKron,
+    tradeKron: dappTradeKron,
     afterTx
   };
 }

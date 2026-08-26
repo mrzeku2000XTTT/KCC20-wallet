@@ -58,7 +58,7 @@ import {
 } from './atrade.js?v=100';
 import { SCORPION_MEMORY } from './scorpionMemory.js?v=152';
 
-export const BUILD = '167';
+export const BUILD = '168';
 
 const TOKEN_FALLBACK_LOGO = 'assets/ttt.png';
 
@@ -3424,27 +3424,17 @@ function saveLook(look) {
 
 function applyWallpaper(dataUrl) {
   const poster = document.querySelector('.bg-poster');
-  const video = $('bg-video');
-  const mobileBg = window.matchMedia('(max-width: 520px), (pointer: coarse)').matches;
   if (dataUrl) {
     if (poster) {
       poster.src = dataUrl;
       poster.classList.remove('hidden');
     }
     document.body.style.backgroundImage = `url("${dataUrl}")`;
-    if (video) {
-      try { video.pause(); } catch {}
-      video.classList.add('hidden');
-    }
     return;
   }
   document.body.style.backgroundImage = '';
-  if (poster) poster.src = 'assets/bg.jpg';
-  if (video && !mobileBg) {
-    video.classList.remove('hidden');
-    video.play?.().catch(() => {});
-    if (poster) poster.classList.add('hidden');
-  } else if (poster) {
+  if (poster) {
+    poster.src = 'assets/bg.jpg';
     poster.classList.remove('hidden');
   }
 }
@@ -9836,21 +9826,7 @@ async function init() {
     window.__kccBound = false;
     toast('UI failed to bind — hard refresh. ' + errText(e));
   }
-  const video = document.getElementById('bg-video');
-  const mobileBg = window.matchMedia('(max-width: 520px), (pointer: coarse)').matches;
-  if (mobileBg) {
-    try { video?.pause(); } catch {}
-    if (video) {
-      video.querySelectorAll('source').forEach(s => s.remove());
-      video.removeAttribute('src');
-      try { video.load(); } catch {}
-      video.remove();
-    }
-    document.querySelector('.bg-poster')?.classList.remove('hidden');
-  } else {
-    video?.play?.().catch(() => {});
-    video?.addEventListener('playing', () => document.querySelector('.bg-poster')?.classList.add('hidden'));
-  }
+  document.querySelector('.bg-poster')?.classList.remove('hidden');
   try { applyLook(); } catch {}
   try { saveWalletList(loadWalletList()); } catch {}
   try { paintLockNet(); syncAtVenues(); } catch {}

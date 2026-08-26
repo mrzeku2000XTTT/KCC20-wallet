@@ -1,7 +1,8 @@
 # KCC20 Wallet
 
 **Live app:** [https://kcc-20-wallet.vercel.app](https://kcc-20-wallet.vercel.app)  
-**dApp SDK docs:** [https://kcc-20-wallet.vercel.app/docs.html](https://kcc-20-wallet.vercel.app/docs.html) · [CONNECT.md](./CONNECT.md) · [sdk.js](./sdk.js) · [demo](https://kcc-20-wallet.vercel.app/dapp-demo.html)
+**dApp SDK (separate repo):** [github.com/mrzeku2000XTTT/kcc20-sdk](https://github.com/mrzeku2000XTTT/kcc20-sdk)  
+**dApp SDK docs:** [https://kcc-20-wallet.vercel.app/docs.html](https://kcc-20-wallet.vercel.app/docs.html) · [CONNECT.md](./CONNECT.md) · [demo](https://kcc-20-wallet.vercel.app/dapp-demo.html)
 
 A non-custodial Kaspa wallet for **native KAS**, **KCC20** (KRON / Kas Knight and other covenant tokens), and **KRC-20** (Kasplex). Time-lock vaults, KCC20 freeze, in-app KRON trading, and covenant++ tools — all in the browser. Keys never leave your device.
 

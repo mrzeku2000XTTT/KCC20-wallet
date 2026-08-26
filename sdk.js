@@ -10,14 +10,20 @@
   if (root.kcc20 && root.kcc20.isKcc20 && String(root.kcc20.sdkVersion || '') === SDK_VERSION) return;
 
   function scriptOrigin() {
-    try {
-      var s = document.currentScript && document.currentScript.src;
-      if (s) return new URL(s).origin;
-    } catch (e) {}
+    var WALLET = 'https://kcc-20-wallet.vercel.app';
     try {
       if (root.KCC20_WALLET_ORIGIN) return String(root.KCC20_WALLET_ORIGIN).replace(/\/$/, '');
     } catch (e) {}
-    return 'https://kcc-20-wallet.vercel.app';
+    try {
+      var s = document.currentScript && document.currentScript.src;
+      if (s) {
+        var u = new URL(s);
+        if (u.hostname === 'kcc-20-wallet.vercel.app' || u.hostname === 'localhost' || u.hostname === '127.0.0.1') {
+          return u.origin;
+        }
+      }
+    } catch (e) {}
+    return WALLET;
   }
 
   var ORIGIN = scriptOrigin();

@@ -81,7 +81,7 @@ Load `sdk.js` **before** you dispatch `kaspa:requestProvider`.
 | `getBalance(address?)` | `{ confirmed, unconfirmed, address }` sompi |
 | `getHoldings()` | KAS + KCC20 bags |
 | `signPskt({ txJsonString, options })` | signed Safe JSON **string** |
-| `pushTx(signedJson)` | `{ txId, node }` |
+| `pushTx(signedJson)` | `{ txId, node }` — **object**, not a hex string. Read `result.txId`. |
 | `sendToken({ tick, amount, dest })` | KCC20 send (used by TTT Fund) |
 | `disconnect()` | drop origin |
 

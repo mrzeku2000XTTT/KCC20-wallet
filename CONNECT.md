@@ -1,10 +1,11 @@
 # KCC20 Wallet SDK (SCORPION) — dApp connect
 
+**SDK repo (plug-and-play):** https://github.com/mrzeku2000XTTT/kcc20-sdk  
 **Docs site:** https://kcc-20-wallet.vercel.app/docs.html  
 Live wallet: https://kcc-20-wallet.vercel.app  
 SDK: https://kcc-20-wallet.vercel.app/sdk.js?v=166  
 Demo: https://kcc-20-wallet.vercel.app/dapp-demo.html  
-GitHub: https://github.com/mrzeku2000XTTT/KCC20-wallet
+Wallet app: https://github.com/mrzeku2000XTTT/KCC20-wallet
 
 KCC20 Wallet is a **hosted PWA**. It is **not** a Google/Chrome extension. Keys never leave the wallet origin. A dApp (Nilla, TTT, or yours) **builds the unsigned PSKT**, then hands it to this wallet. The user reviews an Approve sheet and PIN-signs (or KasWare, if they turned that on).
 
@@ -62,7 +63,7 @@ Load `sdk.js` **before** you dispatch `kaspa:requestProvider`.
 ## Rules that keep funds safe
 
 1. **You build. They sign.** Never send a private key. Never ask KCC20 to invent the route.
-2. **Pass `signInputs`.** Only list the user’s P2PK inputs. Do **not** list covenant / pool / curve inputs. If you omit the list, KCC20 signs only unsigned inputs whose UTXO address matches the connected wallet.
+2. **Pass `signInputs`.** `index` is the **global** `tx.inputs[]` slot (0-based), not “the Nth wallet input.” Only list the user’s P2PK funding inputs. Do **not** list covenant / pool / curve / inventory inputs. If you omit the list (or list extras), v167 skips already-signed and P2SH inputs and signs only unsigned P2PK owned by this wallet.
 3. **SIGHASH_ALL (1) only** on this build.
 4. **User must Approve** connect, each sign, and each broadcast.
 5. Network strings from `window.kcc20.getNetwork()` are `kaspa_mainnet` / `kaspa_testnet_10`. The KIP-12 provider normalizes to `mainnet` / `testnet-10`.

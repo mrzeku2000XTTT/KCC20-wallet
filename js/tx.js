@@ -3173,6 +3173,21 @@ function psktHasSig(inp) {
   }
 }
 
+function psktSpkHex(inp) {
+  try {
+    const u = inp?.utxo || inp?.utxoEntry || {};
+    const spk = u.scriptPublicKey || inp?.scriptPublicKey;
+    return hexish(spk?.script || spk?.scriptPublicKey || spk).toLowerCase();
+  } catch {
+    return '';
+  }
+}
+
+function psktIsP2sh(inp) {
+  const h = psktSpkHex(inp);
+  return h.startsWith('aa20') && /87$/.test(h);
+}
+
 /** Sign a dApp PSKT JSON with the native key. Never returns the private key.
  *  KIP-12: sign only listed inputs. If the dApp omits signInputs, sign only
  *  unsigned inputs owned by this wallet — never re-sign covenant / P2SH inputs. */
@@ -3189,18 +3204,23 @@ export async function signPsktJson({ wallet, txJsonString, signInputs }) {
   const priv = privKeyFromWallet(k, wallet);
   const n = tx.inputs.length;
   const listed = (Array.isArray(signInputs) ? signInputs : []).filter(s => Number.isFinite(Number(s.index)));
+  const mine = payloadOfKaspaAddr(wallet.address);
   const want = new Set();
+  const consider = [];
   if (listed.length) {
     for (const s of listed) {
       const i = Number(s.index);
-      if (i >= 0 && i < n) want.add(i);
+      if (i >= 0 && i < n) consider.push(i);
     }
   } else {
-    const mine = payloadOfKaspaAddr(wallet.address);
-    for (let i = 0; i < n; i++) {
-      if (psktHasSig(tx.inputs[i])) continue;
-      if (mine && payloadOfKaspaAddr(psktInputAddr(tx.inputs[i])) === mine) want.add(i);
-    }
+    for (let i = 0; i < n; i++) consider.push(i);
+  }
+  for (const i of consider) {
+    const inp = tx.inputs[i];
+    if (psktHasSig(inp) || psktIsP2sh(inp)) continue;
+    const addr = payloadOfKaspaAddr(psktInputAddr(inp));
+    if (addr && mine && addr !== mine) continue;
+    want.add(i);
   }
   if (!want.size) {
     throw new Error('No inputs for this wallet to sign. Pass options.signInputs with this wallet’s input indexes (do not list covenant inputs).');

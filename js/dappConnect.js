@@ -1,6 +1,6 @@
 /* dApp connect host: popup / protocol-handler session for window.kcc20 (sdk.js). */
 import { networkId, validateKaspaAddress } from './crypto.js?v=100';
-import { fetchAddressUtxos, fetchAddressBalance, signPsktJson, pushSignedPskt } from './tx.js?v=165';
+import { fetchAddressUtxos, fetchAddressBalance, signPsktJson, pushSignedPskt } from './tx.js?v=167';
 import { kaswareSigning, signPsktWithKasware } from './kasware.js?v=100';
 
 const ALLOW_KEY = 'kcc20_dapp_allow_v1';

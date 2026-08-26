@@ -6,7 +6,8 @@
 */
 (function (root) {
   'use strict';
-  if (root.kcc20 && root.kcc20.isKcc20) return;
+  var SDK_VERSION = '166';
+  if (root.kcc20 && root.kcc20.isKcc20 && String(root.kcc20.sdkVersion || '') === SDK_VERSION) return;
 
   function scriptOrigin() {
     try {
@@ -295,6 +296,38 @@
     });
   }
 
+  function normalizeUtxos(data, fallbackAddr) {
+    var list = Array.isArray(data) ? data : [];
+    return list.map(function (u) {
+      var e = (u && u.utxoEntry) || u || {};
+      var out = (u && u.outpoint) || {};
+      var spk = e.scriptPublicKey || u.scriptPublicKey || {};
+      var script = spk.scriptPublicKey || spk.script || '';
+      if (typeof script !== 'string') script = '';
+      var txid = out.transactionId || u.transactionId || '';
+      var idx = Number(out.index != null ? out.index : (u.index || 0));
+      var amt = String(e.amount != null ? e.amount : (u.amount || '0'));
+      var daa = String(e.blockDaaScore != null ? e.blockDaaScore : (u.blockDaaScore || '0'));
+      var coin = !!(e.isCoinbase || u.isCoinbase);
+      return {
+        address: (u && u.address) || fallbackAddr || '',
+        outpoint: { transactionId: txid, index: idx },
+        utxoEntry: {
+          amount: amt,
+          scriptPublicKey: { version: Number(spk.version || 0), scriptPublicKey: script },
+          blockDaaScore: daa,
+          isCoinbase: coin
+        },
+        transactionId: txid,
+        index: idx,
+        amount: amt,
+        scriptPublicKey: { version: Number(spk.version || 0), script: script, scriptPublicKey: script },
+        blockDaaScore: daa,
+        isCoinbase: coin
+      };
+    });
+  }
+
   /* After Connect the popup closes on purpose. Reads must still work for
      any dApp (Nilla Prepare, TTT balance, …) from the saved session + public APIs. */
   function silentFallback(method, params) {
@@ -337,7 +370,7 @@
     if (method === 'getUtxoEntries') {
       if (!addr) return Promise.reject(new Error('Connect KCC20 Wallet first'));
       return fetchJson(restBase() + '/addresses/' + encodeURIComponent(addr) + '/utxos').then(function (data) {
-        return Array.isArray(data) ? data : [];
+        return normalizeUtxos(data, addr);
       });
     }
     if (method === 'getTokenBalance' || method === 'getKcc20Balance') {
@@ -442,6 +475,7 @@
 
   var api = {
     isKcc20: true,
+    sdkVersion: SDK_VERSION,
     origin: ORIGIN,
     on: on,
     off: off,
@@ -570,6 +604,7 @@
       return {
         available: true,
         isKcc20: true,
+        sdkVersion: SDK_VERSION,
         name: 'KCC20 Wallet',
         embedded: inWalletBrowser(),
         origin: ORIGIN,

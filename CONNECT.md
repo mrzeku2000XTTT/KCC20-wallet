@@ -1,7 +1,7 @@
 # KCC20 Wallet connect (no Chrome extension)
 
 Live wallet: https://kcc-20-wallet.vercel.app  
-SDK: https://kcc-20-wallet.vercel.app/sdk.js  
+SDK: https://kcc-20-wallet.vercel.app/sdk.js?v=166  
 Demo: https://kcc-20-wallet.vercel.app/dapp-demo.html
 
 KCC20 Wallet is a **hosted PWA**. It is **not** a Google/Chrome extension. Keys never leave the wallet origin. A dApp (Nilla, TTT, or yours) **builds the unsigned PSKT**, then hands it to this wallet. The user reviews an Approve sheet and PIN-signs (or KasWare, if they turned that on).
@@ -22,11 +22,11 @@ KIP-12 itself is still a **draft** ([kaspanet/kips#21](https://github.com/kaspan
 ## Install in a dApp
 
 ```html
-<script src="https://kcc-20-wallet.vercel.app/sdk.js"></script>
+<script src="https://kcc-20-wallet.vercel.app/sdk.js?v=166"></script>
 ```
 
 ```js
-const kcc = window.kcc20;
+const kcc = window.kcc20; // require kcc.sdkVersion === "166"
 const accounts = await kcc.connect();          // popup: user Approves, then the window closes
 const address = accounts[0];
 const network = await kcc.getNetwork();        // silent — popup stays closed

@@ -27,13 +27,19 @@ KIP-12 itself is still a **draft** ([kaspanet/kips#21](https://github.com/kaspan
 
 ```js
 const kcc = window.kcc20;
-const accounts = await kcc.connect();          // popup: user Approves
+const accounts = await kcc.connect();          // popup: user Approves, then the window closes
+const address = accounts[0];
+const network = await kcc.getNetwork();        // silent — popup stays closed
+const pubKey = await kcc.getPublicKey();       // silent — from the Connect session
+const utxos = await kcc.getUtxoEntries(address); // silent — public Kaspa UTXOs for that address
 const signed = await kcc.signPskt({
-  txJsonString,                               // rusty-kaspa Safe JSON
+  txJsonString,                               // rusty-kaspa Safe JSON you built
   options: { signInputs: [{ index: 0, sighashType: 1 }] }
-});                                           // returns signed Safe JSON string
+});                                           // popup: user Signs
 const { txId } = await kcc.pushTx(signed);    // optional — or broadcast yourself
 ```
+
+**Popup vs silent.** Connect / Sign / Send / Broadcast open the PWA. After Connect succeeds the popup **closes on purpose**. `getAccounts`, `getNetwork`, `getPublicKey`, `getUtxoEntries`, `getBalance`, `getHoldings`, `getTokenBalance` must keep working without it. Do not require a second Connect for Prepare. Do not keep the wallet window open.
 
 KasWare-shaped aliases on the same object: `requestAccounts`, `signPskt`, `pushTx`, `getAccounts`, `getNetwork`, `getPublicKey`, `getUtxoEntries`, `getBalance`.
 

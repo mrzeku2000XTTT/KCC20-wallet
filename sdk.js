@@ -28,6 +28,7 @@
   var network = '';
   var lastState = null;
   var listeners = {};
+  var embeddedInWallet = false;
   var SESS = 'kcc20_dapp_sess_v1';
 
   function loadSess() {
@@ -97,8 +98,10 @@
     else p.resolve(msg.result);
   }
 
+  /* True only when this page is iframed inside the KCC20 PWA (TTT Profile).
+     A Replit/Nilla iframe is NOT the wallet — do not talk to window.parent. */
   function inWalletBrowser() {
-    try { return window.parent && window.parent !== window; } catch (e) { return true; }
+    return !!embeddedInWallet;
   }
 
   function isWalletOrigin(origin) {
@@ -118,27 +121,39 @@
   }
 
   window.addEventListener('message', function (ev) {
-    var msg = ev.data;
-    if (!msg || msg.ns !== 'kcc20') return;
-    if (msg.type === 'host-ready' || msg.type === 'ready') {
-      if (isWalletOrigin(ev.origin) || inWalletBrowser()) hostOrigin = ev.origin;
-    }
-    if (!isWalletOrigin(ev.origin)) return;
-    if (msg.type === 'res' && msg.id) finish(msg);
-    if (msg.type === 'event') {
-      if (msg.event === 'accountsChanged') {
-        accounts = Array.isArray(msg.payload) ? msg.payload : [];
-        emit('accountsChanged', accounts);
+    try {
+      var msg = ev.data;
+      if (!msg || msg.ns !== 'kcc20') return;
+      if (msg.type === 'host-ready' || msg.type === 'ready') {
+        if (isWalletOrigin(ev.origin)) {
+          hostOrigin = ev.origin;
+          try {
+            if (window.parent && ev.source === window.parent) {
+              embeddedInWallet = true;
+              if (typeof installKaswareShim === 'function') installKaswareShim();
+            }
+          } catch (e) {}
+        }
       }
-      if (msg.event === 'networkChanged') {
-        network = String(msg.payload || '');
-        emit('networkChanged', network);
+      if (!isWalletOrigin(ev.origin)) return;
+      if (msg.type === 'res' && msg.id) finish(msg);
+      if (msg.type === 'event') {
+        if (msg.event === 'accountsChanged') {
+          accounts = Array.isArray(msg.payload) ? msg.payload : [];
+          emit('accountsChanged', accounts);
+        }
+        if (msg.event === 'networkChanged') {
+          network = String(msg.payload || '');
+          emit('networkChanged', network);
+        }
+        if (msg.event === 'disconnect') {
+          accounts = [];
+          lastState = null;
+          clearSess();
+          emit('disconnect');
+        }
       }
-      if (msg.event === 'disconnect') {
-        accounts = [];
-        emit('disconnect');
-      }
-    }
+    } catch (e) {}
   });
 
   function popupFeatures() {
@@ -259,13 +274,111 @@
     setTimeout(function () { closeWalletWindow(); }, 280);
   }
 
+  function hasSession() {
+    return !!(accounts.length || (lastState && lastState.address));
+  }
+
+  function sessionAddr(params) {
+    return String((params && params.address) || accounts[0] || (lastState && lastState.address) || '');
+  }
+
+  function restBase() {
+    var n = String(network || (lastState && lastState.network) || '');
+    if (/testnet/.test(n)) return 'https://api-tn10.kaspa.org';
+    return 'https://api.kaspa.org';
+  }
+
+  function fetchJson(url) {
+    return fetch(url, { cache: 'no-store' }).then(function (r) {
+      if (!r.ok) throw new Error('Network ' + r.status);
+      return r.json();
+    });
+  }
+
+  /* After Connect the popup closes on purpose. Reads must still work for
+     any dApp (Nilla Prepare, TTT balance, …) from the saved session + public APIs. */
+  function silentFallback(method, params) {
+    if (!hasSession()) return Promise.reject(new Error('Connect KCC20 Wallet first'));
+    var addr = sessionAddr(params);
+    if (method === 'getAccounts') return Promise.resolve(accounts.slice());
+    if (method === 'getNetwork') {
+      return Promise.resolve(network || (lastState && lastState.network) || 'kaspa_mainnet');
+    }
+    if (method === 'getPublicKey') {
+      var pk = (lastState && (lastState.publicKey || lastState.pubKey)) || '';
+      if (pk) return Promise.resolve(pk);
+      return Promise.reject(new Error('No public key in this KCC20 session. Connect again.'));
+    }
+    if (method === 'getState') {
+      return Promise.resolve(lastState || {
+        accounts: accounts.slice(),
+        address: addr,
+        network: network,
+        publicKey: (lastState && lastState.publicKey) || ''
+      });
+    }
+    if (method === 'getHoldings') {
+      return Promise.resolve({
+        address: addr,
+        network: network || (lastState && lastState.network) || '',
+        holdings: (lastState && lastState.holdings) || []
+      });
+    }
+    if (method === 'getBalance') {
+      if (!addr) return Promise.reject(new Error('Connect KCC20 Wallet first'));
+      if (lastState && lastState.balance && (!params || !params.address || params.address === lastState.address)) {
+        return Promise.resolve(lastState.balance);
+      }
+      return fetchJson(restBase() + '/addresses/' + encodeURIComponent(addr) + '/balance').then(function (data) {
+        var sompi = Number((data && (data.balance != null ? data.balance : data)) || 0);
+        return { confirmed: sompi, unconfirmed: 0, address: addr };
+      });
+    }
+    if (method === 'getUtxoEntries') {
+      if (!addr) return Promise.reject(new Error('Connect KCC20 Wallet first'));
+      return fetchJson(restBase() + '/addresses/' + encodeURIComponent(addr) + '/utxos').then(function (data) {
+        return Array.isArray(data) ? data : [];
+      });
+    }
+    if (method === 'getTokenBalance' || method === 'getKcc20Balance') {
+      var tick = String((params && (params.tick || params.ticker)) || 'KKDAG').toUpperCase();
+      var hold = ((lastState && lastState.holdings) || []).find(function (h) {
+        return String((h && (h.tick || h.ticker)) || '').toUpperCase() === tick;
+      });
+      if (hold) return Promise.resolve(hold);
+      if (!addr) return Promise.reject(new Error('Connect KCC20 Wallet first'));
+      return fetchJson('https://idx.kron.technology/v1/kcc20/token/' + encodeURIComponent(tick)
+        + '/address/' + encodeURIComponent(addr)).then(function (raw) {
+        var row = Array.isArray(raw && raw.result) ? raw.result[0] : (raw && raw.result) || raw || {};
+        return {
+          tick: tick,
+          name: tick,
+          decimals: Number(row.dec || row.decimals || 0),
+          raw: String(row.balance || row.amount || '0'),
+          balance: String(row.balance || row.amount || '0'),
+          protocol: 'kcc20',
+          address: addr
+        };
+      }).catch(function () {
+        return { tick: tick, name: tick, decimals: 0, raw: '0', balance: '0', protocol: 'kcc20', address: addr };
+      });
+    }
+    return Promise.reject(new Error('Connect KCC20 Wallet first'));
+  }
+
   function rpc(method, params) {
     return new Promise(function (resolve, reject) {
       var interactive = !!INTERACTIVE[method];
+      if (!interactive && !inWalletBrowser()) {
+        if (hasSession()) {
+          silentFallback(method, params).then(resolve, reject);
+          return;
+        }
+      }
       var win = interactive ? raiseWalletWindow() : liveWalletWindow();
       if (!win) {
         if (!interactive) {
-          reject(new Error('Connect KCC20 Wallet first'));
+          silentFallback(method, params).then(resolve, reject);
           return;
         }
         if (userClicked()) {
@@ -304,7 +417,13 @@
           delete pending[id];
           reject(e);
         }
-      }).catch(reject);
+      }).catch(function (err) {
+        if (!interactive) {
+          silentFallback(method, params).then(resolve, reject);
+          return;
+        }
+        reject(err);
+      });
     });
   }
 
@@ -327,7 +446,9 @@
     on: on,
     off: off,
     connect: function () {
-      if (accounts.length) return Promise.resolve(accounts.slice());
+      if (accounts.length && lastState && (lastState.publicKey || lastState.pubKey)) {
+        return Promise.resolve(accounts.slice());
+      }
       if (!inWalletBrowser() && !userClicked()) {
         return Promise.reject(new Error('Tap Connect KCC20 Wallet'));
       }
@@ -416,9 +537,6 @@
       return rpc('getUtxoEntries', { address: address || '' });
     },
     getBalance: function (address) {
-      if (!liveWalletWindow() && lastState && lastState.balance) {
-        return Promise.resolve(lastState.balance);
-      }
       return rpc('getBalance', { address: address || '' });
     },
     getPublicKey: function () {
@@ -548,6 +666,7 @@
     getAccounts: function () { return api.getAccounts(); },
     getNetwork: function () { return api.getNetwork(); },
     getPublicKey: function () { return api.getPublicKey(); },
+    getUtxoEntries: function (address) { return api.getUtxoEntries(address); },
     getBalance: function () {
       return api.getState().then(function (s) {
         var sompi = Number((s && s.balance && s.balance.confirmed) || 0);
@@ -571,9 +690,16 @@
     on: on,
     removeListener: off
   };
-  /* Always route TTT “KasWare” connect buttons through this PWA.
-     Do not trigger the Opera/Chrome KasWare extension on Connect. */
-  root.kasware = shimKasware;
+  /* TTT (and KCC20 iframe) must not hit the KasWare extension.
+     Nilla / other dApps keep a real installed KasWare next to window.kcc20. */
+  function installKaswareShim() {
+    var host = '';
+    try { host = String(location.hostname || ''); } catch (e) {}
+    var ttt = /(^|\.)tttz\.xyz$/i.test(host);
+    var real = root.kasware && !root.kasware.isKcc20Shim;
+    if (embeddedInWallet || ttt || !real) root.kasware = shimKasware;
+  }
+  installKaswareShim();
 
   var kipUuid = (function () {
     try {
@@ -597,6 +723,9 @@
     },
     switchNetwork: function (id) { return api.switchNetwork(id); },
     getPublicKey: function () { return api.getPublicKey(); },
+    getUtxoEntries: function (address) { return api.getUtxoEntries(address); },
+    getBalance: function (address) { return api.getBalance(address); },
+    getState: function () { return api.getState(); },
     signPskt: function (a, b) { return api.signPskt(a, b); },
     pushTx: function (json) { return api.pushTx(json); },
     disconnect: function () { return api.disconnect(); },

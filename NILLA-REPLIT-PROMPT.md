@@ -125,12 +125,16 @@ B) Sign this transaction
 Connect wallet:
   const kcc = window.kcc20;
   if (!kcc) inject sdk.js and wait for event kcc20#initialized.
-  const accounts = await kcc.connect(); // popup to kcc-20-wallet.vercel.app
+  const accounts = await kcc.connect(); // popup to kcc-20-wallet.vercel.app — then it CLOSES. That is correct.
   const address = accounts[0];          // kaspa:q…
-  const network = await kcc.getNetwork(); // kaspa_mainnet | kaspa_testnet_10
-  Normalize: /testnet/ → testnet-10 else mainnet.
+  const network = await kcc.getNetwork(); // silent, no popup
+  const pubKey = await kcc.getPublicKey(); // silent — uses the Connect session, NOT a second popup
+  const utxos = await kcc.getUtxoEntries(address); // silent — needed to BUILD the unsigned PSKT
+  Normalize network: /testnet/ → testnet-10 else mainnet.
+  If a call throws “Connect KCC20 Wallet first” after a successful Connect, hard-refresh sdk.js (https://kcc-20-wallet.vercel.app/sdk.js) — stale SDK closed the window and dropped the session. Do not reopen Connect in a loop.
   If popup blocked: “Allow popups, or open https://kcc-20-wallet.vercel.app , Add to Home Screen, unlock, try Connect again.”
   User must already have created or imported a key in KCC20 and unlocked with PIN.
+  Load sdk.js only when the user selects SCORPION and taps Connect. Do not overwrite window.kasware if the KasWare extension is present.
 
 Sign transaction:
   You already built unsignedSafeJson (Transaction.serializeToSafeJSON or KRON/Cook builder).
@@ -165,7 +169,45 @@ Do not require a Chrome extension for the default path.
 
 Done when:
 - Connect without KasWare installed shows the user’s kaspa:q address.
+- After Connect, getPublicKey + getUtxoEntries succeed WITHOUT a second popup (the PWA window closing after Connect is required).
 - Sign on a real unsigned PSKT opens the PWA Sign sheet and returns a signed Safe-JSON string after Approve.
 - Reject is handled.
 - KasWare still works through the same adapter when the extension is present.
+```
+
+---
+
+## D. Paste this next — session after Connect (Prepare blocked)
+
+```
+You are Nilla Gorilla. Do not rip apart PSKT construction, signing, approval, or broadcast. Do not load sdk.js on page mount. Load it only when the user selects SCORPION (KCC20) and taps Connect.
+
+Live SDK: https://kcc-20-wallet.vercel.app/sdk.js  (must be this host, hard-refresh so you are not on a cached copy)
+
+What is already working and must stay:
+- SCORPION is its own adapter, separate from KasWare
+- Connect opens kcc-20-wallet.vercel.app, user Approves, Nilla shows the same kaspa:q address
+- Route: Review → SCORPION (KCC20) approval → Broadcast
+- KasWare remains the default path and must keep working
+- Do not overwrite window.kasware if the real extension exists
+
+What was broken (wallet-side, now fixed in sdk.js):
+After Connect the KCC20 popup CLOSES on purpose. Old SDK then treated getPublicKey / getUtxoEntries as “no window” and threw “Connect KCC20 Wallet first”. Nilla looked connected; Prepare died before Sign. New SDK keeps the Connect session: those reads are silent (pubkey from Connect snapshot, UTXOs from public Kaspa API for that address). Popup only comes back for signPskt / pushTx / sendToken.
+
+Your job now:
+1. Hard-reload so sdk.js is fresh. Confirm window.kcc20.origin is https://kcc-20-wallet.vercel.app
+2. Select SCORPION → Connect (one popup, user Approves, popup closes). Do not Connect again unless accounts are empty.
+3. Prepare verified purchase MUST call, in order, with the popup still closed:
+     const accounts = await kcc.getAccounts();
+     const network = await kcc.getNetwork();
+     const pubKey = await kcc.getPublicKey();
+     const utxos = await kcc.getUtxoEntries(accounts[0]);
+   If any throw “Connect KCC20 Wallet first”, you are on a stale sdk.js. Stop. Do not loop Connect.
+4. Build the unsigned rusty-kaspa Safe JSON yourself from that pubkey + UTXOs + KRON quote. Do not ask KCC20 to invent the route.
+5. signPskt({ txJsonString, options: { signInputs: ONLY user P2PK indexes, sighashType: 1 } }) — THIS is the next popup. Never list covenant / curve / pool / token-cell inputs.
+6. Optional pushTx(signed).
+
+Copy: “Nilla prepares the transaction. Your wallet signs. We never hold your key.”
+
+Report: each of getAccounts / getNetwork / getPublicKey / getUtxoEntries SUCCESS or FAILURE after Connect (no second popup), then whether Prepare now reaches a built unsigned PSKT. Do not click Broadcast until Sign returns a string.
 ```

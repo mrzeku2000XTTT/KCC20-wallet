@@ -29,6 +29,7 @@
       <button id="connect" type="button">Connect</button>
       <button class="ghost" id="accounts" type="button">Accounts</button>
       <button class="ghost" id="network" type="button">Network</button>
+      <button class="ghost" id="pubkey" type="button">Public key</button>
       <button class="ghost" id="utxos" type="button">UTXOs</button>
       <button class="ghost" id="bal" type="button">Balance</button>
       <button class="ghost" id="hold" type="button">Holdings</button>
@@ -53,7 +54,10 @@
     document.getElementById('connect').onclick = () => api().connect().then(log).catch(e => log(e.message));
     document.getElementById('accounts').onclick = () => api().getAccounts().then(log).catch(e => log(e.message));
     document.getElementById('network').onclick = () => api().getNetwork().then(log).catch(e => log(e.message));
-    document.getElementById('utxos').onclick = () => api().getUtxoEntries().then(log).catch(e => log(e.message));
+    document.getElementById('pubkey').onclick = () => api().getPublicKey().then(log).catch(e => log(e.message));
+    document.getElementById('utxos').onclick = () => api().getUtxoEntries().then(function (u) {
+      log({ count: Array.isArray(u) ? u.length : 0, utxos: u });
+    }).catch(e => log(e.message));
     document.getElementById('bal').onclick = () => api().getBalance().then(log).catch(e => log(e.message));
     document.getElementById('hold').onclick = () => api().getHoldings().then(log).catch(e => log(e.message));
     document.getElementById('kkdag').onclick = () => api().getTokenBalance('KKDAG').then(log).catch(e => log(e.message));

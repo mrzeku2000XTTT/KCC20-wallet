@@ -1,8 +1,19 @@
 # KCC20 Wallet
 
-**Live app:** [https://kcc-20-wallet.vercel.app](https://kcc-20-wallet.vercel.app)
+**Live app:** [https://kcc-20-wallet.vercel.app](https://kcc-20-wallet.vercel.app)  
+**dApp SDK docs:** [https://kcc-20-wallet.vercel.app/docs.html](https://kcc-20-wallet.vercel.app/docs.html) · [CONNECT.md](./CONNECT.md) · [sdk.js](./sdk.js) · [demo](https://kcc-20-wallet.vercel.app/dapp-demo.html)
 
 A non-custodial Kaspa wallet for **native KAS**, **KCC20** (KRON / Kas Knight and other covenant tokens), and **KRC-20** (Kasplex). Time-lock vaults, KCC20 freeze, in-app KRON trading, and covenant++ tools — all in the browser. Keys never leave your device.
+
+### For app developers (plug-and-play connect)
+
+Same job as KasWare’s `window.kasware`, without a Chrome extension:
+
+```html
+<script src="https://kcc-20-wallet.vercel.app/sdk.js?v=166"></script>
+```
+
+Then `await window.kcc20.connect()` on a **user click**. Popup closes after Approve. `getPublicKey` / `getUtxoEntries` stay silent. You build the unsigned PSKT; `signPskt` opens the Sign sheet. Full API: [docs.html](https://kcc-20-wallet.vercel.app/docs.html).
 
 Built by **TTT agent internet**.
 

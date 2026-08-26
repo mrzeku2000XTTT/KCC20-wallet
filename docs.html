@@ -1,0 +1,197 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>KCC20 Wallet SDK — Connect for dApps</title>
+  <meta name="description" content="Plug-and-play KCC20 (SCORPION) wallet connect. One script, no Chrome extension. Same shape as KasWare: connect, getPublicKey, getUtxoEntries, signPskt, pushTx.">
+  <link rel="icon" href="assets/icon.png">
+  <style>
+    :root { color-scheme: dark; --gold: #c9a36a; --bg: #0b0b0c; --card: #141416; --muted: rgba(235,235,245,.68); --line: rgba(255,255,255,.1); }
+    * { box-sizing: border-box; }
+    body { margin: 0; font: 16px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; background: var(--bg); color: #f5f5f7; }
+    a { color: var(--gold); }
+    header { border-bottom: 1px solid var(--line); padding: 18px 22px; display: flex; gap: 14px; align-items: center; flex-wrap: wrap; }
+    header img { width: 36px; height: 36px; border-radius: 10px; }
+    header b { font-size: 16px; }
+    header span { color: var(--muted); font-size: 13px; }
+    nav { display: flex; gap: 14px; margin-left: auto; font-size: 13px; }
+    main { max-width: 860px; margin: 0 auto; padding: 32px 20px 80px; }
+    h1 { font-size: 34px; letter-spacing: -0.6px; margin: 0 0 10px; }
+    h2 { font-size: 22px; margin: 36px 0 10px; }
+    h3 { font-size: 16px; margin: 22px 0 8px; }
+    p, li { color: var(--muted); }
+    code, pre { font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 13px; }
+    code { background: #1c1c1e; padding: 2px 6px; border-radius: 6px; color: #f3e2bf; }
+    pre { background: var(--card); border: 1px solid var(--line); border-radius: 14px; padding: 14px 16px; overflow: auto; color: #e8e8ed; }
+    table { width: 100%; border-collapse: collapse; font-size: 14px; margin: 12px 0 20px; }
+    th, td { text-align: left; padding: 9px 10px; border-bottom: 1px solid var(--line); vertical-align: top; }
+    th { color: #aaa; font-weight: 600; font-size: 12px; text-transform: uppercase; letter-spacing: .4px; }
+    .pill { display: inline-block; font-size: 11px; font-weight: 700; letter-spacing: .4px; padding: 3px 8px; border-radius: 999px; background: #2a2318; color: var(--gold); }
+    .warn { border: 1px solid #5a3a12; background: #1a140c; border-radius: 12px; padding: 12px 14px; color: #f3e2bf; }
+    .ok { border: 1px solid #1e4a32; background: #0e1a14; border-radius: 12px; padding: 12px 14px; color: #b6e2c8; }
+  </style>
+</head>
+<body>
+  <header>
+    <img src="assets/icon.png" alt="">
+    <div>
+      <b>KCC20 Wallet SDK</b><br>
+      <span>SCORPION · plug-and-play dApp connect · no Chrome extension</span>
+    </div>
+    <nav>
+      <a href="https://kcc-20-wallet.vercel.app">Wallet</a>
+      <a href="dapp-demo.html">Live demo</a>
+      <a href="https://github.com/mrzeku2000XTTT/KCC20-wallet">GitHub</a>
+      <a href="CONNECT.md">Markdown</a>
+    </nav>
+  </header>
+  <main>
+    <p class="pill">sdkVersion 166</p>
+    <h1>Connect KCC20 Wallet in any app</h1>
+    <p>One script. Creates <code>window.kcc20</code>. Same job as KasWare’s <code>window.kasware</code>, except this is a <b>hosted PWA</b>, not a browser extension. Keys never leave <code>kcc-20-wallet.vercel.app</code>. Your app builds the unsigned transaction. The user Approves in our window.</p>
+
+    <div class="ok">
+      <b>Install (one line)</b>
+      <pre style="margin:10px 0 0">script src="https://kcc-20-wallet.vercel.app/sdk.js?v=166"</pre>
+      After load: <code>window.kcc20.sdkVersion === "166"</code>
+    </div>
+
+    <h2>1. Getting started</h2>
+    <p>Only call Connect from a <b>user click</b>. Never on page load. Never on app switch. That is the same rule KasWare documents.</p>
+<pre>const s = document.createElement('script');
+s.src = 'https://kcc-20-wallet.vercel.app/sdk.js?v=166';
+s.onload = () => console.log(window.kcc20.sdkVersion); // "166"
+document.head.appendChild(s);
+
+// or wait for:
+window.addEventListener('kcc20#initialized', (e) => {
+  const kcc = e.detail; // same as window.kcc20
+});</pre>
+
+    <h2>2. Full happy path</h2>
+<pre>const kcc = window.kcc20;
+
+// POPUP — user taps Connect in your UI, Approves in KCC20, popup CLOSES. That close is required.
+const accounts = await kcc.connect();
+const address = accounts[0];                 // kaspa:q…
+
+// SILENT — popup stays closed. Do not connect() again for these.
+const network = await kcc.getNetwork();      // kaspa_mainnet | kaspa_testnet_10
+const pubKey  = await kcc.getPublicKey();    // hex
+const utxos   = await kcc.getUtxoEntries(address);
+
+// YOU build unsigned rusty-kaspa Safe JSON from pubKey + utxos + your route.
+// POPUP — user Signs.
+const signed = await kcc.signPskt({
+  txJsonString: unsignedSafeJson,
+  options: { signInputs: userP2pkIndexes.map(i => ({ index: i, sighashType: 1 })) }
+});
+
+// POPUP — optional. Or broadcast with your own node.
+const { txId } = await kcc.pushTx(signed);</pre>
+
+    <div class="warn">
+      After <code>connect()</code> the wallet window <b>closes on purpose</b>. If you still get <code>Connect KCC20 Wallet first</code> on <code>getPublicKey</code> / <code>getUtxoEntries</code>, you are on a stale SDK. Delete <code>window.kcc20</code>, load <code>sdk.js?v=166</code>, hard-reload, Connect once more.
+    </div>
+
+    <h2>3. Popup vs silent</h2>
+    <table>
+      <thead><tr><th>Opens the PWA</th><th>Silent (no window)</th></tr></thead>
+      <tbody>
+        <tr><td><code>connect</code> / <code>requestAccounts</code></td><td><code>getAccounts</code></td></tr>
+        <tr><td><code>signPskt</code> / <code>signPsbt</code></td><td><code>getNetwork</code></td></tr>
+        <tr><td><code>pushTx</code></td><td><code>getPublicKey</code></td></tr>
+        <tr><td><code>sendToken</code> / <code>payKcc20</code></td><td><code>getUtxoEntries</code></td></tr>
+        <tr><td><code>switchNetwork</code></td><td><code>getBalance</code> / <code>getHoldings</code> / <code>getTokenBalance</code></td></tr>
+      </tbody>
+    </table>
+
+    <h2>4. API reference</h2>
+    <h3>connect() / requestAccounts()</h3>
+    <p>Returns <code>Promise&lt;string[]&gt;</code> of <code>kaspa:q…</code> addresses. Opens the PWA. User must already have created or imported a key and unlocked with PIN. Allow popups for your origin.</p>
+
+    <h3>getAccounts()</h3>
+    <p>Same addresses, no extra prompt if already connected.</p>
+
+    <h3>getNetwork()</h3>
+    <p><code>kaspa_mainnet</code> or <code>kaspa_testnet_10</code>. KIP-12 provider normalizes to <code>mainnet</code> / <code>testnet-10</code>. Handle both.</p>
+
+    <h3>getPublicKey()</h3>
+    <p>Hex public key of the connected account. From the Connect snapshot. Silent.</p>
+
+    <h3>getUtxoEntries(address?)</h3>
+    <p>UTXOs for building a PSKT. Each item has REST fields (<code>outpoint</code>, <code>utxoEntry</code>) and KasWare-flat aliases (<code>transactionId</code>, <code>index</code>, <code>amount</code>, <code>scriptPublicKey</code>).</p>
+
+    <h3>getBalance(address?)</h3>
+    <p><code>{ confirmed, unconfirmed, address }</code> in sompi.</p>
+
+    <h3>signPskt({ txJsonString, options: { signInputs } })</h3>
+    <p>You pass unsigned rusty-kaspa <b>Safe JSON</b>. We return a signed <b>string</b>. <code>signInputs</code>: only this wallet’s P2PK input indexes, <code>sighashType: 1</code> (SIGHASH_ALL). Never list covenant / KRON curve / pool / token-cell inputs. Reject → error <code>User rejected</code>.</p>
+
+    <h3>pushTx(signedJson)</h3>
+    <p><code>{ txId, node }</code>. Optional if you broadcast yourself.</p>
+
+    <h3>sendToken({ tick, amount, dest })</h3>
+    <p>Wallet-built KCC20 send (TTT Fund). Not for KRON curve buys — those you build, then <code>signPskt</code>.</p>
+
+    <h3>disconnect()</h3>
+    <p>Forget this origin. Popup closes. Stay on your tab.</p>
+
+    <h3>Events</h3>
+<pre>kcc.on('accountsChanged', (accounts) => {});
+kcc.on('networkChanged', (network) => {});
+kcc.on('disconnect', () => {});</pre>
+
+    <h2>5. Wallet-agnostic discovery (KIP-12)</h2>
+<pre>window.addEventListener('kaspa:provider', (ev) => {
+  const { info, provider } = ev.detail || {};
+  // info.rdns === 'app.kcc20.wallet'  → KCC20 PWA
+});
+window.dispatchEvent(new Event('kaspa:requestProvider'));</pre>
+    <p>Load <code>sdk.js</code> <b>before</b> you dispatch <code>kaspa:requestProvider</code>.</p>
+
+    <h2>6. KasWare vs KCC20</h2>
+    <table>
+      <thead><tr><th></th><th>KasWare</th><th>KCC20 (SCORPION)</th></tr></thead>
+      <tbody>
+        <tr><td>How it appears</td><td>Chrome extension injects <code>window.kasware</code></td><td>Your page loads <code>sdk.js</code> → <code>window.kcc20</code></td></tr>
+        <tr><td>Connect</td><td><code>requestAccounts()</code></td><td><code>connect()</code> / <code>requestAccounts()</code></td></tr>
+        <tr><td>Sign</td><td><code>signPskt</code></td><td>same</td></tr>
+        <tr><td>Keys</td><td>extension</td><td>hosted PWA, PIN, never on your origin</td></tr>
+        <tr><td>When to use</td><td>user has the extension</td><td>you do not want to require an extension</td></tr>
+      </tbody>
+    </table>
+    <p>If a real KasWare extension is present, do <b>not</b> overwrite <code>window.kasware</code>. Offer both adapters. SCORPION uses <code>window.kcc20</code> only.</p>
+
+    <h2>7. Pitfalls (what dApps actually hit)</h2>
+    <ol>
+      <li><b>Stale SDK</b> — first load cached an old <code>sdk.js</code>. Require <code>sdkVersion === "166"</code>. Script URL must include <code>?v=166</code>.</li>
+      <li><b>Connect first after a successful Connect</b> — old SDK needed the popup to stay open. v166 keeps the session. Do not Connect-loop.</li>
+      <li><b>Wrong object</b> — call <code>getPublicKey</code> on the same <code>window.kcc20</code> that ran <code>connect()</code>. Do not clone the provider before Connect.</li>
+      <li><b>Empty UTXOs</b> — that <code>kaspa:q</code> has no KAS. User must fund it. Do not fake UTXOs.</li>
+      <li><b>Network strings</b> — <code>kaspa_mainnet</code> vs <code>mainnet</code>. Normalize <code>/testnet/</code> → <code>testnet-10</code>.</li>
+      <li><b>signInputs</b> — only P2PK of the connected address. Signing a KRON curve/pool/token cell is how KasWare PSKTs break.</li>
+      <li><b>Popup blocked on Sign</b> — Sign must be in the same user-click as Prepare, or a dedicated Sign button. Browsers block <code>window.open</code> without a gesture.</li>
+      <li><b>sendToken ≠ curve buy</b> — <code>sendToken</code> transfers a KCC20 bag. A KRON purchase is a tx <b>you</b> build, then <code>signPskt</code>.</li>
+      <li><b>Eager script load</b> — loading <code>sdk.js</code> on every page mount can trip Replit/Vite overlays. Load on Connect click.</li>
+      <li><b>Mobile</b> — if the popup becomes a tab, Disconnect focuses your origin first, then closes.</li>
+    </ol>
+
+    <h2>8. Safety</h2>
+    <ul>
+      <li>You build. They sign. Never send a private key or PIN.</li>
+      <li>Never invent amounts. Never credit a user without a real <code>txId</code>.</li>
+      <li>SIGHASH_ALL (1) only on this build.</li>
+      <li>Do not store <code>x-access-token</code>, seeds, or hex keys.</li>
+    </ul>
+
+    <h2>Links</h2>
+    <ul>
+      <li>Wallet: <a href="https://kcc-20-wallet.vercel.app">kcc-20-wallet.vercel.app</a></li>
+      <li>Demo: <a href="dapp-demo.html">dapp-demo.html</a></li>
+      <li>GitHub: <a href="https://github.com/mrzeku2000XTTT/KCC20-wallet">mrzeku2000XTTT/KCC20-wallet</a> — files <code>sdk.js</code>, <code>CONNECT.md</code>, <code>docs.html</code></li>
+    </ul>
+  </main>
+</body>
+</html>

@@ -1,8 +1,10 @@
-# KCC20 Wallet connect (no Chrome extension)
+# KCC20 Wallet SDK (SCORPION) — dApp connect
 
+**Docs site:** https://kcc-20-wallet.vercel.app/docs.html  
 Live wallet: https://kcc-20-wallet.vercel.app  
 SDK: https://kcc-20-wallet.vercel.app/sdk.js?v=166  
-Demo: https://kcc-20-wallet.vercel.app/dapp-demo.html
+Demo: https://kcc-20-wallet.vercel.app/dapp-demo.html  
+GitHub: https://github.com/mrzeku2000XTTT/KCC20-wallet
 
 KCC20 Wallet is a **hosted PWA**. It is **not** a Google/Chrome extension. Keys never leave the wallet origin. A dApp (Nilla, TTT, or yours) **builds the unsigned PSKT**, then hands it to this wallet. The user reviews an Approve sheet and PIN-signs (or KasWare, if they turned that on).
 

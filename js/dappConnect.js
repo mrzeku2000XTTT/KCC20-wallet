@@ -1,7 +1,7 @@
 /* dApp connect host: popup / protocol-handler session for window.kcc20 (sdk.js). */
 import { networkId, validateKaspaAddress } from './crypto.js?v=100';
 import { fetchAddressUtxos, fetchAddressBalance, signPsktJson, pushSignedPskt } from './tx.js?v=167';
-import { kaswareSigning, signPsktWithKasware } from './kasware.js?v=100';
+import { kaswareSigning, signPsktWithKasware, walletIsKaswareChip, isKaswareInstalled } from './kasware.js?v=159';
 
 const ALLOW_KEY = 'kcc20_dapp_allow_v1';
 const TREASURY_KEY = 'kcc20_dapp_treasury_v1';
@@ -206,7 +206,7 @@ function paintDappWallets() {
     return;
   }
   box.classList.remove('hidden');
-  box.innerHTML = '<p class="dapp-wallets-lab">Connected wallet is selected. Tap another chip to switch.</p>' + list.map(w => {
+  box.innerHTML = '<p class="dapp-wallets-lab">Tap a chip. KasWare chips Approve in the extension (funding input only). Native chips PIN-sign here.</p>' + list.map(w => {
     const on = !!(cur && (w.id === cur.id || String(w.address) === String(cur.address)));
     return `<button type="button" class="dapp-wchip${on ? ' on' : ''}" data-dapp-wid="${esc(w.id)}"><b>${esc(w.name || 'Wallet')}</b><span>${esc(briefAddr(w.address))}${w.kasware ? ' · KasWare' : ''}${on ? ' · connected' : ''}</span></button>`;
   }).join('');
@@ -590,6 +590,7 @@ async function handleTradeKron(req) {
   if (!(Number(amount) > 0)) throw new Error('Enter an amount greater than 0');
   const payBody = async () => {
     const live = hooks.getWallet?.() || w;
+    const kw = !!(walletIsKaswareChip(live) || kaswareSigning(live));
     const payerLine = (typeof hooks.payerLabel === 'function' && hooks.payerLabel())
       || (live?.name || 'Wallet') + ' · ' + (live?.address || '');
     let q = null;
@@ -607,31 +608,44 @@ async function handleTradeKron(req) {
     return {
       q,
       err,
+      kw,
       html:
         '<p class="muted" style="text-align:left;padding:0 0 8px;"><b>Same as Home → TRADE.</b> Wallet builds the KRON swap. Keys stay here.</p>'
-        + '<div class="kv kv-stack"><span class="k">WALLET</span><span class="v">' + esc(payerLine) + '</span></div>'
+        + '<div class="kv kv-stack"><span class="k">WALLET</span><span class="v">' + esc(payerLine) + (kw ? ' · KasWare' : '') + '</span></div>'
         + '<div class="kv"><span class="k">Side</span><span class="v">' + esc(side.toUpperCase()) + '</span></div>'
         + '<div class="kv"><span class="k">Token</span><span class="v">' + esc(tick) + (q && q.graduated ? ' · pool' : ' · curve') + '</span></div>'
         + '<div class="kv kv-stack"><span class="k">Quote</span><span class="v">' + esc(line) + '</span></div>'
-        + '<p class="muted" style="text-align:left;padding:8px 0 0;">KAS pays the curve/pool. Token cells carry ~0.5 KAS dust. Not sendToken (that is a bag transfer).</p>'
+        + (kw
+          ? '<p class="muted" style="text-align:left;padding:8px 0 0;">KasWare only signs the KAS funding input. SCORPION keeps the covenant/curve/pool inputs. Same as Home TRADE.</p>'
+          : '<p class="muted" style="text-align:left;padding:8px 0 0;">KAS pays the curve/pool. Token cells carry ~0.5 KAS dust. Not sendToken (that is a bag transfer).</p>')
     };
   };
   let view = await payBody();
   await showOverlay({
     title: (side === 'buy' ? 'Buy ' : 'Sell ') + tick,
     origin,
-    approveLabel: side === 'buy' ? 'Buy ' + tick : 'Sell ' + tick,
+    approveLabel: view.kw
+      ? ('Approve in KasWare')
+      : (side === 'buy' ? 'Buy ' + tick : 'Sell ' + tick),
     body: view.html,
     onWalletChange: async () => {
       view = await payBody();
       if ($('dapp-body')) $('dapp-body').innerHTML = view.html;
+      const btn = $('dapp-approve');
+      if (btn) btn.textContent = view.kw
+        ? 'Approve in KasWare'
+        : (side === 'buy' ? 'Buy ' + tick : 'Sell ' + tick);
     }
   });
   w = hooks.getWallet?.() || w;
   view = await payBody();
   if (!view.q) throw new Error(view.err || 'KRON quote failed');
   if (typeof hooks.hydrateNativeKey === 'function') hooks.hydrateNativeKey(w);
-  if (typeof hooks.requirePin === 'function' && !kaswareSigning(w)) {
+  const useKw = !!(view.kw || walletIsKaswareChip(w) || kaswareSigning(w));
+  if (useKw) {
+    if (typeof hooks.ensureKasware === 'function') await hooks.ensureKasware(w);
+    else if (!isKaswareInstalled()) throw new Error('KasWare is not in this browser');
+  } else if (typeof hooks.requirePin === 'function') {
     await hooks.requirePin((side === 'buy' ? 'Buy ' : 'Sell ') + amount + (side === 'buy' ? ' KAS of ' : ' ') + tick);
   }
   if (typeof hooks.tradeKron !== 'function') throw new Error('Wallet cannot trade KRON from this session');

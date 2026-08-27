@@ -24,7 +24,7 @@ import {
   newHashlockSecret, checkinHop, currentHop, parseXmssKit, p2shFromRedeemHex, spendXmssVault,
   disconnectRpc, buildDcaDrips, sendKasMany, releaseDcaDrip, cancelDcaDrip, isMassError
 } from './tx.js?v=167';
-import { bootDappConnect, pingTttDappFrame, TTT_TREASURY } from './dappConnect.js?v=169';
+import { bootDappConnect, pingTttDappFrame, TTT_TREASURY } from './dappConnect.js?v=170';
 import { schedulePersistIframeVault, bootIframeVaultWatch } from './iframeVault.js?v=120';
 import { kronMarkets, quoteKronTrade, executeKronTrade, formatKasSompi, lookupKronTick, liveQuote, tradeCostLines, attachKronLogos, kronCandles, kronLogoFor, quoteKcc20Bridge, executeKcc20Bridge, formatTokenRaw } from './kronTrade.js?v=140';
 import {
@@ -58,7 +58,7 @@ import {
 } from './atrade.js?v=100';
 import { SCORPION_MEMORY } from './scorpionMemory.js?v=152';
 
-export const BUILD = '169';
+export const BUILD = '170';
 
 const TOKEN_FALLBACK_LOGO = 'assets/ttt.png';
 
@@ -1389,6 +1389,24 @@ async function dappQuoteKron({ tick, side, amount }) {
   return serializeKronQuote(q);
 }
 
+async function dappEnsureKaswareSigner(payer) {
+  hydrateNativeKey(payer);
+  const kwChip = walletIsKaswareChip(payer) || (kaswareSigning(payer) && !hexKey(payer.privKey));
+  const wantKw = kwChip || kaswareSigning(payer);
+  if (!wantKw) {
+    if (!hexKey(payer.privKey)) {
+      throw new Error('No in-app key on this chip. Import the 64-hex, or use the KasWare chip with the extension on.');
+    }
+    return false;
+  }
+  if (!isKaswareInstalled()) {
+    throw new Error('This chip is KasWare. Open KCC20 Wallet in Chrome or Edge with the KasWare extension, then Buy again. Phone browsers cannot pop KasWare — switch the sheet to a native PIN wallet on mobile.');
+  }
+  await autoArmKaswareForWallet(payer);
+  await ensureKaswareSigner(payer);
+  return true;
+}
+
 async function dappTradeKron({ tick, side, amount }) {
   const t = String(tick || 'KKDAG').toUpperCase();
   const s = String(side || 'buy').toLowerCase() === 'sell' ? 'sell' : 'buy';
@@ -1396,10 +1414,8 @@ async function dappTradeKron({ tick, side, amount }) {
   if (isTestnet()) throw new Error('KRON trade is mainnet. Switch this wallet off TN10.');
   const payer = walletForDapp() || wallet;
   if (!payer?.address) throw new Error('Unlock KCC20 Wallet first');
-  if (kaswareSigning(payer) && !hexKey(payer.privKey)) {
-    throw new Error('This chip is KasWare-only. Switch to a native wallet that can sign, then Buy again.');
-  }
-  toast((s === 'buy' ? 'Buying ' : 'Selling ') + t + ' from ' + (payer.name || 'wallet'));
+  const useKw = await dappEnsureKaswareSigner(payer);
+  toast((s === 'buy' ? 'Buying ' : 'Selling ') + t + ' from ' + (payer.name || 'wallet') + (useKw ? ' · KasWare signs' : ''));
   let availableUtxos = [];
   try { availableUtxos = await fetchAddressUtxos(payer.address); } catch {}
   if (!availableUtxos.length) throw new Error('Need KAS in this wallet for the trade');
@@ -1409,6 +1425,7 @@ async function dappTradeKron({ tick, side, amount }) {
     side: s,
     amount: amt,
     utxos: availableUtxos,
+    forceKasware: useKw,
     onStatus: (m) => toast(m)
   });
   const q = result.quote;
@@ -1488,6 +1505,7 @@ function dappHooks() {
     toast,
     applyAppNetwork,
     hydrateNativeKey,
+    ensureKasware: dappEnsureKaswareSigner,
     getHoldings: async () => {
       if (Date.now() - lastTokenFetch > 8000) {
         try { await refreshTokenHoldings(); } catch {}

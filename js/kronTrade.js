@@ -39,6 +39,7 @@ function xOnly(wallet) {
 
 async function idx(path) {
   const res = await fetch(IDX + path, { cache: 'no-store' });
+  if (res.status === 404) return null;
   if (!res.ok) throw new Error('KRON indexer HTTP ' + res.status);
   const body = await res.json();
   return body.result;
@@ -47,8 +48,51 @@ async function idx(path) {
 async function idxToken(tick) {
   let r = await idx('/token/' + encodeURIComponent(tick));
   if (Array.isArray(r)) r = r[0];
-  if (!r) throw new Error('Unknown KRON token ' + tick);
-  return r;
+  return r || null;
+}
+
+function tokenFromEntry(entry) {
+  if (!entry) return null;
+  const ext = entry.extensions || {};
+  return {
+    covenantId: entry.covenantId,
+    name: entry.name,
+    dec: entry.decimals,
+    decimals: entry.decimals,
+    graduated: !!ext.graduated,
+    poolCovenantId: ext.poolCovenantId,
+    genesisTxid: ext.genesisTxid,
+    cpState: {}
+  };
+}
+
+export async function resolveKronTick(tick) {
+  const t = String(tick || '').trim().toUpperCase();
+  if (!t || t.includes('?') || !/^[A-Z0-9]{2,12}$/.test(t)) {
+    throw new Error('Ticker like KKDAG or KRON');
+  }
+  await kronTokenlist().catch(() => {});
+  const entry = findKronEntry(t);
+  const live = await idxToken(t).catch(() => null);
+  if (!entry && !live) {
+    const all = (listCache?.tokens || []).map(e => String(e.symbol || '').toUpperCase()).filter(s => s && !s.includes('?'));
+    const hint = all.find(s => s === t.slice(0, s.length) || t.startsWith(s) || s.startsWith(t));
+    throw new Error(t + ' is not a launched KRON KCC20' + (hint ? '. Did you mean ' + hint + '?' : '. Open Scorpion and tap a listed token.'));
+  }
+  const token = live || tokenFromEntry(entry);
+  const q = liveQuote(live || {});
+  return {
+    tick: t,
+    name: (live && live.name) || entry?.name || t,
+    graduated: !!(live?.graduated || entry?.extensions?.graduated),
+    price: q.price,
+    decimals: Number(entry?.decimals ?? live?.dec ?? live?.decimals ?? 0),
+    change24h: q.change24h,
+    volume24h: Number(live?.volume24h || 0),
+    covenantId: live?.covenantId || entry?.covenantId || '',
+    entry,
+    token
+  };
 }
 
 export async function kronTokenlist() {
@@ -154,23 +198,7 @@ export async function kronCandles(tick, limit = 72) {
 }
 
 export async function lookupKronTick(tick) {
-  const t = String(tick || '').trim().toUpperCase();
-  if (!/^[A-Z0-9]{2,12}$/.test(t)) throw new Error('Enter a ticker like KRON or KKDAG');
-  try { await kronTokenlist(); } catch {}
-  const token = await idxToken(t);
-  const entry = findKronEntry(t);
-  const q = liveQuote(token);
-  return {
-    tick: t,
-    name: token.name || entry?.name || t,
-    graduated: !!(token.graduated || entry?.extensions?.graduated),
-    price: q.price,
-    decimals: Number(entry?.decimals ?? token.dec ?? token.decimals ?? 0),
-    change24h: q.change24h,
-    volume24h: Number(token.volume24h || 0),
-    covenantId: token.covenantId || entry?.covenantId || '',
-    entry
-  };
+  return resolveKronTick(tick);
 }
 
 async function descriptor(covid) {
@@ -242,7 +270,8 @@ function curveParams(entry) {
 }
 
 function curveQuoteState(token, entry) {
-  const p = entry.extensions.curveParams;
+  const p = entry.extensions?.curveParams;
+  if (!p) throw new Error('No KRON curve params for this token');
   const cp = token.cpState || {};
   return {
     realKas: BigInt(cp.realKas || 0),
@@ -298,6 +327,7 @@ function decodeCurveRedeem(redeem) {
 
 async function poolHead(tick, tokenCovidHex, poolCovidHex) {
   const head = await idx('/token/' + encodeURIComponent(tick) + '/poolhead');
+  if (!head?.pool) throw new Error('No KRON pool head for ' + tick);
   const tx = await kaspaTx(head.pool.transactionId);
   const res = head.reserves;
   const state = {
@@ -325,11 +355,13 @@ async function poolHead(tick, tokenCovidHex, poolCovidHex) {
 }
 
 async function curveHead(tick, token, entry) {
-  const live = await idxToken(tick);
-  const tokenReserve = BigInt(live.cpState?.tokenReserve || live.tokenReserve || token.tokenReserve || 0);
+  const live = (await idxToken(tick).catch(() => null)) || token || {};
+  const tokenReserve = BigInt(live.cpState?.tokenReserve || live.tokenReserve || token?.tokenReserve || 0);
   const indexerKas = BigInt(live.cpState?.realKas || 0);
-  const trades = await idx('/token/' + encodeURIComponent(tick) + '/trades?limit=2');
+  let trades = await idx('/token/' + encodeURIComponent(tick) + '/trades?limit=8');
   const rows = Array.isArray(trades) ? trades : (trades ? [trades] : []);
+  const genesis = entry?.extensions?.genesisTxid || live.genesisTxid;
+  if (genesis && !rows.some(r => r?.txid === genesis)) rows.push({ txid: genesis });
   let lastErr = new Error('No curve trades yet — cannot locate the live curve');
   for (const row of rows) {
     if (!row?.txid) continue;
@@ -438,10 +470,10 @@ function kronEntryFromIdx(tick, token) {
 }
 
 export async function quoteKronTrade({ tick, side, amount }) {
-  await kronTokenlist().catch(() => {});
-  const token = await idxToken(tick);
+  const resolved = await resolveKronTick(tick);
+  const token = resolved.token;
   const entry = kronEntryFromIdx(tick, token);
-  if (!entry?.covenantId && !token.covenantId) throw new Error(tick + ' is not a KRON KCC20 on idx.kron.technology');
+  if (!entry?.covenantId && !token?.covenantId) throw new Error(tick + ' is not a launched KRON KCC20');
   const graduated = !!(token.graduated || entry.extensions?.graduated);
   const decimals = Number(entry.decimals ?? token.dec ?? token.decimals ?? 0);
   if (side === 'buy') {
@@ -672,7 +704,7 @@ async function connectTradeNode(k) {
 }
 
 async function loadUserTokens(tick, address, { limit = 4, withKas = true } = {}) {
-  const utxos = await idx(`/token/${encodeURIComponent(tick)}/address/${encodeURIComponent(address)}/utxos`);
+  const utxos = (await idx(`/token/${encodeURIComponent(tick)}/address/${encodeURIComponent(address)}/utxos`)) || [];
   const rows = (Array.isArray(utxos) ? utxos : []).filter(u => u?.redeemScriptHex).slice(0, limit);
   const out = await Promise.all(rows.map(async u => {
     const decoded = kron.kcc20.decodeKcc20Redeem(hexBytes(u.redeemScriptHex));
@@ -712,10 +744,10 @@ function pickTokens(pieces, need, maxN) {
 
 export async function executeKronTrade({ wallet, tick, side, amount, utxos, onStatus, forceKasware = false }) {
   const k = await loadKaspaSdk();
-  await kronTokenlist().catch(() => {});
-  const token = await idxToken(tick);
+  const resolved = await resolveKronTick(tick);
+  const token = resolved.token;
   const entry = kronEntryFromIdx(tick, token);
-  if (!entry?.covenantId && !token.covenantId) throw new Error(tick + ' is not a KRON KCC20 on idx.kron.technology');
+  if (!entry?.covenantId && !token?.covenantId) throw new Error(tick + ' is not a launched KRON KCC20');
   const graduated = !!(token.graduated || entry.extensions?.graduated);
   const desc = await descriptor(entry.covenantId || token.covenantId);
   const tokenTpl = templateFromPart(desc.token);

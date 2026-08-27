@@ -26,7 +26,7 @@ import {
 } from './tx.js?v=168';
 import { bootDappConnect, pingTttDappFrame, TTT_TREASURY } from './dappConnect.js?v=170';
 import { schedulePersistIframeVault, bootIframeVaultWatch } from './iframeVault.js?v=120';
-import { kronMarkets, quoteKronTrade, executeKronTrade, formatKasSompi, lookupKronTick, liveQuote, tradeCostLines, attachKronLogos, kronCandles, kronLogoFor, quoteKcc20Bridge, executeKcc20Bridge, formatTokenRaw } from './kronTrade.js?v=142';
+import { kronMarkets, quoteKronTrade, executeKronTrade, formatKasSompi, lookupKronTick, liveQuote, tradeCostLines, attachKronLogos, kronCandles, kronLogoFor, quoteKcc20Bridge, executeKcc20Bridge, formatTokenRaw } from './kronTrade.js?v=143';
 import {
   BET_AGENT_ADDR, TTT_TICK, WINDOW_MS, windowBounds, fmtRemain,
   kkdagsHeld, isKcc20Pass, hireCost, maxHireHours,
@@ -58,7 +58,7 @@ import {
 } from './atrade.js?v=101';
 import { SCORPION_MEMORY } from './scorpionMemory.js?v=152';
 
-export const BUILD = '173';
+export const BUILD = '174';
 
 const TOKEN_FALLBACK_LOGO = 'assets/ttt.png';
 
@@ -4370,7 +4370,9 @@ function venueLabel(v) {
 }
 
 function deskUsesCook() {
-  return atSrc === 'cook' || (atSrc === 'scorpion' && !!(atCook?.tokenId || atDesk?.tokenId));
+  if (atSrc === 'cook') return true;
+  if (atSrc === 'scorpion' && isTestnet()) return true;
+  return false;
 }
 
 async function renderKronMarkets() {
@@ -4442,7 +4444,8 @@ function syncAtLabels(side) {
   const tick = ($('at-tick')?.value || 'TOKEN').toUpperCase();
   const lab = $('at-amt-lab');
   if (!lab) return;
-  if (atSrc === 'kron') lab.textContent = s === 'sell' ? `Amount (${tick})` : 'Pay (KAS)';
+  const kronAmm = atSrc === 'kron' || (atSrc === 'scorpion' && !isTestnet());
+  if (kronAmm) lab.textContent = s === 'sell' ? `Amount (${tick})` : 'Pay (KAS)';
   else lab.textContent = s === 'sell' ? `Amount (${tick})` : 'Tokens';
 }
 
@@ -4602,12 +4605,32 @@ async function renderScorpionMarkets() {
   if (!box) return;
   const mine = loadLaunched().filter(t => validTick(t.tick));
   const boosts = loadBoosts();
-  let mkts = [];
-  try { mkts = await cookMarkets(40); } catch {}
-  const byId = new Map(mkts.map(m => [String(m.tokenIdHex || m.metadata?.tokenIdHex || ''), m]));
-  const byTick = new Map(mkts.map(m => [cookTickOf(m), m]));
   const chunks = [];
+  if (!isTestnet()) {
+    box.innerHTML = box.innerHTML || `<div class="empty">Loading launched KCC20s…</div>`;
+    let rows = [];
+    try { rows = (await kronMarkets()).filter(m => validTick(m.tick) && !String(m.tick).includes('?')); } catch {}
+    const q = String($('at-tick')?.value || '').trim().toUpperCase();
+    const shown = q ? rows.filter(m => m.tick.includes(q) || String(m.name || '').toUpperCase().includes(q)) : rows;
+    chunks.push('<div class="section-label">Launched on KRON · tap to buy</div>');
+    chunks.push((shown.length ? shown : rows).slice(0, 80).map(m => {
+      const px = m.price ? fmtPx(m.price) + ' KAS' : (m.graduated ? 'Pool' : 'Curve');
+      return `
+      <button class="row token-row" type="button" data-sco-tick="${esc(m.tick)}" data-sco-name="${esc(m.name || m.tick)}" data-sco-logo="${esc(m.logo || '')}" data-sco-kron="1" data-sco-grad="${m.graduated ? '1' : ''}" data-sco-px="${m.price || ''}">
+        ${tokenDot({ ticker: m.tick, protocol: 'kcc20', image: m.logo })}
+        <div>
+          <div class="title">${esc(m.tick)}</div>
+          <div class="sub">${esc(m.graduated ? 'Pool AMM' : 'Curve')} · ${esc(m.name)}</div>
+        </div>
+        <div class="amt"><b>${esc(px)}</b><em>Buy with KAS</em></div>
+      </button>`;
+    }).join('') || `<div class="empty">KRON tokenlist unavailable.</div>`);
+  }
   if (mine.length) {
+    let mkts = [];
+    try { mkts = await cookMarkets(40); } catch {}
+    const byId = new Map(mkts.map(m => [String(m.tokenIdHex || m.metadata?.tokenIdHex || ''), m]));
+    const byTick = new Map(mkts.map(m => [cookTickOf(m), m]));
     chunks.push('<div class="section-label">Launched here</div>');
     chunks.push(mine.map(t => {
       const hit = (t.tokenId && byId.get(t.tokenId)) || byTick.get(String(t.tick).toUpperCase());
@@ -4615,15 +4638,16 @@ async function renderScorpionMarkets() {
       const bid = hit ? sompiToKas(hit.bestBidUnitPriceSompi) : 0;
       const id = t.tokenId || hit?.tokenIdHex || '';
       const mid = ask && bid ? (ask + bid) / 2 : (ask || bid);
+      const kron = !isTestnet() && !id;
       return `
-      <button class="row token-row" type="button" data-sco-id="${esc(id)}" data-sco-tick="${esc(t.tick)}" data-sco-name="${esc(t.name || t.tick)}" data-sco-logo="${esc(t.image || '')}" data-cook-ask="${ask || ''}" data-cook-bid="${bid || ''}">
+      <button class="row token-row" type="button" data-sco-id="${esc(id)}" data-sco-tick="${esc(t.tick)}" data-sco-name="${esc(t.name || t.tick)}" data-sco-logo="${esc(t.image || '')}" data-cook-ask="${ask || ''}" data-cook-bid="${bid || ''}" ${kron ? 'data-sco-kron="1"' : ''}>
         ${tokenDot({ ticker: t.tick, protocol: 'kcc20', image: t.image })}
         <div>
           <div class="title">${esc(t.tick)}</div>
           <div class="sub">${esc(t.name || 'Scorpion')} · ${esc(t.network === 'testnet-10' ? 'TN10' : (t.network || 'on-chain'))}</div>
         </div>
         <div class="amt">
-          <b>${mid ? fmtPx(mid) + ' KAS' : (id ? 'Trade' : 'Launch')}</b>
+          <b>${mid ? fmtPx(mid) + ' KAS' : (id || kron ? 'Trade' : 'Launch')}</b>
           <em>${bid || ask ? ('bid ' + (bid ? fmtPx(bid) : '—') + ' · ask ' + (ask ? fmtPx(ask) : '—')) : (t.txId ? esc(String(t.txId).slice(0, 8)) : 'local')}</em>
         </div>
       </button>`;
@@ -4632,7 +4656,7 @@ async function renderScorpionMarkets() {
   if (boosts.length) {
     chunks.push('<div class="section-label">Boosted</div>');
     chunks.push(boosts.filter(b => validTick(b.tick)).map(b => `
-      <button class="row token-row" type="button" data-sco-tick="${esc(b.tick)}" data-sco-name="${esc(b.tick)}">
+      <button class="row token-row" type="button" data-sco-tick="${esc(b.tick)}" data-sco-name="${esc(b.tick)}" data-sco-kron="${isTestnet() ? '' : '1'}">
         ${tokenDot({ ticker: b.tick, protocol: 'kcc20' })}
         <div>
           <div class="title">${esc(b.tick)}</div>
@@ -4641,7 +4665,7 @@ async function renderScorpionMarkets() {
         <div class="amt"><b>Featured</b></div>
       </button>`).join(''));
   }
-  box.innerHTML = chunks.join('') || `<div class="empty">Tokens you launch from Launch land here. Tap one for chart, book, and buy/sell.</div>`;
+  box.innerHTML = chunks.join('') || `<div class="empty">${isTestnet() ? 'Launch a token on TN10, then it lands here for buy/sell.' : 'No launched KCC20s yet.'}</div>`;
 }
 
 function pickCookRow(id, tick, extra = {}) {
@@ -5004,8 +5028,19 @@ async function atQuotePreview() {
   box.textContent = 'Quoting…';
   try {
     if (deskUsesCook()) {
-      const id = atCook?.tokenId || atDesk?.tokenId;
-      if (!id) { box.textContent = 'Tap a K.COM or Scorpion token first.'; return; }
+      let id = atCook?.tokenId || atDesk?.tokenId;
+      if (!id && tick) {
+        try {
+          const rows = await cookMarkets(40);
+          const hit = (rows || []).find(m => cookTickOf(m) === tick);
+          id = hit?.tokenIdHex || loadLaunched().find(t => String(t.tick).toUpperCase() === tick)?.tokenId || '';
+          if (id) atCook = { tokenId: id, tick };
+        } catch {}
+      }
+      if (!id) {
+        box.textContent = tick + ' is not on the TN10 book yet. Tap a listed Scorpion/K.COM token, or Launch it.';
+        return;
+      }
       const side = 'buy';
       const limSompi = limit > 0 ? String(kasToSompiNum(limit)) : undefined;
       const q = await cookQuote(id, { side, amount, mode: limit > 0 ? 'limit' : 'market', limitUnitPriceSompi: limSompi });
@@ -9492,7 +9527,19 @@ function bind() {
   $('at-sco-mkts')?.addEventListener('click', e => {
     const row = e.target.closest('[data-sco-tick]');
     if (!row?.dataset.scoTick) return;
-    pickCookRow(row.dataset.scoId || '', row.dataset.scoTick, {
+    const tick = row.dataset.scoTick;
+    if (row.dataset.scoKron === '1' || (!isTestnet() && !row.dataset.scoId)) {
+      openAtDesk({
+        venue: 'kron',
+        tick,
+        name: row.dataset.scoName || tick,
+        logo: row.dataset.scoLogo || '',
+        graduated: row.dataset.scoGrad === '1',
+        price: Number(row.dataset.scoPx || 0)
+      });
+      return;
+    }
+    pickCookRow(row.dataset.scoId || '', tick, {
       venue: 'scorpion',
       name: row.dataset.scoName,
       logo: row.dataset.scoLogo,
@@ -9613,7 +9660,10 @@ function bind() {
     });
   });
   const atQuoteSoon = () => { clearTimeout(setAtPane._q); setAtPane._q = setTimeout(atQuotePreview, 280); };
-  $('at-tick')?.addEventListener('input', atQuoteSoon);
+  $('at-tick')?.addEventListener('input', () => {
+    atQuoteSoon();
+    if (atSrc === 'scorpion' && !atDesk) renderScorpionMarkets().catch(() => {});
+  });
   $('at-amt')?.addEventListener('input', atQuoteSoon);
   $('at-limit')?.addEventListener('input', atQuoteSoon);
   $('at-slip')?.addEventListener('input', atQuoteSoon);

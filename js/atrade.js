@@ -89,14 +89,29 @@ export function saveAgentJob(job) {
   else localStorage.setItem(AGENT_KEY, JSON.stringify(job));
 }
 
-function cookFail(e, data, status) {
-  if (data?.error || data?.message || data?.reason) return new Error(data.error || data.message || data.reason);
+function flattenCookMsg(v) {
+  if (v == null || v === '') return '';
+  if (Array.isArray(v)) return v.map(flattenCookMsg).filter(Boolean).join(' · ');
+  if (typeof v === 'object') return v.message || v.error || v.reason || '';
+  return String(v);
+}
+
+function cookFail(e, data, status, statusText) {
+  const detail = flattenCookMsg(data?.message)
+    || flattenCookMsg(data?.error)
+    || flattenCookMsg(data?.reason)
+    || flattenCookMsg(data?.title)
+    || (data?.raw ? String(data.raw).slice(0, 180) : '');
+  if (detail && !/^bad request$/i.test(detail)) return new Error(detail);
   const m = errText(e);
   if (/failed to fetch|networkerror|load failed|network request/i.test(m)) {
     return new Error('Could not reach Cook. Hard-refresh, then Launch again. KasWare on TN10 can sign once Cook answers.');
   }
-  if (status) return new Error('Cook HTTP ' + status + (data?.raw ? ': ' + String(data.raw).slice(0, 140) : ''));
-  return new Error(m);
+  if (Number(status) === 400) {
+    return new Error('Cook rejected this Launch (HTTP 400). Use mintPolicy public, a 2–8 letter ticker, and a funded kaspatest address.');
+  }
+  if (status) return new Error('Cook HTTP ' + status + (statusText && statusText !== String(status) ? ' ' + statusText : '') + (detail ? ': ' + detail : ''));
+  return new Error(m || statusText || 'Cook request failed');
 }
 
 async function cookRequest(path, init) {
@@ -112,7 +127,7 @@ async function cookRequest(path, init) {
       }
       let data = null;
       try { data = text ? JSON.parse(text) : null; } catch { data = { raw: text }; }
-      if (!res.ok) throw cookFail(null, data, res.status);
+      if (!res.ok) throw cookFail(null, data, res.status, res.statusText);
       return data;
     } catch (e) {
       const m = errText(e);
@@ -218,12 +233,11 @@ export function pickWrappedMarketId(wrappers) {
 export async function cookDeploy({ walletAddress, ticker, tokenName, maxSupply, premintSupply, mintPricePerTokenSompi }) {
   return cookPost('/kcc20/build/deploy', {
     walletAddress,
-    ownerIdentifier: walletAddress,
     ticker,
     tokenName,
     maxSupply: String(maxSupply || '1000000'),
     premintSupply: String(premintSupply || '0'),
-    mintMode: 'publicMint',
+    mintPolicy: 'public',
     mintPricePerTokenSompi: String(mintPricePerTokenSompi || '0')
   });
 }
@@ -365,8 +379,13 @@ export async function signAndBroadcastPskt({ wallet, txJson, signInputs, onStatu
     const priv = new k.PrivateKey(wallet.privKey);
     const want = new Set(inputs.map(s => s.index));
     const n = tx.inputs.length;
+    const mine = String(wallet.address || '');
     for (let i = 0; i < n; i++) {
       if (want.size && !want.has(i)) continue;
+      const spk = String(tx.inputs[i]?.utxo?.scriptPublicKey || tx.inputs[i]?.scriptPublicKey || '');
+      if (/^aa20[0-9a-f]{64}87$/i.test(spk.replace(/^0x/i, '').replace(/^00/, ''))) continue;
+      const addr = String(tx.inputs[i]?.utxo?.address || '');
+      if (addr && mine && addr !== mine) continue;
       const sig = hexish(k.createInputSignature(tx, i, priv, k.SighashType.All));
       if (!sig || sig.length < 20) throw new Error('Empty signature on input ' + i);
       tx.inputs[i].signatureScript = sig;

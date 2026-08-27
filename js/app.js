@@ -55,10 +55,10 @@ import {
   loadAgentJob, saveAgentJob, sompiToKas, kasToSompiNum,
   rememberLaunch, loadLaunched, cookOwnerBalances, cookDeployed,
   cookTickOf, cookBookLevels
-} from './atrade.js?v=100';
+} from './atrade.js?v=101';
 import { SCORPION_MEMORY } from './scorpionMemory.js?v=152';
 
-export const BUILD = '170';
+export const BUILD = '171';
 
 const TOKEN_FALLBACK_LOGO = 'assets/ttt.png';
 

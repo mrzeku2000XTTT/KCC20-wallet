@@ -769,7 +769,10 @@ export async function executeKronTrade({ wallet, tick, side, amount, utxos, onSt
 
   onStatus?.('Selecting KAS UTXOs…');
   let rest = utxos?.length ? utxos : [];
-  if (kaswareSigning(wallet)) {
+  if (!rest.length) {
+    try { rest = await fetchAddressUtxos(wallet.address); } catch { rest = []; }
+  }
+  if (!rest.length && kaswareSigning(wallet)) {
     try {
       const kwUtxos = await fetchKaswareUtxos(wallet.address);
       if (kwUtxos.length) rest = kwUtxos;
@@ -822,10 +825,47 @@ export async function executeKronTrade({ wallet, tick, side, amount, utxos, onSt
     signFundingP2pk(k, asm.transaction, priv, asm.fundingInputIndexes);
   }
   onStatus?.('Broadcasting KRON trade…');
-  const submitted = await rpc.submitTransaction({ transaction: asm.transaction, allowOrphan: false });
-  const txId = submitted?.transactionId || submitted || asm.transaction.id;
-  if (!txId) throw new Error('Node did not return a transaction id');
+  const txId = await submitKronSigned(rpc, asm.transaction, onStatus);
   return { txId, fee, quote: quoted, signer: external ? 'kasware' : 'local' };
+}
+
+function sleep(ms) {
+  return new Promise(r => setTimeout(r, ms));
+}
+
+function isOrphanReject(e) {
+  return /orphan/i.test(errText(e));
+}
+
+function isSpentHead(e) {
+  return /missing outpoint|already spent|double.?spend|utxo.*not found|no utxo|outpoint.*not found/i.test(errText(e));
+}
+
+async function submitKronSigned(rpc, tx, onStatus) {
+  let last = null;
+  for (let i = 0; i < 5; i++) {
+    try {
+      const submitted = await rpc.submitTransaction({
+        transaction: tx,
+        allowOrphan: i > 0
+      });
+      const txId = submitted?.transactionId || submitted || tx.id;
+      if (txId) return txId;
+      last = new Error('Node did not return a transaction id');
+    } catch (e) {
+      last = e;
+      if (isOrphanReject(e) && i < 4) {
+        onStatus?.('Node has not seen a parent tx yet — retrying broadcast…');
+        await sleep(700 * (i + 1));
+        continue;
+      }
+      if (isSpentHead(e)) {
+        throw new Error('KRON curve/pool moved before this swap landed. Tap Buy again for a fresh quote.');
+      }
+      throw e;
+    }
+  }
+  throw last || new Error('Node did not return a transaction id');
 }
 
 export function formatKasSompi(n) {

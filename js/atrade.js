@@ -1,6 +1,6 @@
 /* KCC20 A-Trade — Cook public API (order book / launch) + local Scorpion agent.
    Never holds keys. Wallet or KasWare signs PSKT; we only broadcast. */
-import { loadKaspaSdk, connectPublicNode } from './tx.js?v=100';
+import { loadKaspaSdk, connectPublicNode, signPsktJson } from './tx.js?v=168';
 import { kaswareEnabled, kaswareSigning, ensureKaswareSigner, signPsktWithKasware } from './kasware.js?v=100';
 
 const COOK_DIRECT = 'https://dev-api-kcc20.kaspa.com';
@@ -354,12 +354,27 @@ export async function connectTradeRpc(address) {
   throw new Error('Could not reach a public TN10 node. Last: ' + last);
 }
 
+function p2pkSignInputs(txJson, signInputs) {
+  const listed = (signInputs || []).map(s => ({ index: Number(s.index), sighashType: Number(s.sighashType ?? 1) }))
+    .filter(s => Number.isFinite(s.index));
+  try {
+    const tx = JSON.parse(String(txJson || '{}'));
+    const ins = tx.inputs || [];
+    const keep = listed.filter(s => {
+      const inp = ins[s.index] || {};
+      const spk = String(inp.utxo?.scriptPublicKey || inp.scriptPublicKey?.script || inp.scriptPublicKey || '');
+      const hex = spk.replace(/^0x/i, '').replace(/^00/, '');
+      return !/aa20[0-9a-f]{64}87/i.test(hex);
+    });
+    return keep.length ? keep : listed;
+  } catch {
+    return listed;
+  }
+}
+
 export async function signAndBroadcastPskt({ wallet, txJson, signInputs, onStatus }) {
   if (!txJson) throw new Error('Build is not ready to sign');
-  const inputs = (signInputs || []).map(s => ({
-    index: Number(s.index),
-    sighashType: Number(s.sighashType ?? 1)
-  }));
+  const inputs = p2pkSignInputs(txJson, signInputs);
   const k = await loadKaspaSdk();
   let signedJson = txJson;
   const tn = isTestnetAddr(wallet?.address);
@@ -375,30 +390,29 @@ export async function signAndBroadcastPskt({ wallet, txJson, signInputs, onStatu
         : 'No in-app key — turn on KasWare or import a wallet');
     }
     onStatus?.('Signing locally…');
-    const tx = k.Transaction.deserializeFromSafeJSON(txJson);
-    const priv = new k.PrivateKey(wallet.privKey);
-    const want = new Set(inputs.map(s => s.index));
-    const n = tx.inputs.length;
-    const mine = String(wallet.address || '');
-    for (let i = 0; i < n; i++) {
-      if (want.size && !want.has(i)) continue;
-      const spk = String(tx.inputs[i]?.utxo?.scriptPublicKey || tx.inputs[i]?.scriptPublicKey || '');
-      if (/^aa20[0-9a-f]{64}87$/i.test(spk.replace(/^0x/i, '').replace(/^00/, ''))) continue;
-      const addr = String(tx.inputs[i]?.utxo?.address || '');
-      if (addr && mine && addr !== mine) continue;
-      const sig = hexish(k.createInputSignature(tx, i, priv, k.SighashType.All));
-      if (!sig || sig.length < 20) throw new Error('Empty signature on input ' + i);
-      tx.inputs[i].signatureScript = sig;
-    }
-    signedJson = tx.serializeToSafeJSON();
+    signedJson = await signPsktJson({ wallet, txJsonString: txJson, signInputs: inputs });
   }
   onStatus?.('Broadcasting…');
-  const { rpc } = await connectTradeRpc(wallet?.address);
-  const tx = k.Transaction.deserializeFromSafeJSON(signedJson);
-  const submitted = await rpc.submitTransaction({ transaction: tx, allowOrphan: false });
-  const txId = submitted?.transactionId || submitted || tx.id;
-  if (!txId) throw new Error('Node did not return a transaction id');
-  return { txId, signedJson };
+  let last = null;
+  for (let i = 0; i < 4; i++) {
+    try {
+      const { rpc } = await connectTradeRpc(wallet?.address);
+      const tx = k.Transaction.deserializeFromSafeJSON(signedJson);
+      const submitted = await rpc.submitTransaction({ transaction: tx, allowOrphan: true });
+      const txId = submitted?.transactionId || submitted || tx.id;
+      if (txId) return { txId, signedJson };
+      last = new Error('Node did not return a transaction id');
+    } catch (e) {
+      last = e;
+      if (/orphan/i.test(errText(e)) && i < 3) {
+        onStatus?.('TN10 node is catching up — retrying broadcast…');
+        await new Promise(r => setTimeout(r, 600 * (i + 1)));
+        continue;
+      }
+      throw e;
+    }
+  }
+  throw last || new Error('Broadcast failed');
 }
 
 export function sompiToKas(s) {

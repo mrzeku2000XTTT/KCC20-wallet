@@ -55,10 +55,10 @@ import {
   loadAgentJob, saveAgentJob, sompiToKas, kasToSompiNum,
   rememberLaunch, loadLaunched, cookOwnerBalances, cookDeployed,
   cookTickOf, cookBookLevels
-} from './atrade.js?v=101';
+} from './atrade.js?v=102';
 import { SCORPION_MEMORY } from './scorpionMemory.js?v=152';
 
-export const BUILD = '174';
+export const BUILD = '175';
 
 const TOKEN_FALLBACK_LOGO = 'assets/ttt.png';
 
@@ -4369,10 +4369,31 @@ function venueLabel(v) {
   return 'KRON';
 }
 
+function localTnLaunch(tick) {
+  const t = String(tick || '').toUpperCase();
+  return loadLaunched().find(x => String(x.tick || '').toUpperCase() === t && (!x.network || x.network === 'testnet-10')) || null;
+}
+
 function deskUsesCook() {
   if (atSrc === 'cook') return true;
   if (atSrc === 'scorpion' && isTestnet()) return true;
   return false;
+}
+
+async function offerTn10ForLaunch(mine) {
+  const tick = String(mine.tick || '').toUpperCase();
+  openSheet('Your ' + tick + ' is on TN10', `
+    <p class="muted" style="text-align:left;">Launch created this token on <b>Cook Testnet-10</b>. The TEST/KRON ticker on mainnet is a different coin. Switch Network to Testnet-10 (kaspatest address) to mint/buy the one you launched.</p>
+  `, {
+    confirm: 'Switch to TN10',
+    gold: true,
+    onConfirm: async () => {
+      await applyAppNetwork('testnet-10');
+      closeSheet();
+      openLaunchedToken(mine);
+      toast('TN10 on. Buy mints ' + tick + ' from the public minter.');
+    }
+  });
 }
 
 async function renderKronMarkets() {
@@ -5094,7 +5115,12 @@ async function reviewAtTrade(side) {
   const slip = atSlipPct();
   if (!amount) { toast('Enter an amount'); return; }
   if (!wallet) { toast('Unlock a wallet'); return; }
-  if (deskUsesCook()) return reviewCookTrade(side);
+  const mine = localTnLaunch(tick);
+  if (mine && !isTestnet()) {
+    await offerTn10ForLaunch(mine);
+    return;
+  }
+  if (deskUsesCook() || (mine && isTestnet())) return reviewCookTrade(side);
   let q;
   try { q = await quoteKronTrade({ tick, side, amount }); }
   catch (e) { toast(errText(e)); return; }
@@ -5128,9 +5154,31 @@ async function reviewAtTrade(side) {
   });
 }
 
+async function reviewCookMint(id, tick, amount) {
+  const amt = String(amount || '').trim() || '1';
+  const bits = `
+    <div class="kv"><span class="k">Mint</span><span class="v">${esc(amt)} ${esc(tick)}</span></div>
+    <div class="kv"><span class="k">Network</span><span class="v">Cook TN10</span></div>
+    <p class="muted" style="text-align:left;padding-top:8px;">This token is not on the DEX book yet. Buy = public mint from the minter you launched. Cook builds the PSKT. ${kaswareEnabled() ? 'KasWare on TN10 signs the funding input only.' : 'This device PIN-signs the funding input only.'}</p>`;
+  await confirmAtSign('Mint ' + tick, bits, async () => {
+    setSheetStatus('Building mint…');
+    const mint = await cookMint({
+      walletAddress: wallet.address,
+      tokenId: id,
+      tokenAmount: String(amt)
+    });
+    await signCookBuild(mint, 'Mint ' + tick);
+  });
+}
+
 async function reviewCookTrade(side) {
   if (!isTestnetAddr(wallet?.address)) {
-    toast('K.COM book is TN10. Import a kaspatest wallet to sign. KRON still trades mainnet.');
+    const mine = localTnLaunch(($('at-tick')?.value || '').trim().toUpperCase());
+    if (mine) {
+      await offerTn10ForLaunch(mine);
+      return;
+    }
+    toast('K.COM / Scorpion launch buys are TN10. Switch Network to Testnet-10. KRON AMM is mainnet.');
     return;
   }
   const amount = ($('at-amt')?.value || '').trim();
@@ -5148,7 +5196,8 @@ async function reviewCookTrade(side) {
   const wrappers = await cookWrappers(id);
   const wrapped = pickWrappedMarketId(wrappers);
   if (!wrapped) {
-    toast('This ticker is not on the DEX book yet (no wrapper). Buy WBLF or KARBON, or Graduate after Cook lists a wrapper.');
+    if (side === 'buy') return reviewCookMint(id, tick, amount);
+    toast('This ticker is not on the DEX book yet (no wrapper). Mint it with Buy, or Graduate after Cook lists a wrapper.');
     return;
   }
   const limSompi = limit > 0 ? String(kasToSompiNum(limit)) : '';
@@ -5260,7 +5309,19 @@ async function signCookBuild(build, label) {
     <div class="kv"><span class="k">Signed</span><span class="v">${kaswareEnabled() ? 'KasWare' : 'This device'}</span></div>
     <div class="kv"><span class="k">Ticker</span><span class="v">${esc(tick || '—')}</span></div>
     ${txidBlock(txId)}
-  `, { confirm: 'View in TOKENS', cancel: false, onConfirm: () => { closeSheet(); setAtPane('tokens'); setTokPane('scorpion'); refreshAll(); } });
+  `, { confirm: isTestnet() ? 'Buy / mint it' : 'View in TOKENS', cancel: false, onConfirm: () => {
+    closeSheet();
+    const row = loadLaunched().find(t => t.tokenId === cid || (t.tick === tick && t.tokenId)) || { tick, tokenId: cid, name: tick, network: networkId() };
+    if (isTestnet() && row.tick) {
+      setAtPane('book');
+      setAtSrc('scorpion');
+      openLaunchedToken(row);
+      return;
+    }
+    setAtPane('tokens');
+    setTokPane('scorpion');
+    refreshAll();
+  } });
   return { txId, quote: build };
 }
 

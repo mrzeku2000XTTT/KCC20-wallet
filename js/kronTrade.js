@@ -1,7 +1,7 @@
 /* KRON DEX trades via @kronsdk/kron-sdk (v0.17.2). Quotes + builders from the SDK;
    templates from the CORS-open token descriptor; live heads from idx.kron.technology. */
 import * as kron from '../vendor/kron-sdk/index.js';
-import { loadKaspaSdk, connectPublicNode, fetchAddressUtxos } from './tx.js?v=85';
+import { loadKaspaSdk, connectPublicNode, fetchAddressUtxos, toRpcTransaction } from './tx.js?v=168';
 import { kaswareSigning, signPsktWithKasware, fetchKaswareUtxos } from './kasware.js?v=85';
 
 const IDX = 'https://idx.kron.technology/v1/kcc20';
@@ -793,7 +793,7 @@ export async function executeKronTrade({ wallet, tick, side, amount, utxos, onSt
   }
 
   onStatus?.('Connecting to Kaspa…');
-  const { rpc } = await connectTradeNode(k);
+  const { rpc, url: nodeUrl } = await connectTradeNode(k);
   let asm = assembleSpend(k, spend, funding, wallet.address, 10_000n);
   const fee = kron.spend.estimateNativeFee(k, 'mainnet', asm, 100);
   asm = assembleSpend(k, spend, funding, wallet.address, fee);
@@ -825,7 +825,7 @@ export async function executeKronTrade({ wallet, tick, side, amount, utxos, onSt
     signFundingP2pk(k, asm.transaction, priv, asm.fundingInputIndexes);
   }
   onStatus?.('Broadcasting KRON trade…');
-  const txId = await submitKronSigned(rpc, asm.transaction, onStatus);
+  const txId = await submitKronSigned(rpc, asm.transaction, onStatus, nodeUrl);
   return { txId, fee, quote: quoted, signer: external ? 'kasware' : 'local' };
 }
 
@@ -841,28 +841,51 @@ function isSpentHead(e) {
   return /missing outpoint|already spent|double.?spend|utxo.*not found|no utxo|outpoint.*not found/i.test(errText(e));
 }
 
-async function submitKronSigned(rpc, tx, onStatus) {
+async function trySubmit(rpc, tx, allowOrphan) {
+  try {
+    const submitted = await rpc.submitTransaction({ transaction: tx, allowOrphan: !!allowOrphan });
+    return submitted?.transactionId || submitted || tx.id || null;
+  } catch (e) {
+    if (allowOrphan) throw e;
+    const submitted = await rpc.submitTransaction({ transaction: tx, allowOrphan: true });
+    return submitted?.transactionId || submitted || tx.id || null;
+  }
+}
+
+async function submitKronSigned(rpc0, tx, onStatus, startUrl) {
+  let rpc = rpc0;
+  let lastUrl = startUrl || '';
   let last = null;
-  for (let i = 0; i < 5; i++) {
+  for (let n = 0; n < 4; n++) {
     try {
-      const submitted = await rpc.submitTransaction({
-        transaction: tx,
-        allowOrphan: i > 0
-      });
-      const txId = submitted?.transactionId || submitted || tx.id;
+      const txId = await trySubmit(rpc, tx, true);
       if (txId) return txId;
       last = new Error('Node did not return a transaction id');
     } catch (e) {
       last = e;
-      if (isOrphanReject(e) && i < 4) {
-        onStatus?.('Node has not seen a parent tx yet — retrying broadcast…');
-        await sleep(700 * (i + 1));
-        continue;
-      }
       if (isSpentHead(e)) {
         throw new Error('KRON curve/pool moved before this swap landed. Tap Buy again for a fresh quote.');
       }
-      throw e;
+      if (!isOrphanReject(e) && n > 0) throw e;
+      onStatus?.('Trying another Kaspa node so this TEST/KRON swap can land…');
+      try {
+        const next = await connectPublicNode({ force: true, avoid: lastUrl });
+        rpc = next.rpc;
+        lastUrl = next.url || '';
+      } catch (e2) {
+        last = e2;
+      }
+      await sleep(400 * (n + 1));
+    }
+  }
+  if (last && isOrphanReject(last)) {
+    try {
+      const plain = toRpcTransaction(tx, { version: 1, sigOpCount: 0 });
+      const submitted = await rpc.submitTransaction({ transaction: plain, allowOrphan: true });
+      const txId = submitted?.transactionId || submitted || tx.id;
+      if (txId) return txId;
+    } catch (e) {
+      last = e;
     }
   }
   throw last || new Error('Node did not return a transaction id');

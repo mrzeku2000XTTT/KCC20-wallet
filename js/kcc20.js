@@ -364,7 +364,7 @@ async function fetchJson(url) {
 function mapKronHold(r) {
   const ticker = String(r.tick || r.ticker || r.symbol || '').toUpperCase();
   const bal = r.balance ?? r.amount ?? r.tokenAmount ?? r.holding;
-  if (!ticker || !(Number(bal) > 0)) return null;
+  if (!ticker || ticker.includes('?') || !(Number(bal) > 0)) return null;
   return {
     protocol: 'kcc20',
     ticker,

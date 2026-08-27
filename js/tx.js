@@ -138,6 +138,7 @@ export function toRpcTransaction(tx, opts = {}) {
       sigOpCount
     };
     if (computeBudget != null) row.computeBudget = computeBudget;
+    else if (inp.computeBudget != null) row.computeBudget = Number(inp.computeBudget);
     return row;
   });
   const outputs = [...tx.outputs].map(o => {
@@ -788,10 +789,13 @@ export async function disconnectRpc() {
   _rpcNet = null;
 }
 
-export async function connectPublicNode() {
+export async function connectPublicNode(opts = {}) {
   const k = await loadKaspaSdk();
   const net = networkId();
-  if (_rpc && _rpc.isConnected && _rpcNet === net) return { rpc: _rpc, url: _rpcUrl, reused: true };
+  const avoid = String(opts.avoid || '');
+  if (!opts.force && _rpc && _rpc.isConnected && _rpcNet === net && (!avoid || _rpcUrl !== avoid)) {
+    return { rpc: _rpc, url: _rpcUrl, reused: true };
+  }
   if (_rpc) await disconnectRpc();
 
   const encoding = k.Encoding.Borsh;
@@ -805,6 +809,7 @@ export async function connectPublicNode() {
 
   let last = 'no public node responded';
   for (const url of urls) {
+    if (avoid && url === avoid) continue;
     let rpc = null;
     try {
       rpc = new k.RpcClient({ url, encoding, networkId: net });

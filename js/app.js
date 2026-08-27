@@ -9,9 +9,9 @@ import {
   NATIVE_KAS, VAULT_PRODUCTS, loadWatchlist, addToken, removeToken,
   loadVaults, saveVault, updateVault, deleteVault, purgeVaultsWhere, formatAmount, formatTokenUnits, tokenColor,
   fetchKcc20Portfolio, fetchKrc20Portfolio, fetchKcc20PortfolioMany, fetchKrc20PortfolioMany,
-  fetchKronAddrTrades, fetchKronTokenUtxos, KRON_IDX,
+  fetchKronAddrTrades, fetchKronTokenUtxos, fetchKronAddrHoldings, KRON_IDX,
   krc20Logo, toTokenRaw, setVaultOwner, kcc20Identicon, VAULT_GROUPS, LIFE_KINDS, lifeKindMeta
-} from './kcc20.js?v=117';
+} from './kcc20.js?v=118';
 import { parseIntent, describeIntent, askFor, parseDurationField, interpretVaultChat, normalizeChat } from './intent.js?v=118';
 import { payloadFromAddress } from './script.js?v=90';
 import { explainTransaction, scorpionAnswer } from './scorpion.js?v=114';
@@ -23,10 +23,10 @@ import {
   fetchOwnedUtxos, collectSpendableUtxos, buildSentinelChain, buildRecurringChain, buildHashlockCovenant,
   newHashlockSecret, checkinHop, currentHop, parseXmssKit, p2shFromRedeemHex, spendXmssVault,
   disconnectRpc, buildDcaDrips, sendKasMany, releaseDcaDrip, cancelDcaDrip, isMassError
-} from './tx.js?v=167';
+} from './tx.js?v=168';
 import { bootDappConnect, pingTttDappFrame, TTT_TREASURY } from './dappConnect.js?v=170';
 import { schedulePersistIframeVault, bootIframeVaultWatch } from './iframeVault.js?v=120';
-import { kronMarkets, quoteKronTrade, executeKronTrade, formatKasSompi, lookupKronTick, liveQuote, tradeCostLines, attachKronLogos, kronCandles, kronLogoFor, quoteKcc20Bridge, executeKcc20Bridge, formatTokenRaw } from './kronTrade.js?v=141';
+import { kronMarkets, quoteKronTrade, executeKronTrade, formatKasSompi, lookupKronTick, liveQuote, tradeCostLines, attachKronLogos, kronCandles, kronLogoFor, quoteKcc20Bridge, executeKcc20Bridge, formatTokenRaw } from './kronTrade.js?v=142';
 import {
   BET_AGENT_ADDR, TTT_TICK, WINDOW_MS, windowBounds, fmtRemain,
   kkdagsHeld, isKcc20Pass, hireCost, maxHireHours,
@@ -58,7 +58,7 @@ import {
 } from './atrade.js?v=101';
 import { SCORPION_MEMORY } from './scorpionMemory.js?v=152';
 
-export const BUILD = '172';
+export const BUILD = '173';
 
 const TOKEN_FALLBACK_LOGO = 'assets/ttt.png';
 
@@ -7436,13 +7436,24 @@ async function runTrade({ tick, side, amount, quote, forceKasware = false }) {
     if (q?.side === 'buy' && q.tokenOut != null) {
       const tickU = String(q.tick || tick).toUpperCase();
       const row = kccHoldings.find(t => String(t.ticker).toUpperCase() === tickU);
-      if (row) row.balance = (BigInt(row.balance || '0') + BigInt(q.tokenOut)).toString();
-      else {
+      const logo = kronLogoFor(tickU);
+      if (row) {
+        row.balance = (BigInt(row.balance || '0') + BigInt(q.tokenOut)).toString();
+        if (logo && !row.image) row.image = logo;
+        if (q.decimals != null) row.decimals = q.decimals;
+      } else {
         kccHoldings.unshift({
           ticker: tickU, name: tickU, protocol: 'kcc20',
-          balance: String(q.tokenOut), decimals: q.decimals || 0
+          balance: String(q.tokenOut), decimals: q.decimals || 0,
+          image: logo || ''
         });
       }
+      try { kccHoldings = await attachKronLogos(kccHoldings); } catch {}
+      try {
+        const info = await lookupKronTick(tickU);
+        const lq = liveQuote(info);
+        if (lq.price) kronPx[tickU] = { price: lq.price, change24h: lq.change24h };
+      } catch {}
     }
     afterTx();
     if (q?.side === 'buy' && q.tokenOut != null) {
@@ -7470,6 +7481,24 @@ async function runTrade({ tick, side, amount, quote, forceKasware = false }) {
     }
     renderHome();
     if (currentTab === 'tokens') renderTokens();
+    if (q?.side === 'buy' && wallet?.address) {
+      const waitTick = String(q.tick || tick).toUpperCase();
+      (async () => {
+        for (let i = 0; i < 10; i++) {
+          await new Promise(r => setTimeout(r, 1800));
+          try {
+            const rows = await fetchKronAddrHoldings(wallet.address);
+            const hit = (rows || []).find(r => String(r.ticker || '').toUpperCase() === waitTick);
+            if (hit && Number(hit.balance) > 0) {
+              await refreshTokenHoldings();
+              renderHome();
+              if (currentTab === 'tokens') renderTokens();
+              return;
+            }
+          } catch {}
+        }
+      })();
+    }
     openSheet('Swap sent', `
       <div class="kv"><span class="k">Market</span><span class="v">${esc(tick)}</span></div>
       <div class="kv"><span class="k">Side</span><span class="v">${esc(side)}</span></div>

@@ -58,7 +58,7 @@ import {
 } from './atrade.js?v=102';
 import { SCORPION_MEMORY } from './scorpionMemory.js?v=152';
 
-export const BUILD = '175';
+export const BUILD = '176';
 
 const TOKEN_FALLBACK_LOGO = 'assets/ttt.png';
 

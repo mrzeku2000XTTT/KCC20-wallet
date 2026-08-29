@@ -200,11 +200,46 @@ export function parseAddress(text) {
   return a;
 }
 
+const HARD_TYPES = { send: 1, sentinel: 1, escrow: 1, multisig: 1, recurring: 1, hashlock: 1, xmss: 1, kcc20lock: 1 };
+
+export function normalizeVaultType(raw) {
+  const s = String(raw || '').toLowerCase().replace(/[_/]+/g, ' ').replace(/['’]/g, '').replace(/-/g, ' ').replace(/\s+/g, ' ').trim();
+  if (!s) return '';
+  const exact = {
+    send: 'send', pay: 'send', transfer: 'send',
+    timelock: 'timelock', 'time lock': 'timelock', 'time capsule': 'timelock', capsule: 'timelock', lock: 'timelock',
+    life: 'life', rent: 'life',
+    escrow: 'escrow', 'hold for buyer': 'escrow',
+    multisig: 'multisig', 'multi sig': 'multisig', 'two keys': 'multisig', '2 of 2': 'multisig', '2of2': 'multisig',
+    kcc20lock: 'kcc20lock', kcc20freeze: 'kcc20lock', freeze: 'kcc20lock', 'freeze tokens': 'kcc20lock',
+    sentinel: 'sentinel', deadman: 'sentinel', 'dead man': 'sentinel', 'dead man switch': 'sentinel',
+    'deadmans switch': 'sentinel', dms: 'sentinel', heir: 'sentinel', deadmanswitch: 'sentinel',
+    recurring: 'recurring', subscription: 'recurring', x402: 'recurring', 'pay on a timer': 'recurring',
+    hashlock: 'hashlock', 'hash lock': 'hashlock', htlc: 'hashlock', 'secret lock': 'hashlock',
+    xmss: 'xmss', 'xmss vault': 'xmss'
+  };
+  if (exact[s]) return exact[s];
+  if (/dead\s*mans?|deadmanswitch|sentinel|\bdms\b|\bheir\b|check\s*in/.test(s)) return 'sentinel';
+  if (/time\s*capsule|time\s*lock/.test(s)) return 'timelock';
+  if (/multi\s*sig|2\s*of\s*2/.test(s)) return 'multisig';
+  if (/escrow/.test(s)) return 'escrow';
+  if (/hash\s*lock|htlc/.test(s)) return 'hashlock';
+  if (/xmss|post\s*quantum/.test(s)) return 'xmss';
+  if (/recurring|x402/.test(s)) return 'recurring';
+  if (/kcc20\s*freeze|freeze tokens/.test(s)) return 'kcc20lock';
+  return s.replace(/\s+/g, '');
+}
+
+function isSentinelTalk(t) {
+  t = String(t || '').toLowerCase();
+  return /sentinel|dead\s*-?\s*mans?|deadmanswitch|\bdms\b|check-?in|when i die|if i (die|pass)|after i.?m gone|inherit|\bheir\b|beneficiar/.test(t);
+}
+
 function detectType(text, prev) {
   const t = text.toLowerCase();
   if (/\b(escrow|buyer|seller|arbiter|arbitrator)\b/.test(t)) return 'escrow';
   if (/\b(multi-?sig|2\s*of\s*2|both must sign)\b/.test(t)) return 'multisig';
-  if (/\b(sentinel|dead.?man|check-?in|when i die|if i (die|pass)|after i.?m gone|inherit)\b/.test(t)) return 'sentinel';
+  if (isSentinelTalk(t)) return 'sentinel';
   if (/\b(xmss|post-?quantum|public kit)\b/.test(t)) return 'xmss';
   if (/\b(recurring|subscription|x402)\b/.test(t)) return 'recurring';
   if (/\b(hash\s*lock|htlc|hash vault)\b/.test(t)) return 'hashlock';
@@ -231,12 +266,18 @@ export function parseIntent(text, prev = null) {
         label: prev.params.durationLabel
       }
     : null);
-  const address = parseAddress(raw) || prev?.params?.buyerAddress || prev?.params?.counterparty || prev?.params?.destination || null;
+  const address = parseAddress(raw) || prev?.params?.buyerAddress || prev?.params?.counterparty || prev?.params?.destination || prev?.params?.beneficiary || prev?.params?.payee || null;
   const lifeKind = parseLifeKind(raw) || prev?.params?.lifeKind || null;
   const due = parseDueAt(raw) || (prev?.params?.dueAt ? { at: prev.params.dueAt, label: prev.params.dueLabel } : null);
   const unlockAnytime = parseUnlockAnytime(raw) || (!!prev?.params?.unlockAnytime && !due);
   let type = detectType(raw, prev);
-  if (lifeKind || unlockAnytime || (due && amountKas)) type = 'life';
+  if (prev?.type) {
+    const prevT = normalizeVaultType(prev.type);
+    if (HARD_TYPES[prevT] && !type) type = prevT;
+    if (HARD_TYPES[type] && HARD_TYPES[prevT] && type !== prevT && isSentinelTalk(raw)) type = 'sentinel';
+  }
+  type = normalizeVaultType(type) || type;
+  if (!HARD_TYPES[type] && (lifeKind || unlockAnytime || (due && amountKas))) type = 'life';
 
   if (!type && !amountKas && !tokenAmt && !duration && !address && !lifeKind && !due) {
     return { error: 'unparsed', hint: 'Try: Lock 1000 KAS for rent until September 1 2026 9:00 UTC' };
@@ -284,6 +325,7 @@ export function parseIntent(text, prev = null) {
   if (type === 'multisig' && address) params.counterparty = address;
   if (type === 'send' && address) params.destination = address;
   if (type === 'sentinel' && address) params.beneficiary = address;
+  if (type === 'sentinel' && !params.beneficiary && params.destination) params.beneficiary = params.destination;
   if (type === 'recurring' && address) params.payee = address;
   if (type === 'hashlock' && address) params.receiver = address;
 
@@ -309,7 +351,7 @@ export function parseIntent(text, prev = null) {
     }
   } else {
     if (!params.amountKas) missing.push('amount in KAS');
-    if (type === 'timelock' && !params.lockMinutes && !params.lockDays) missing.push('how long (e.g. 3 minutes)');
+    if ((type === 'timelock' || type === 'sentinel' || type === 'recurring' || type === 'hashlock') && !params.lockMinutes && !params.lockDays) missing.push('how long (e.g. 3 minutes)');
   }
   if (type === 'escrow' && !params.buyerAddress) missing.push('buyer kaspa: address');
   if (type === 'multisig' && !params.counterparty) missing.push('counterparty kaspa: address');

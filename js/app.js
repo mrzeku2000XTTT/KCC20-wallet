@@ -12,7 +12,7 @@ import {
   fetchKronAddrTrades, fetchKronTokenUtxos, fetchKronAddrHoldings, KRON_IDX,
   krc20Logo, toTokenRaw, setVaultOwner, kcc20Identicon, VAULT_GROUPS, LIFE_KINDS, lifeKindMeta
 } from './kcc20.js?v=118';
-import { parseIntent, describeIntent, askFor, parseDurationField, interpretVaultChat, normalizeChat } from './intent.js?v=119';
+import { parseIntent, describeIntent, askFor, parseDurationField, interpretVaultChat, normalizeChat, normalizeVaultType } from './intent.js?v=120';
 import { payloadFromAddress } from './script.js?v=90';
 import { explainTransaction, scorpionAnswer } from './scorpion.js?v=114';
 import {
@@ -58,7 +58,7 @@ import {
 } from './atrade.js?v=102';
 import { SCORPION_MEMORY } from './scorpionMemory.js?v=152';
 
-export const BUILD = '177';
+export const BUILD = '178';
 
 const TOKEN_FALLBACK_LOGO = 'assets/ttt.png';
 
@@ -69,14 +69,17 @@ function errText(e) {
 }
 
 function productForIntent(intent) {
-  if (intent.type === 'kcc20lock') return VAULT_PRODUCTS.find(p => p.id === 'kcc20freeze');
-  if (intent.type === 'hashlock') return VAULT_PRODUCTS.find(p => p.id === 'hashlock');
-  if (intent.type === 'xmss') return VAULT_PRODUCTS.find(p => p.id === 'xmss');
-  if (intent.type === 'life') return { id: 'life', name: 'Real life', type: 'life', tag: '⌂' };
-  if (intent.type === 'timelock') return VAULT_PRODUCTS.find(p => p.id === 'timelock');
-  return VAULT_PRODUCTS.find(p => p.id === intent.type)
-    || VAULT_PRODUCTS.find(p => p.type === intent.type)
-    || { id: intent.type, name: intent.type, type: intent.type };
+  const t = normalizeVaultType(intent?.type) || intent?.type;
+  if (t && intent && intent.type !== t) intent.type = t;
+  if (t === 'kcc20lock') return VAULT_PRODUCTS.find(p => p.id === 'kcc20freeze');
+  if (t === 'hashlock') return VAULT_PRODUCTS.find(p => p.id === 'hashlock');
+  if (t === 'xmss') return VAULT_PRODUCTS.find(p => p.id === 'xmss');
+  if (t === 'life') return { id: 'life', name: 'Real life', type: 'life', tag: '⌂' };
+  if (t === 'timelock') return VAULT_PRODUCTS.find(p => p.id === 'timelock');
+  if (t === 'sentinel') return VAULT_PRODUCTS.find(p => p.id === 'sentinel' || p.type === 'sentinel');
+  return VAULT_PRODUCTS.find(p => p.id === t)
+    || VAULT_PRODUCTS.find(p => p.type === t)
+    || { id: t, name: t, type: t };
 }
 
 function isKcc20Vault(v) {
@@ -1484,8 +1487,13 @@ async function switchDappWallet(id) {
 }
 
 function describeVaultIntent(spec) {
-  const specType = String(spec?.type || '').trim();
-  const specParams = spec?.params && typeof spec.params === 'object' ? spec.params : {};
+  const specType = normalizeVaultType(spec?.type || spec?.vaultType || spec?.preset || spec?.product || '') || String(spec?.type || '').trim();
+  const specParams = spec?.params && typeof spec.params === 'object' ? { ...spec.params } : {};
+  if (!spec?.params && spec && typeof spec === 'object') {
+    ['amountKas', 'lockMinutes', 'lockDays', 'beneficiary', 'buyerAddress', 'counterparty', 'payee', 'payKas', 'tick', 'amountToken', 'destination', 'receiver', 'kit', 'hopCount', 'periods'].forEach((k) => {
+      if (spec[k] != null && specParams[k] == null) specParams[k] = spec[k];
+    });
+  }
   if (spec?.message) {
     const view = interpretVaultChat(spec.message, specType ? { type: specType, params: specParams } : null);
     if (view.kind === 'talk') {
@@ -1495,10 +1503,23 @@ function describeVaultIntent(spec) {
     if (!intent || intent.error) {
       return { complete: false, ask: intent?.hint || 'Argent could not parse that', type: intent?.type || '', summary: '', intent: null };
     }
-    if (specType) intent.type = specType;
+    const parsedType = normalizeVaultType(intent.type) || intent.type;
+    const hardParsed = !!(parsedType && parsedType !== 'timelock' && parsedType !== 'life');
+    if (hardParsed) intent.type = parsedType;
+    else if (specType) intent.type = specType;
+    else intent.type = parsedType;
+    intent.type = normalizeVaultType(intent.type) || intent.type;
     if (Object.keys(specParams).length) intent.params = { ...(intent.params || {}), ...specParams };
+    if (intent.type === 'sentinel' && !intent.params.beneficiary && (intent.params.destination || specParams.beneficiary || specParams.heir || specParams.to)) {
+      intent.params.beneficiary = intent.params.destination || specParams.beneficiary || specParams.heir || specParams.to;
+    }
     const merged = parseIntent(spec.message, { type: intent.type, params: intent.params });
-    if (!merged.error) intent = merged;
+    if (!merged.error) {
+      intent = merged;
+      const mt = normalizeVaultType(intent.type) || intent.type;
+      if (hardParsed && mt !== parsedType && parsedType === 'sentinel') intent.type = 'sentinel';
+      else intent.type = mt;
+    }
     return {
       complete: !intent.missing?.length,
       ask: askFor(intent.missing),
@@ -1508,10 +1529,20 @@ function describeVaultIntent(spec) {
     };
   }
   if (!specType) {
-    return { complete: false, ask: 'Need a vault type (timelock, sentinel, escrow, …) or a message Argent can parse.', type: '', summary: '', intent: null };
+    return { complete: false, ask: 'Need a vault type (timelock, sentinel / deadman, escrow, …) or a message Argent can parse.', type: '', summary: '', intent: null };
   }
   const intent = { type: specType, params: specParams, missing: [], complete: true, source: 'dapp' };
-  return { complete: true, ask: '', type: intent.type, summary: describeIntent(intent), intent };
+  if (specType === 'sentinel' && !specParams.beneficiary && !specParams.heir) {
+    intent.missing = ['heir / beneficiary kaspa: address'];
+    intent.complete = false;
+  }
+  return {
+    complete: intent.complete,
+    ask: askFor(intent.missing),
+    type: intent.type,
+    summary: describeIntent(intent),
+    intent
+  };
 }
 
 async function dappCompileVault(spec) {

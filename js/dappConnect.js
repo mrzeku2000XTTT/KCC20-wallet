@@ -657,9 +657,17 @@ async function handleTradeKron(req) {
 function vaultIntentFromReq(params) {
   const p = params || {};
   if (p.message || p.text || p.prompt) {
-    return { message: String(p.message || p.text || p.prompt || '').trim(), type: p.type || '', params: p.params || {} };
+    return {
+      message: String(p.message || p.text || p.prompt || '').trim(),
+      type: p.type || p.vaultType || p.preset || p.product || '',
+      params: p.params || {}
+    };
   }
-  return { type: String(p.type || p.vaultType || '').trim(), params: p.params || p, message: '' };
+  return {
+    type: String(p.type || p.vaultType || p.preset || p.product || '').trim(),
+    params: p.params || p,
+    message: ''
+  };
 }
 
 async function handleCompileVault(req) {
@@ -668,7 +676,7 @@ async function handleCompileVault(req) {
   const origin = req.origin;
   if (!originAllowed(origin)) await handleConnect(req);
   if (typeof hooks.compileVault !== 'function') {
-    throw new Error('This wallet build cannot compile vaults. Hard-refresh KCC20 (BUILD 177+).');
+    throw new Error('This wallet build cannot compile vaults. Hard-refresh KCC20 (BUILD 178+).');
   }
   const spec = vaultIntentFromReq(req.params);
   let preview = { summary: spec.message || spec.type || 'vault', type: spec.type || 'timelock', ask: '', complete: true };

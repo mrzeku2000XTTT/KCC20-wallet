@@ -11,8 +11,8 @@ import {
   fetchKcc20Portfolio, fetchKrc20Portfolio, fetchKcc20PortfolioMany, fetchKrc20PortfolioMany,
   fetchKronAddrTrades, fetchKronTokenUtxos, fetchKronAddrHoldings, KRON_IDX,
   krc20Logo, toTokenRaw, setVaultOwner, kcc20Identicon, VAULT_GROUPS, LIFE_KINDS, lifeKindMeta
-} from './kcc20.js?v=118';
-import { parseIntent, describeIntent, askFor, parseDurationField, interpretVaultChat, normalizeChat, normalizeVaultType } from './intent.js?v=120';
+} from './kcc20.js?v=122';
+import { parseIntent, describeIntent, askFor, parseDurationField, interpretVaultChat, normalizeChat, normalizeVaultType } from './intent.js?v=121';
 import { payloadFromAddress } from './script.js?v=90';
 import { explainTransaction, scorpionAnswer } from './scorpion.js?v=114';
 import {
@@ -58,7 +58,7 @@ import {
 } from './atrade.js?v=102';
 import { SCORPION_MEMORY } from './scorpionMemory.js?v=152';
 
-export const BUILD = '178';
+export const BUILD = '179';
 
 const TOKEN_FALLBACK_LOGO = 'assets/ttt.png';
 
@@ -77,6 +77,7 @@ function productForIntent(intent) {
   if (t === 'life') return { id: 'life', name: 'Real life', type: 'life', tag: '⌂' };
   if (t === 'timelock') return VAULT_PRODUCTS.find(p => p.id === 'timelock');
   if (t === 'sentinel') return VAULT_PRODUCTS.find(p => p.id === 'sentinel' || p.type === 'sentinel');
+  if (t === 'onramp') return VAULT_PRODUCTS.find(p => p.id === 'onramp' || p.type === 'onramp');
   return VAULT_PRODUCTS.find(p => p.id === t)
     || VAULT_PRODUCTS.find(p => p.type === t)
     || { id: t, name: t, type: t };
@@ -167,7 +168,7 @@ function canSweepVault(v, daa) {
     if (now && hop.unlockDaa && Number(now) < Number(hop.unlockDaa)) return false;
     return Number(v.fundedSompi || 0) > 0;
   }
-  if (v.type === 'hashlock') {
+  if (v.type === 'hashlock' || v.type === 'onramp') {
     if (v.params?.secretHex) return Number(v.fundedSompi || 0) > 0;
     if (v.unlockDaa && now && Number(now) < Number(v.unlockDaa)) return false;
     return Number(v.fundedSompi || 0) > 0;
@@ -1534,6 +1535,10 @@ function describeVaultIntent(spec) {
   const intent = { type: specType, params: specParams, missing: [], complete: true, source: 'dapp' };
   if (specType === 'sentinel' && !specParams.beneficiary && !specParams.heir) {
     intent.missing = ['heir / beneficiary kaspa: address'];
+    intent.complete = false;
+  }
+  if (specType === 'onramp' && !specParams.receiver && !specParams.destination) {
+    intent.missing = ['buyer kaspa: address who can claim'];
     intent.complete = false;
   }
   return {
@@ -8685,7 +8690,7 @@ function readProductForm(type) {
   }
   if (type === 'escrow') params.buyerAddress = $('ct-buyer')?.value.trim();
   if (type === 'multisig') params.counterparty = $('ct-counterparty')?.value.trim();
-  if (type === 'sentinel' || type === 'recurring' || type === 'hashlock') {
+  if (type === 'sentinel' || type === 'recurring' || type === 'hashlock' || type === 'onramp') {
     const dur = parseDurationField($('ct-duration')?.value);
     if (dur) {
       params.lockDays = dur.days;
@@ -8703,9 +8708,14 @@ function readProductForm(type) {
     if (Number.isFinite(pay) && pay > 0) params.payKas = pay;
     params.periods = Number($('ct-periods')?.value || 4);
   }
-  if (type === 'hashlock') {
+  if (type === 'hashlock' || type === 'onramp') {
     params.receiver = $('ct-receiver')?.value.trim() || '';
     params.secretHex = ($('ct-secret')?.value || '').trim();
+    if (type === 'onramp' && !params.lockMinutes) {
+      params.lockMinutes = 5;
+      params.lockDays = 5 / 1440;
+      params.durationLabel = params.durationLabel || '5 minutes';
+    }
   }
   if (type === 'xmss') {
     params.kit = $('ct-kit')?.value || '';
@@ -8834,8 +8844,12 @@ function openProduct(id, prefill) {
       ${durField('Time between payments', '7 days')}`;
   } else if (p.type === 'hashlock') {
     fields += durField('Refund after', '30 minutes or 7 days') + `
-      <div class="field"><label>Who can claim with the secret?</label><input id="ct-receiver" placeholder="kaspa:q… (blank = you)" spellcheck="false"></div>
+      <div class="field"><label>Who can claim with the secret?</label><input id="ct-receiver" placeholder="kaspa:q… (blank = you)" spellcheck="false" value="${esc(prefill?.receiver || '')}"></div>
       <div class="field"><label>Secret (blank = we make one)</label><input id="ct-secret" placeholder="optional 32-byte hex" spellcheck="false"></div>`;
+  } else if (p.type === 'onramp') {
+    fields += durField('Refund if they do not claim', '5 minutes') + `
+      <div class="field"><label>Buyer kaspa:q (only they can claim)</label><input id="ct-receiver" placeholder="kaspa:q…" spellcheck="false" value="${esc(prefill?.receiver || prefill?.destination || '')}"></div>
+      <p class="muted" style="text-align:left;">After they pay in your app, they Claim with the secret. You Sweep if the window ends. Card money never hits this wallet.</p>`;
   } else if (p.type === 'escrow') {
     fields += `<div class="field"><label>Buyer address</label><input id="ct-buyer" placeholder="kaspa:q…" spellcheck="false"></div>`;
   } else if (p.type === 'multisig') {
@@ -8855,6 +8869,7 @@ function openProduct(id, prefill) {
     $('ct-dur-chips').querySelectorAll('button').forEach(x => x.classList.toggle('on', x === b));
     if ($('ct-duration')) $('ct-duration').value = b.dataset.dur;
   });
+  if (p.type === 'onramp' && $('ct-duration') && !prefill?.lockMinutes) $('ct-duration').value = '5 minutes';
 }
 
 async function executeKcc20Freeze(params) {
@@ -8982,7 +8997,16 @@ async function buildCovenant(p, explicit, opts = {}) {
     fail('Enter an amount like 0.15');
     return;
   }
-  if (p.type !== 'life' && (p.type === 'timelock' || p.type === 'sentinel' || p.type === 'recurring' || p.type === 'hashlock')
+  if (p.type === 'onramp' && !params.lockDays && !params.lockMinutes) {
+    params.lockMinutes = 5;
+    params.lockDays = 5 / 1440;
+    params.durationLabel = '5 minutes';
+  }
+  if (p.type === 'onramp' && !params.receiver) {
+    fail('Need the buyer kaspa:q — only they can claim this sale lock');
+    return;
+  }
+  if (p.type !== 'life' && (p.type === 'timelock' || p.type === 'sentinel' || p.type === 'recurring' || p.type === 'hashlock' || p.type === 'onramp')
       && !params.lockDays && !params.lockMinutes) {
     fail('Enter a duration like 3 minutes');
     return;
@@ -9010,7 +9034,7 @@ async function buildCovenant(p, explicit, opts = {}) {
   }
 
   if (!silent) toast('Building P2SH covenant…');
-  const payload = backendParams(p.type === 'sentinel' || p.type === 'recurring' || p.type === 'hashlock' ? 'timelock' : p.type, params);
+  const payload = backendParams(p.type === 'sentinel' || p.type === 'recurring' || p.type === 'hashlock' || p.type === 'onramp' ? 'timelock' : p.type, params);
   payload.beneficiary = params.beneficiary;
   payload.hopCount = params.hopCount;
   payload.payee = params.payee;
@@ -9070,7 +9094,7 @@ async function buildCovenant(p, explicit, opts = {}) {
         timeoutMinutes: minutes,
         depositSompi: deposit
       });
-    } else if (p.type === 'hashlock') {
+    } else if (p.type === 'hashlock' || p.type === 'onramp') {
       let secretHex = String(payload.secretHex || '').replace(/^0x/i, '');
       let secretHashHex;
       if (secretHex) {
@@ -9272,7 +9296,7 @@ function openLockTimer(vault) {
   const isBetEscrow = vault.type === 'betescrow' || vault.type === 'bet';
   const isMsig = vault.type === 'multisig';
   const hop = isHopVault(vault);
-  const isHash = vault.type === 'hashlock';
+  const isHash = vault.type === 'hashlock' || vault.type === 'onramp';
   const isXmss = vault.type === 'xmss';
   const iAmBuyer = isEscrow && wallet?.address === vault.params?.buyerAddress;
   const msigReady = isMsig && !!vaultCounterpartyKey(vault);

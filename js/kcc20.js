@@ -60,6 +60,15 @@ export const VAULT_PRODUCTS = [
     blurb: 'Seller refunds any time. Buyer claims if that kaspa:q wallet is also in this app.'
   },
   {
+    id: 'onramp',
+    group: 'simple',
+    name: 'Card sale',
+    type: 'onramp',
+    tag: '$',
+    why: 'Lock quoted KAS for a buyer. They claim after they pay. If they don’t, it refunds to you in 5 minutes.',
+    blurb: 'On-ramp escrow. Same HTLC as Secret lock, 5-minute window. Receiver must be the buyer’s kaspa:q. After card payment, they Claim with the secret. Unpaid → Sweep refunds you. The script cannot see Stripe — your app reveals the secret only after paid.'
+  },
+  {
     id: 'multisig',
     group: 'simple',
     name: 'Two keys',

@@ -676,7 +676,7 @@ async function handleCompileVault(req) {
   const origin = req.origin;
   if (!originAllowed(origin)) await handleConnect(req);
   if (typeof hooks.compileVault !== 'function') {
-    throw new Error('This wallet build cannot compile vaults. Hard-refresh KCC20 (BUILD 178+).');
+    throw new Error('This wallet build cannot compile vaults. Hard-refresh KCC20 (BUILD 179+). Card sale = type onramp.');
   }
   const spec = vaultIntentFromReq(req.params);
   let preview = { summary: spec.message || spec.type || 'vault', type: spec.type || 'timelock', ask: '', complete: true };

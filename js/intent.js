@@ -200,7 +200,7 @@ export function parseAddress(text) {
   return a;
 }
 
-const HARD_TYPES = { send: 1, sentinel: 1, escrow: 1, multisig: 1, recurring: 1, hashlock: 1, xmss: 1, kcc20lock: 1 };
+const HARD_TYPES = { send: 1, sentinel: 1, escrow: 1, multisig: 1, recurring: 1, hashlock: 1, onramp: 1, xmss: 1, kcc20lock: 1 };
 
 export function normalizeVaultType(raw) {
   const s = String(raw || '').toLowerCase().replace(/[_/]+/g, ' ').replace(/['’]/g, '').replace(/-/g, ' ').replace(/\s+/g, ' ').trim();
@@ -216,6 +216,7 @@ export function normalizeVaultType(raw) {
     'deadmans switch': 'sentinel', dms: 'sentinel', heir: 'sentinel', deadmanswitch: 'sentinel',
     recurring: 'recurring', subscription: 'recurring', x402: 'recurring', 'pay on a timer': 'recurring',
     hashlock: 'hashlock', 'hash lock': 'hashlock', htlc: 'hashlock', 'secret lock': 'hashlock',
+    onramp: 'onramp', 'on ramp': 'onramp', 'card sale': 'onramp', cardsale: 'onramp', 'debit card': 'onramp',
     xmss: 'xmss', 'xmss vault': 'xmss'
   };
   if (exact[s]) return exact[s];
@@ -223,6 +224,7 @@ export function normalizeVaultType(raw) {
   if (/time\s*capsule|time\s*lock/.test(s)) return 'timelock';
   if (/multi\s*sig|2\s*of\s*2/.test(s)) return 'multisig';
   if (/escrow/.test(s)) return 'escrow';
+  if (/on\s*ramp|card\s*sale|debit\s*card/.test(s)) return 'onramp';
   if (/hash\s*lock|htlc/.test(s)) return 'hashlock';
   if (/xmss|post\s*quantum/.test(s)) return 'xmss';
   if (/recurring|x402/.test(s)) return 'recurring';
@@ -240,6 +242,7 @@ function detectType(text, prev) {
   if (/\b(escrow|buyer|seller|arbiter|arbitrator)\b/.test(t)) return 'escrow';
   if (/\b(multi-?sig|2\s*of\s*2|both must sign)\b/.test(t)) return 'multisig';
   if (isSentinelTalk(t)) return 'sentinel';
+  if (/\b(on-?ramp|card\s*sale|buy\s+kas(pa)?\s+with\s+(a\s+)?(card|debit|usd|dollar)|debit\s*card)\b/.test(t)) return 'onramp';
   if (/\b(xmss|post-?quantum|public kit)\b/.test(t)) return 'xmss';
   if (/\b(recurring|subscription|x402)\b/.test(t)) return 'recurring';
   if (/\b(hash\s*lock|htlc|hash vault)\b/.test(t)) return 'hashlock';
@@ -328,6 +331,14 @@ export function parseIntent(text, prev = null) {
   if (type === 'sentinel' && !params.beneficiary && params.destination) params.beneficiary = params.destination;
   if (type === 'recurring' && address) params.payee = address;
   if (type === 'hashlock' && address) params.receiver = address;
+  if (type === 'onramp') {
+    if (address) params.receiver = address;
+    if (!params.lockMinutes && !params.lockDays) {
+      params.lockMinutes = 5;
+      params.lockDays = 5 / 1440;
+      params.durationLabel = '5 minutes';
+    }
+  }
 
   const missing = [];
   if (!type) missing.push('what to do (lock, escrow, send, freeze, rent, savings)');
@@ -353,6 +364,7 @@ export function parseIntent(text, prev = null) {
     if (!params.amountKas) missing.push('amount in KAS');
     if ((type === 'timelock' || type === 'sentinel' || type === 'recurring' || type === 'hashlock') && !params.lockMinutes && !params.lockDays) missing.push('how long (e.g. 3 minutes)');
   }
+  if ((type === 'hashlock' || type === 'onramp') && !params.receiver) missing.push('buyer kaspa: address who can claim');
   if (type === 'escrow' && !params.buyerAddress) missing.push('buyer kaspa: address');
   if (type === 'multisig' && !params.counterparty) missing.push('counterparty kaspa: address');
   if (type === 'send' && !params.destination) missing.push('destination kaspa: address');
@@ -386,6 +398,7 @@ export function describeIntent(intent) {
   if (intent.type === 'sentinel') return `Sentinel: lock ${amt} for ${dur}, check-in or release to heir.`;
   if (intent.type === 'recurring') return `Recurring: lock ${amt} and pay on each check-in.`;
   if (intent.type === 'hashlock') return `Hash vault: lock ${amt} for ${dur} (secret or refund).`;
+  if (intent.type === 'onramp') return `Card sale: lock ${amt} for ${dur} for buyer ${p.receiver || '…'}. They claim after they pay. Unpaid refunds to you.`;
   if (intent.type === 'escrow') return `Escrow ${amt} for buyer ${p.buyerAddress || '…'}.`;
   if (intent.type === 'multisig') return `2-of-2 vault of ${amt} with ${p.counterparty || 'a counterparty'}.`;
   if (intent.type === 'send') return `Send ${amt} to ${p.destination || '…'}.`;
@@ -403,6 +416,7 @@ export function askFor(missing) {
   if (first.includes('amount')) return 'How much KAS? You can say “.15 kas”.';
   if (first.includes('when it is due') || first.includes('future due')) return 'When is it due? Example: “September 1 2026 9:00 UTC”, or say “unlock anytime”.';
   if (first.includes('how long')) return 'How long should it stay locked? Example: “3 minutes” or “30 days”.';
+  if (first.includes('who can claim') || first.includes('buyer kaspa')) return 'Paste the buyer’s kaspa:q. Only that address can claim this sale lock.';
   if (first.includes('buyer')) return 'Paste the buyer’s kaspa: address.';
   if (first.includes('counterparty')) return 'Paste the other signer’s kaspa: address.';
   if (first.includes('destination')) return 'Paste the destination kaspa: address.';
@@ -456,7 +470,7 @@ function editDist(a, b) {
   return dp[a.length][b.length];
 }
 
-const KNOWN = ['lock', 'freeze', 'send', 'pay', 'escrow', 'multisig', 'sentinel', 'capsule', 'minutes', 'hours', 'days', 'kas', 'kkdag', 'kron', 'kpulse', 'vault', 'hold', 'rent', 'until', 'due', 'save'];
+const KNOWN = ['lock', 'freeze', 'send', 'pay', 'escrow', 'multisig', 'sentinel', 'capsule', 'minutes', 'hours', 'days', 'kas', 'kkdag', 'kron', 'kpulse', 'vault', 'hold', 'rent', 'until', 'due', 'save', 'sale', 'onramp', 'deadman', 'card'];
 
 export function normalizeChat(text) {
   let t = String(text || '').trim();

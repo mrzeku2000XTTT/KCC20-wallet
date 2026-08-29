@@ -12,7 +12,7 @@ import {
   fetchKronAddrTrades, fetchKronTokenUtxos, fetchKronAddrHoldings, KRON_IDX,
   krc20Logo, toTokenRaw, setVaultOwner, kcc20Identicon, VAULT_GROUPS, LIFE_KINDS, lifeKindMeta
 } from './kcc20.js?v=118';
-import { parseIntent, describeIntent, askFor, parseDurationField, interpretVaultChat, normalizeChat } from './intent.js?v=118';
+import { parseIntent, describeIntent, askFor, parseDurationField, interpretVaultChat, normalizeChat } from './intent.js?v=119';
 import { payloadFromAddress } from './script.js?v=90';
 import { explainTransaction, scorpionAnswer } from './scorpion.js?v=114';
 import {
@@ -24,7 +24,7 @@ import {
   newHashlockSecret, checkinHop, currentHop, parseXmssKit, p2shFromRedeemHex, spendXmssVault,
   disconnectRpc, buildDcaDrips, sendKasMany, releaseDcaDrip, cancelDcaDrip, isMassError
 } from './tx.js?v=168';
-import { bootDappConnect, pingTttDappFrame, TTT_TREASURY } from './dappConnect.js?v=170';
+import { bootDappConnect, pingTttDappFrame, TTT_TREASURY } from './dappConnect.js?v=171';
 import { schedulePersistIframeVault, bootIframeVaultWatch } from './iframeVault.js?v=120';
 import { kronMarkets, quoteKronTrade, executeKronTrade, formatKasSompi, lookupKronTick, liveQuote, tradeCostLines, attachKronLogos, kronCandles, kronLogoFor, quoteKcc20Bridge, executeKcc20Bridge, formatTokenRaw } from './kronTrade.js?v=143';
 import {
@@ -58,7 +58,7 @@ import {
 } from './atrade.js?v=102';
 import { SCORPION_MEMORY } from './scorpionMemory.js?v=152';
 
-export const BUILD = '176';
+export const BUILD = '177';
 
 const TOKEN_FALLBACK_LOGO = 'assets/ttt.png';
 
@@ -1483,6 +1483,87 @@ async function switchDappWallet(id) {
   return wallet;
 }
 
+function describeVaultIntent(spec) {
+  const specType = String(spec?.type || '').trim();
+  const specParams = spec?.params && typeof spec.params === 'object' ? spec.params : {};
+  if (spec?.message) {
+    const view = interpretVaultChat(spec.message, specType ? { type: specType, params: specParams } : null);
+    if (view.kind === 'talk') {
+      return { complete: false, ask: view.text, type: '', summary: view.text, intent: null };
+    }
+    let intent = view.intent;
+    if (!intent || intent.error) {
+      return { complete: false, ask: intent?.hint || 'Argent could not parse that', type: intent?.type || '', summary: '', intent: null };
+    }
+    if (specType) intent.type = specType;
+    if (Object.keys(specParams).length) intent.params = { ...(intent.params || {}), ...specParams };
+    const merged = parseIntent(spec.message, { type: intent.type, params: intent.params });
+    if (!merged.error) intent = merged;
+    return {
+      complete: !intent.missing?.length,
+      ask: askFor(intent.missing),
+      type: intent.type,
+      summary: describeIntent(intent),
+      intent
+    };
+  }
+  if (!specType) {
+    return { complete: false, ask: 'Need a vault type (timelock, sentinel, escrow, …) or a message Argent can parse.', type: '', summary: '', intent: null };
+  }
+  const intent = { type: specType, params: specParams, missing: [], complete: true, source: 'dapp' };
+  return { complete: true, ask: '', type: intent.type, summary: describeIntent(intent), intent };
+}
+
+async function dappCompileVault(spec) {
+  const preview = describeVaultIntent(spec);
+  if (preview.type === 'send') {
+    throw new Error('That is a plain send, not a vault. Call sendKas({ dest, amount }).');
+  }
+  if (!preview.complete || !preview.intent) {
+    throw new Error(preview.ask || 'Argent needs more fields');
+  }
+  const p = productForIntent(preview.intent);
+  const vault = await buildCovenant(p, preview.intent.params, { silent: true });
+  if (!vault?.address) throw new Error('Argent did not compile a kaspa:p vault');
+  const funded = await fundVault(vault, { skipPin: true, silent: true });
+  return {
+    type: vault.type,
+    name: vault.name,
+    address: vault.address,
+    txId: funded?.txId || '',
+    explorer: funded?.txId ? ('https://kas.fyi/transaction/' + funded.txId) : '',
+    params: vault.params || preview.intent.params
+  };
+}
+
+async function dappSendKas({ dest, amount, amountKas }) {
+  const amt = amountKas || amount;
+  if (!(Number(amt) > 0)) throw new Error('Enter an amount like 0.15');
+  if (!wallet?.address) throw new Error('No wallet');
+  hydrateNativeKey(wallet);
+  const result = await sendKas({ wallet, dest, amountKas: amt });
+  afterTx();
+  return {
+    txId: result.txId,
+    dest,
+    amountKas: Number(result.amountKas || amt),
+    explorer: result.txId ? ('https://kas.fyi/transaction/' + result.txId) : ''
+  };
+}
+
+function consumeArgentDeepLink() {
+  try {
+    const u = new URL(location.href);
+    const msg = u.searchParams.get('argent') || '';
+    const tab = u.searchParams.get('tab') || '';
+    if (tab === 'vault' || msg) showPage('vault');
+    if (msg) {
+      setArgentOpen(true);
+      if ($('chat-input')) $('chat-input').value = msg;
+    }
+  } catch {}
+}
+
 function dappHooks() {
   return {
     getWallet: () => wallet,
@@ -1519,6 +1600,9 @@ function dappHooks() {
     sendToken: dappSendToken,
     quoteKron: dappQuoteKron,
     tradeKron: dappTradeKron,
+    describeVaultIntent,
+    compileVault: dappCompileVault,
+    sendKas: dappSendKas,
     afterTx
   };
 }
@@ -1541,6 +1625,7 @@ async function unlockToHome() {
   resumeBetHireIfAny();
   resumeDcaIfAny();
   try { bootDappConnect(dappHooks()); } catch {}
+  try { consumeArgentDeepLink(); } catch {}
   const pend = wallet?.address ? loadKrc20Pending(wallet.address) : null;
   if (pend) toast('Unfinished KRC-20 reveal — open Send to finish it');
 }
@@ -8847,44 +8932,53 @@ function backendParams(type, params) {
   return out;
 }
 
-async function buildCovenant(p, explicit) {
+async function buildCovenant(p, explicit, opts = {}) {
+  const silent = !!opts.silent;
+  const fail = (msg) => { if (silent) throw new Error(msg); toast(msg); };
   const params = explicit && Object.keys(explicit).length ? { ...explicit } : readProductForm(p.type);
   hydrateNativeKey(wallet);
   if (p.type === 'kcc20lock') {
+    if (silent) throw new Error('KCC20 freeze still uses the in-app Vault sheet. Open Vault → Freeze tokens, or lock native KAS (timelock / sentinel).');
     await executeKcc20Freeze(params);
     return;
   }
   if ((p.type === 'life' || params.lifeKind) && params.tick && params.amountToken) {
+    if (silent) throw new Error('KCC20 life freeze still uses the in-app Vault sheet.');
     await executeKcc20Freeze({ ...params, lifeKind: params.lifeKind, lifeLabel: params.lifeLabel });
     return;
   }
   if (!params.amountKas || !Number.isFinite(Number(params.amountKas))) {
-    toast('Enter an amount like 0.15');
+    fail('Enter an amount like 0.15');
     return;
   }
   if (p.type !== 'life' && (p.type === 'timelock' || p.type === 'sentinel' || p.type === 'recurring' || p.type === 'hashlock')
       && !params.lockDays && !params.lockMinutes) {
-    toast('Enter a duration like 3 minutes');
+    fail('Enter a duration like 3 minutes');
     return;
   }
   if (p.type === 'life' && !params.unlockAnytime && !params.lockMinutes && !params.dueAt) {
-    toast('Need a due date, or say unlock anytime');
+    fail('Need a due date, or say unlock anytime');
     return;
   }
-  if (p.type === 'escrow' && !params.buyerAddress) { toast('Need a buyer address'); return; }
-  if (p.type === 'multisig' && !params.counterparty) { toast('Need a counterparty'); return; }
+  if (p.type === 'escrow' && !params.buyerAddress) { fail('Need a buyer address'); return; }
+  if (p.type === 'multisig' && !params.counterparty) { fail('Need a counterparty'); return; }
   if (p.type === 'multisig' && params.counterparty === wallet.address) {
-    toast('2-of-2 needs a different wallet, not this one');
+    fail('2-of-2 needs a different wallet, not this one');
     return;
   }
   if (p.type === 'multisig' && !walletByAddress(params.counterparty)) {
-    toast('Import the counterparty wallet on You first — Sweep needs both keys on this device');
+    fail('Import the counterparty wallet on You first — Sweep needs both keys on this device');
     return;
   }
-  if (p.type === 'recurring' && !params.payee) { toast('Need a payee kaspa:q address'); return; }
-  if (p.type === 'recurring' && !params.payKas) { toast('Enter how much KAS to pay each check-in'); return; }
+  if (p.type === 'recurring' && !params.payee) { fail('Need a payee kaspa:q address'); return; }
+  if (p.type === 'recurring' && !params.payKas) { fail('Enter how much KAS to pay each check-in'); return; }
+  if (p.type === 'xmss' && !params.kit) { fail('Paste the XMSS public kit JSON (never the private file)'); return; }
+  if (p.type === 'sentinel' && params.beneficiary && !isValidKaspaAddress(params.beneficiary)) {
+    fail('Beneficiary must be a kaspa: address');
+    return;
+  }
 
-  toast('Building P2SH covenant…');
+  if (!silent) toast('Building P2SH covenant…');
   const payload = backendParams(p.type === 'sentinel' || p.type === 'recurring' || p.type === 'hashlock' ? 'timelock' : p.type, params);
   payload.beneficiary = params.beneficiary;
   payload.hopCount = params.hopCount;
@@ -9010,10 +9104,15 @@ async function buildCovenant(p, explicit) {
     if (p.type === 'sentinel' && payload.beneficiary && payload.beneficiary !== wallet.address) {
       mirrorVaultTo(payload.beneficiary, vault);
     }
+    if (silent) return vault;
     renderVault();
     if (life) setVaultTab('life');
     openVaultReady(vault);
-  } catch (e) { toast(errText(e)); }
+    return vault;
+  } catch (e) {
+    if (silent) throw e;
+    toast(errText(e));
+  }
 }
 
 function openVaultReady(vault) {
@@ -9046,7 +9145,8 @@ function openVaultReady(vault) {
   }, { once: true });
 }
 
-async function fundVault(vault) {
+async function fundVault(vault, opts = {}) {
+  const silent = !!opts.silent;
   const amt = vault.params?.amountKas;
   if (amt == null || amt === '') throw new Error('Missing amount');
   if (!wallet?.address) throw new Error('No wallet');
@@ -9057,11 +9157,13 @@ async function fundVault(vault) {
   if (!kaswareSigning(wallet) && !hexKey(wallet.privKey)) {
     throw new Error('This wallet has no native signing key. Import the 64-character hex key, or turn on KasWare for this address.');
   }
-  try {
-    await requirePin('Confirm vault fund');
-  } catch (e) {
-    if (errText(e) === 'cancelled') return;
-    throw e;
+  if (!opts.skipPin) {
+    try {
+      await requirePin('Confirm vault fund');
+    } catch (e) {
+      if (errText(e) === 'cancelled') return;
+      throw e;
+    }
   }
   let result;
   if (kaswareSigning(wallet)) {
@@ -9108,6 +9210,15 @@ async function fundVault(vault) {
   afterTx();
   const lockedKas = Number(result.amountKas || amt);
   const feeKas = Number(result.feeKas || 0);
+  if (silent) {
+    return {
+      txId: result.txId,
+      address: vault.address,
+      type: vault.type,
+      amountKas: lockedKas,
+      feeKas
+    };
+  }
   openSheet('Covenant funded', `
     <div class="kv"><span class="k">Locked in capsule</span><span class="v">${esc(formatKas(lockedKas))} KAS</span></div>
     <div class="kv"><span class="k">Network fee</span><span class="v">${feeKas.toFixed(6)} KAS</span></div>

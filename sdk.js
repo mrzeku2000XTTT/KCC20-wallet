@@ -6,7 +6,7 @@
 */
 (function (root) {
   'use strict';
-  var SDK_VERSION = '167';
+  var SDK_VERSION = '168';
   if (root.kcc20 && root.kcc20.isKcc20 && String(root.kcc20.sdkVersion || '') === SDK_VERSION) return;
 
   function scriptOrigin() {
@@ -274,7 +274,8 @@
   var INTERACTIVE = {
     connect: 1, requestAccounts: 1, signPskt: 1, signPsbt: 1, pushTx: 1, switchNetwork: 1,
     sendToken: 1, sendKcc20: 1, payToken: 1, payKcc20: 1, fundCredits: 1,
-    buyKron: 1, buyToken: 1, sellKron: 1, sellToken: 1, tradeKron: 1, tradeToken: 1
+    buyKron: 1, buyToken: 1, sellKron: 1, sellToken: 1, tradeKron: 1, tradeToken: 1,
+    compileVault: 1, lockVault: 1, sendKas: 1, sendKaspa: 1
   };
 
   function closeAfterUse() {
@@ -639,6 +640,18 @@
       var side = String(o.side || 'buy').toLowerCase() === 'sell' ? 'sell' : 'buy';
       return rpc(side === 'sell' ? 'sellKron' : 'buyKron', o).then(function (r) { closeAfterUse(); return r; });
     },
+    compileVault: function (opts) {
+      return rpc('compileVault', opts || {}).then(function (r) { closeAfterUse(); return r; });
+    },
+    lockVault: function (opts) {
+      return rpc('compileVault', opts || {}).then(function (r) { closeAfterUse(); return r; });
+    },
+    sendKas: function (opts) {
+      return rpc('sendKas', opts || {}).then(function (r) { closeAfterUse(); return r; });
+    },
+    sendKaspa: function (opts) {
+      return rpc('sendKas', opts || {}).then(function (r) { closeAfterUse(); return r; });
+    },
     isEmbedded: function () {
       return inWalletBrowser();
     },
@@ -702,7 +715,9 @@
       if (m === 'buyKron' || m === 'buyToken') return api.buyKron(p);
       if (m === 'sellKron' || m === 'sellToken') return api.sellKron(p);
       if (m === 'tradeKron' || m === 'tradeToken') return api.tradeKron(p);
-      return Promise.reject(new Error(m + ' is not supported by this KCC20 PWA build. Use connect / getTokenBalance / sendToken / buyKron.'));
+      if (m === 'compileVault' || m === 'lockVault') return api.compileVault(p);
+      if (m === 'sendKas' || m === 'sendKaspa') return api.sendKas(p);
+      return Promise.reject(new Error(m + ' is not supported by this KCC20 PWA build. Use connect / getTokenBalance / sendToken / buyKron / compileVault / sendKas.'));
     }
   };
 

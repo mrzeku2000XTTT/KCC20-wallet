@@ -10,7 +10,8 @@ const HOST_METHODS = [
   'connect', 'requestAccounts', 'disconnect', 'getAccounts', 'getNetwork', 'getPublicKey',
   'switchNetwork', 'signPskt', 'signPsbt', 'pushTx', 'getUtxoEntries', 'getBalance',
   'getTokenBalance', 'getHoldings', 'getState', 'sendToken', 'sendKcc20', 'payToken', 'payKcc20', 'fundCredits',
-  'quoteKron', 'quoteToken', 'buyKron', 'buyToken', 'sellKron', 'sellToken', 'tradeKron', 'tradeToken'
+  'quoteKron', 'quoteToken', 'buyKron', 'buyToken', 'sellKron', 'sellToken', 'tradeKron', 'tradeToken',
+  'compileVault', 'lockVault', 'sendKas', 'sendKaspa'
 ];
 
 let hooks = null;
@@ -163,7 +164,8 @@ function maybeCloseDappPopup(method) {
     const closeAfter = {
       connect: 1, requestAccounts: 1, signPskt: 1, signPsbt: 1, pushTx: 1, disconnect: 1,
       sendToken: 1, sendKcc20: 1, payToken: 1, payKcc20: 1, fundCredits: 1,
-      buyKron: 1, buyToken: 1, sellKron: 1, sellToken: 1, tradeKron: 1, tradeToken: 1
+      buyKron: 1, buyToken: 1, sellKron: 1, sellToken: 1, tradeKron: 1, tradeToken: 1,
+      compileVault: 1, lockVault: 1, sendKas: 1, sendKaspa: 1
     };
     if (!closeAfter[String(method || '')]) return;
     setTimeout(() => closeDappPopupKeepOpener(), 50);
@@ -652,6 +654,122 @@ async function handleTradeKron(req) {
   return hooks.tradeKron({ tick, side, amount });
 }
 
+function vaultIntentFromReq(params) {
+  const p = params || {};
+  if (p.message || p.text || p.prompt) {
+    return { message: String(p.message || p.text || p.prompt || '').trim(), type: p.type || '', params: p.params || {} };
+  }
+  return { type: String(p.type || p.vaultType || '').trim(), params: p.params || p, message: '' };
+}
+
+async function handleCompileVault(req) {
+  await ensureBoundPayer();
+  let w = await ensureUnlocked();
+  const origin = req.origin;
+  if (!originAllowed(origin)) await handleConnect(req);
+  if (typeof hooks.compileVault !== 'function') {
+    throw new Error('This wallet build cannot compile vaults. Hard-refresh KCC20 (BUILD 177+).');
+  }
+  const spec = vaultIntentFromReq(req.params);
+  let preview = { summary: spec.message || spec.type || 'vault', type: spec.type || 'timelock', ask: '', complete: true };
+  if (typeof hooks.describeVaultIntent === 'function') {
+    try { preview = await hooks.describeVaultIntent(spec); } catch (e) {
+      throw new Error(e && e.message ? e.message : String(e));
+    }
+  }
+  if (preview && preview.type === 'send') {
+    throw new Error('That is a plain send, not a vault. Call sendKas({ dest, amount }). Time Capsule would return to you, not the destination.');
+  }
+  if (preview && preview.complete === false) {
+    throw new Error(preview.ask || 'Argent needs more fields (amount, duration, or a kaspa: address).');
+  }
+  const payBody = async () => {
+    const live = hooks.getWallet?.() || w;
+    const payerLine = (typeof hooks.payerLabel === 'function' && hooks.payerLabel())
+      || (live?.name || 'Wallet') + ' · ' + (live?.address || '');
+    const kw = !!(walletIsKaswareChip(live) || kaswareSigning(live));
+    return {
+      kw,
+      html:
+        '<p class="muted" style="text-align:left;padding:0 0 8px;"><b>Argent compiles a P2SH kaspa:p in this wallet.</b> Keys stay here. Same as Vault → Argent.</p>'
+        + '<div class="kv kv-stack"><span class="k">WALLET</span><span class="v">' + esc(payerLine) + (kw ? ' · KasWare' : '') + '</span></div>'
+        + '<div class="kv"><span class="k">Type</span><span class="v">' + esc(preview.type || spec.type || 'vault') + '</span></div>'
+        + '<div class="kv kv-stack"><span class="k">Intent</span><span class="v">' + esc(preview.summary || '') + '</span></div>'
+        + '<p class="muted" style="text-align:left;padding:8px 0 0;">Time Capsule / life lock returns to this wallet. A grandson only gets funds on timeout if this is a sentinel with his kaspa:q as beneficiary.</p>'
+    };
+  };
+  let view = await payBody();
+  await showOverlay({
+    title: 'Argent compile',
+    origin,
+    approveLabel: view.kw ? 'Approve in KasWare' : 'Compile & lock',
+    body: view.html,
+    onWalletChange: async () => {
+      view = await payBody();
+      if ($('dapp-body')) $('dapp-body').innerHTML = view.html;
+      const btn = $('dapp-approve');
+      if (btn) btn.textContent = view.kw ? 'Approve in KasWare' : 'Compile & lock';
+    }
+  });
+  w = hooks.getWallet?.() || w;
+  if (typeof hooks.hydrateNativeKey === 'function') hooks.hydrateNativeKey(w);
+  const useKw = !!(view.kw || walletIsKaswareChip(w) || kaswareSigning(w));
+  if (useKw) {
+    if (typeof hooks.ensureKasware === 'function') await hooks.ensureKasware(w);
+    else if (!isKaswareInstalled()) throw new Error('KasWare is not in this browser');
+  } else if (typeof hooks.requirePin === 'function') {
+    await hooks.requirePin('Confirm vault fund');
+  }
+  return hooks.compileVault({ ...spec, skipPin: true });
+}
+
+async function handleSendKas(req) {
+  await ensureBoundPayer();
+  let w = await ensureUnlocked();
+  const origin = req.origin;
+  if (!originAllowed(origin)) await handleConnect(req);
+  const amount = String(req.params?.amount ?? req.params?.amountKas ?? req.params?.kas ?? '').trim();
+  let dest = cleanKaspaDest(
+    req.params?.dest || req.params?.to || req.params?.destination || req.params?.destinationAddress || req.params?.recipient || ''
+  );
+  if (!(Number(amount) > 0)) throw new Error('Enter an amount of KAS greater than 0');
+  const parsed = validateKaspaAddress(dest, netName() === 'kaspa_testnet_10' ? 'testnet-10' : 'mainnet');
+  if (!parsed.isValid) {
+    throw new Error('Need a full kaspa:q… receive address (not truncated, not kaspa:p). ' + (parsed.error || ''));
+  }
+  dest = dest.toLowerCase();
+  const payBody = async () => {
+    const live = hooks.getWallet?.() || w;
+    const payerLine = (typeof hooks.payerLabel === 'function' && hooks.payerLabel())
+      || (live?.name || 'Wallet') + ' · ' + (live?.address || '');
+    return {
+      html:
+        '<p class="muted" style="text-align:left;padding:0 0 8px;"><b>Plain KAS send.</b> Not a vault. Argent does not compile a covenant for this.</p>'
+        + '<div class="kv kv-stack"><span class="k">FROM</span><span class="v">' + esc(payerLine) + '</span></div>'
+        + '<div class="kv"><span class="k">Send</span><span class="v">' + esc(amount) + ' KAS</span></div>'
+        + '<div class="kv kv-stack"><span class="k">TO</span><span class="v">' + esc(dest) + '</span></div>'
+    };
+  };
+  let view = await payBody();
+  await showOverlay({
+    title: 'Send ' + amount + ' KAS',
+    origin,
+    approveLabel: 'Send ' + amount + ' KAS',
+    body: view.html,
+    onWalletChange: async () => {
+      view = await payBody();
+      if ($('dapp-body')) $('dapp-body').innerHTML = view.html;
+    }
+  });
+  w = hooks.getWallet?.() || w;
+  if (typeof hooks.hydrateNativeKey === 'function') hooks.hydrateNativeKey(w);
+  if (typeof hooks.requirePin === 'function' && !kaswareSigning(w)) {
+    await hooks.requirePin('Send ' + amount + ' KAS');
+  }
+  if (typeof hooks.sendKas !== 'function') throw new Error('Wallet cannot send KAS from this session');
+  return hooks.sendKas({ dest, amount, amountKas: amount, skipPin: true });
+}
+
 async function dispatch(req) {
   const method = String(req.method || '');
   if (method === 'connect' || method === 'requestAccounts') return handleConnect(req);
@@ -687,6 +805,8 @@ async function dispatch(req) {
   if (method === 'buyKron' || method === 'buyToken' || method === 'sellKron' || method === 'sellToken' || method === 'tradeKron' || method === 'tradeToken') {
     return handleTradeKron(req);
   }
+  if (method === 'compileVault' || method === 'lockVault') return handleCompileVault(req);
+  if (method === 'sendKas' || method === 'sendKaspa') return handleSendKas(req);
   throw new Error('Unknown method ' + method);
 }
 

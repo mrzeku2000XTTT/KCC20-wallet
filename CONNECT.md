@@ -3,7 +3,8 @@
 **SDK repo (plug-and-play):** https://github.com/mrzeku2000XTTT/kcc20-sdk  
 **Docs site:** https://kcc-20-wallet.vercel.app/docs.html  
 Live wallet: https://kcc-20-wallet.vercel.app  
-SDK: https://kcc-20-wallet.vercel.app/sdk.js?v=166  
+SDK: https://kcc-20-wallet.vercel.app/sdk.js?v=168
+Argent: https://kcc20-sdk.vercel.app/argent.js · https://kcc20-sdk.vercel.app/argent.html  
 Demo: https://kcc-20-wallet.vercel.app/dapp-demo.html  
 Wallet app: https://github.com/mrzeku2000XTTT/KCC20-wallet
 
@@ -25,11 +26,11 @@ KIP-12 itself is still a **draft** ([kaspanet/kips#21](https://github.com/kaspan
 ## Install in a dApp
 
 ```html
-<script src="https://kcc-20-wallet.vercel.app/sdk.js?v=166"></script>
+<script src="https://kcc-20-wallet.vercel.app/sdk.js?v=168"></script>
 ```
 
 ```js
-const kcc = window.kcc20; // require kcc.sdkVersion === "166"
+const kcc = window.kcc20; // require kcc.sdkVersion === "168"
 const accounts = await kcc.connect();          // popup: user Approves, then the window closes
 const address = accounts[0];
 const network = await kcc.getNetwork();        // silent — popup stays closed
@@ -82,12 +83,27 @@ Load `sdk.js` **before** you dispatch `kaspa:requestProvider`.
 | `getHoldings()` | KAS + KCC20 bags |
 | `signPskt({ txJsonString, options })` | signed Safe JSON **string** |
 | `pushTx(signedJson)` | `{ txId, node }` — **object**, not a hex string. Read `result.txId`. |
-| `sendToken({ tick, amount, dest })` | KCC20 send (used by TTT Fund) |
+| `buyKron({ tick, amount })` | Buy any KRON KCC20. `amount` = KAS. Wallet builds TRADE. Live ticks: [tokens.html](https://kcc20-sdk.vercel.app/tokens.html) |
+| `quoteKron` / `sellKron` | Preview / sell (sell amount = tokens) |
+| `sendToken({ tick, amount, dest })` | KCC20 send (used by TTT Fund). Not a buy. |
+| `compileVault({ type, params })` | Argent compiles a P2SH `kaspa:p`. User PIN-funds. See [argent.html](https://kcc20-sdk.vercel.app/argent.html). |
+| `sendKas({ dest, amount })` | Plain KAS to `kaspa:q`. “Send to grandson” is this unless they want a dead-man. |
 | `disconnect()` | drop origin |
+
+## Buy on any vibe platform
+
+```js
+await kcc.buyKron({ tick: 'KKDAG', amount: '10' });
+```
+
+Canonical list of launched ticks: `https://api.kron.technology/api/registry/tokenlist?all=1` (also `/tokens.json` and `/api/tokenlist` on the SDK host). Skip `?` tickers. Agents: read `https://kcc20-sdk.vercel.app/llms.txt`.
+
+Other wallets: list us via KIP-12; copy Connect-on-click, silent session, wallet-built `buyKron`, P2PK-only `signPskt` (global indexes), `pushTx` → `{ txId, node }`.
 
 ## What this is not
 
 - Not a Chrome Web Store extension. No `chrome.runtime`.
 - Not Tap2Tip. If Tap2Tip has no public PSKT/KIP-12 docs, do not block Nilla on them — KCC20 already does this handoff.
 - Not a hosted signer. If the PWA is killed or locked, signing stops until the user reopens it.
-- KasWare PSKT issues (extension-only, input-index / Safe JSON mismatches) are why native PIN sign exists. Prefer native KCC20 for Nilla.
+- KasWare PSKT issues (extension-only, input-index / Safe JSON mismatches) are why **Nilla must not** ask KasWare to sign the whole covenant tx. Prefer native KCC20 `signPskt` for builder PSKTs.
+- **`buyKron` / Home TRADE can use a KasWare chip.** SCORPION builds the swap and asks KasWare to sign **only the KAS funding input** (same `kronPsktPlan` as Home). Desktop Chrome/Edge with the extension. Phone = native PIN chip.

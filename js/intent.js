@@ -204,10 +204,12 @@ function detectType(text, prev) {
   const t = text.toLowerCase();
   if (/\b(escrow|buyer|seller|arbiter|arbitrator)\b/.test(t)) return 'escrow';
   if (/\b(multi-?sig|2\s*of\s*2|both must sign)\b/.test(t)) return 'multisig';
-  if (/\b(sentinel|dead.?man|check-?in)\b/.test(t)) return 'sentinel';
+  if (/\b(sentinel|dead.?man|check-?in|when i die|if i (die|pass)|after i.?m gone|inherit)\b/.test(t)) return 'sentinel';
+  if (/\b(xmss|post-?quantum|public kit)\b/.test(t)) return 'xmss';
   if (/\b(recurring|subscription|x402)\b/.test(t)) return 'recurring';
   if (/\b(hash\s*lock|htlc|hash vault)\b/.test(t)) return 'hashlock';
   if (/\b(send|pay|transfer)\b/.test(t) && parseAddress(t)) return 'send';
+  if (/\b(send|pay|transfer)\b/.test(t) && !/\b(lock|hold|freeze|vault|sentinel|heir|dead.?man)\b/.test(t)) return 'send';
   if (parseLifeKind(t) || parseUnlockAnytime(t) || (/\b(lock|hold|save|put\s+aside)\b/.test(t) && parseDueAt(t))) return 'life';
   if (/\b(lock|timelock|time\s*capsule|hold|freeze|vault)\b/.test(t) && parseTicker(t)) return 'kcc20lock';
   if (/\b(lock|timelock|time\s*capsule|hold|freeze|vault)\b/.test(t)) return 'timelock';
@@ -281,6 +283,9 @@ export function parseIntent(text, prev = null) {
   if (type === 'escrow' && address) params.buyerAddress = address;
   if (type === 'multisig' && address) params.counterparty = address;
   if (type === 'send' && address) params.destination = address;
+  if (type === 'sentinel' && address) params.beneficiary = address;
+  if (type === 'recurring' && address) params.payee = address;
+  if (type === 'hashlock' && address) params.receiver = address;
 
   const missing = [];
   if (!type) missing.push('what to do (lock, escrow, send, freeze, rent, savings)');
@@ -309,6 +314,8 @@ export function parseIntent(text, prev = null) {
   if (type === 'escrow' && !params.buyerAddress) missing.push('buyer kaspa: address');
   if (type === 'multisig' && !params.counterparty) missing.push('counterparty kaspa: address');
   if (type === 'send' && !params.destination) missing.push('destination kaspa: address');
+  if (type === 'sentinel' && !params.beneficiary) missing.push('heir / beneficiary kaspa: address');
+  if (type === 'recurring' && !params.payee) missing.push('payee kaspa: address');
 
   return {
     type: type || 'timelock',
@@ -357,6 +364,8 @@ export function askFor(missing) {
   if (first.includes('buyer')) return 'Paste the buyer’s kaspa: address.';
   if (first.includes('counterparty')) return 'Paste the other signer’s kaspa: address.';
   if (first.includes('destination')) return 'Paste the destination kaspa: address.';
+  if (first.includes('heir') || first.includes('beneficiary')) return 'Paste the heir’s kaspa:q address (grandson, etc). Timeout pays that address.';
+  if (first.includes('payee')) return 'Paste the payee’s kaspa: address.';
   return `I still need ${first}.`;
 }
 
@@ -410,7 +419,8 @@ const KNOWN = ['lock', 'freeze', 'send', 'pay', 'escrow', 'multisig', 'sentinel'
 export function normalizeChat(text) {
   let t = String(text || '').trim();
   t = t.replace(/(?:^|[^\d])(\.\d+)/g, (m, d) => m.replace(d, '0' + d));
-  t = t.replace(/\b([A-Za-z][A-Za-z0-9]{1,11})\b/g, (w) => {
+  t = t.replace(/\b([A-Za-z][A-Za-z0-9]{1,11})\b/g, (w, _g, offset, whole) => {
+    if (String(whole || '').charAt((offset || 0) + w.length) === ':') return w;
     const k = w.toLowerCase();
     if (WORD_FIX[k]) return WORD_FIX[k];
     if (k.length < 4) return w;

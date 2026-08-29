@@ -177,6 +177,12 @@ You can keep several wallets (Wallet 1, Wallet 2, …) and switch them on Home o
 - **Active** — locks that are still live.
 - **History** — vaults that already swept. Hidden from Active on purpose.
 
+### Argent (chat compiler) and dApp SDK
+
+The gold orb is **Argent**. It turns English into a covenant this app can fund. It does not hold keys. “Send Kaspa to my grandson” is a **plain send** (needs his `kaspa:q`). A Time Capsule returns to **you**. Dead-man / heir uses **sentinel**.
+
+Anyone can sit an LLM in front of Argent: load [`argent.js`](https://kcc20-sdk.vercel.app/argent.js), parse with `kcc20Argent.direct(text)`, then `window.kcc20.compileVault` or `sendKas`. Docs: https://kcc20-sdk.vercel.app/argent.html
+
 ### Compound UTXOs
 
 If Home says you have many UTXOs, tap **Compound** so sends are cheaper and less likely to hit storage-mass errors. PIN required.

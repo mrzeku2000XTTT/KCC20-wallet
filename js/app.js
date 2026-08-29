@@ -12,7 +12,7 @@ import {
   fetchKronAddrTrades, fetchKronTokenUtxos, fetchKronAddrHoldings, KRON_IDX,
   krc20Logo, toTokenRaw, setVaultOwner, kcc20Identicon, VAULT_GROUPS, LIFE_KINDS, lifeKindMeta
 } from './kcc20.js?v=122';
-import { parseIntent, describeIntent, askFor, parseDurationField, interpretVaultChat, normalizeChat, normalizeVaultType } from './intent.js?v=121';
+import { parseIntent, describeIntent, askFor, parseDurationField, interpretVaultChat, normalizeChat, normalizeVaultType } from './intent.js?v=122';
 import { payloadFromAddress } from './script.js?v=90';
 import { explainTransaction, scorpionAnswer } from './scorpion.js?v=114';
 import {
@@ -25,6 +25,7 @@ import {
   disconnectRpc, buildDcaDrips, sendKasMany, releaseDcaDrip, cancelDcaDrip, isMassError
 } from './tx.js?v=168';
 import { bootDappConnect, pingTttDappFrame, TTT_TREASURY } from './dappConnect.js?v=171';
+import { changenowEstimate, changenowCreate, changenowWidgetUrl, cnFrom } from './changenow.js?v=180';
 import { schedulePersistIframeVault, bootIframeVaultWatch } from './iframeVault.js?v=120';
 import { kronMarkets, quoteKronTrade, executeKronTrade, formatKasSompi, lookupKronTick, liveQuote, tradeCostLines, attachKronLogos, kronCandles, kronLogoFor, quoteKcc20Bridge, executeKcc20Bridge, formatTokenRaw } from './kronTrade.js?v=143';
 import {
@@ -58,7 +59,7 @@ import {
 } from './atrade.js?v=102';
 import { SCORPION_MEMORY } from './scorpionMemory.js?v=152';
 
-export const BUILD = '179';
+export const BUILD = '180';
 
 const TOKEN_FALLBACK_LOGO = 'assets/ttt.png';
 
@@ -8439,6 +8440,64 @@ async function paintRecvSlot(idx) {
   }
 }
 
+async function openBuyKas(prefill) {
+  haptic();
+  if (!wallet?.address) { toast('Unlock a wallet first'); return; }
+  const dest = wallet.address;
+  const from0 = cnFrom(prefill?.from || 'usdc');
+  const amt0 = prefill?.amount != null ? String(prefill.amount) : '20';
+  openSheet('Buy KAS · ChangeNOW', `
+    <p class="muted" style="text-align:left;padding:0 0 8px;">Floating rate via ChangeNOW. You send USDC/USDT on their network. KAS pays out to <b>this</b> kaspa:q. We do not hold the USDC.</p>
+    <div class="field"><label>You send</label>
+      <select id="cn-from">
+        <option value="usdcerc20"${from0 === 'usdcerc20' ? ' selected' : ''}>USDC (Ethereum)</option>
+        <option value="usdterc20"${from0 === 'usdterc20' ? ' selected' : ''}>USDT (Ethereum)</option>
+        <option value="usdttrc20"${from0 === 'usdttrc20' ? ' selected' : ''}>USDT (Tron)</option>
+        <option value="eth"${from0 === 'eth' ? ' selected' : ''}>ETH</option>
+      </select>
+    </div>
+    <div class="field"><label>Amount</label><input id="cn-amt" type="text" inputmode="decimal" value="${esc(amt0)}"></div>
+    <div class="kv"><span class="k">You get ~</span><span class="v" id="cn-out">…</span></div>
+    <div class="kv kv-stack"><span class="k">KAS payout</span><span class="v">${esc(dest)}</span></div>
+    <div id="cn-payin" class="hidden" style="margin-top:10px;"></div>
+    <iframe id="cn-frame" title="ChangeNOW" class="hidden" style="width:100%;height:380px;border:0;border-radius:12px;margin-top:10px;background:#0b0b0c;"></iframe>
+  `, {
+    confirm: 'Get pay-in',
+    gold: true,
+    cancelLabel: 'Close',
+    onConfirm: async () => {
+      try {
+        const from = $('cn-from')?.value || 'usdcerc20';
+        const amount = $('cn-amt')?.value;
+        const tx = await changenowCreate({ amount, address: dest, from });
+        if (tx.mode === 'api' && tx.payinAddress) {
+          $('cn-payin').classList.remove('hidden');
+          $('cn-payin').innerHTML = `<div class="kv kv-stack"><span class="k">Send ${esc(String(tx.fromAmount))} ${esc(tx.from)}</span><span class="v" data-copy="${esc(tx.payinAddress)}">${esc(tx.payinAddress)}</span></div>
+            ${tx.payinExtraId ? `<div class="kv"><span class="k">Memo</span><span class="v">${esc(tx.payinExtraId)}</span></div>` : ''}
+            <p class="muted" style="text-align:left;">Floating rate. After ChangeNOW sees the deposit, KAS arrives here. Id ${esc(tx.id || '')}</p>`;
+          toast('Send that asset to the pay-in address');
+        } else {
+          const url = tx.widgetUrl || changenowWidgetUrl({ from, amount, address: dest });
+          const f = $('cn-frame');
+          if (f) { f.classList.remove('hidden'); f.src = url; }
+          toast('Finish the swap in ChangeNOW — payout is this wallet');
+        }
+      } catch (e) { toast(errText(e)); setSheetStatus(errText(e), true); }
+    }
+  });
+  const quote = async () => {
+    try {
+      const est = await changenowEstimate($('cn-amt')?.value, $('cn-from')?.value);
+      if ($('cn-out')) $('cn-out').textContent = est.toAmount + ' KAS';
+    } catch (e) {
+      if ($('cn-out')) $('cn-out').textContent = errText(e);
+    }
+  };
+  quote();
+  $('cn-amt')?.addEventListener('input', () => { clearTimeout(openBuyKas._t); openBuyKas._t = setTimeout(quote, 400); });
+  $('cn-from')?.addEventListener('change', quote);
+}
+
 async function openReceive(prefill) {
   haptic();
   receiveWatch = true;
@@ -9572,6 +9631,12 @@ function renderIntentCard(intent) {
     appendChat('ai', `${esc(summary)}<div style="margin-top:8px;color:var(--label-2)">${esc(askFor(intent.missing))}</div>`);
     return;
   }
+  if (intent.type === 'changenow') {
+    appendChat('ai', `${esc(summary)}<button class="btn btn-gold" style="margin-top:10px;height:42px;" data-cn-intent="${id}">Buy KAS via ChangeNOW</button>`);
+    window.__intents = window.__intents || {};
+    window.__intents[id] = intent;
+    return;
+  }
   if (intent.type === 'send') {
     appendChat('ai', `${esc(summary)}<button class="btn btn-gold" style="margin-top:10px;height:42px;" data-send-intent="${id}">Review send</button>`);
     window.__intents = window.__intents || {};
@@ -9708,6 +9773,7 @@ function bind() {
   });
   click('btn-send', openSend);
   click('btn-receive', openReceive);
+  click('btn-buy-kas', () => openBuyKas());
   click('btn-trade', () => openTrade({ tick: 'KKDAG', side: 'buy' }));
   click('btn-trade-tokens', () => openTrade({ tick: 'KKDAG', side: 'buy' }));
   click('trade-close', hideTradeScreen);
@@ -9990,9 +10056,14 @@ function bind() {
   $('chat-log')?.addEventListener('click', e => {
     const buildBtn = e.target.closest('[data-build-intent]');
     const sendBtn = e.target.closest('[data-send-intent]');
-    const intent = window.__intents?.[buildBtn?.dataset.buildIntent || sendBtn?.dataset.sendIntent];
+    const cnBtn = e.target.closest('[data-cn-intent]');
+    const intent = window.__intents?.[buildBtn?.dataset.buildIntent || sendBtn?.dataset.sendIntent || cnBtn?.dataset.cnIntent];
     if (!intent) return;
     haptic();
+    if (cnBtn) {
+      openBuyKas({ from: intent.params.from || intent.params.tick || 'usdc', amount: intent.params.amountToken || intent.params.amountKas });
+      return;
+    }
     if (sendBtn) {
       openSend({ destination: intent.params.destination, amountKas: intent.params.amountKas });
       return;

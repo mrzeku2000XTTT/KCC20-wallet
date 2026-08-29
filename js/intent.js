@@ -242,7 +242,8 @@ function detectType(text, prev) {
   if (/\b(escrow|buyer|seller|arbiter|arbitrator)\b/.test(t)) return 'escrow';
   if (/\b(multi-?sig|2\s*of\s*2|both must sign)\b/.test(t)) return 'multisig';
   if (isSentinelTalk(t)) return 'sentinel';
-  if (/\b(on-?ramp|card\s*sale|buy\s+kas(pa)?\s+with\s+(a\s+)?(card|debit|usd|dollar)|debit\s*card)\b/.test(t)) return 'onramp';
+  if (/\b(changenow|change\s*now)\b/.test(t) || (/\b(usdc|usdt)\b/.test(t) && /\b(kas|kaspa|swap|buy)\b/.test(t))) return 'changenow';
+  if (/\b(on-?ramp|card\s*sale|buy\s+kas(pa)?\s+with\s+(a\s+)?(card|debit|dollar)|debit\s*card)\b/.test(t)) return 'onramp';
   if (/\b(xmss|post-?quantum|public kit)\b/.test(t)) return 'xmss';
   if (/\b(recurring|subscription|x402)\b/.test(t)) return 'recurring';
   if (/\b(hash\s*lock|htlc|hash vault)\b/.test(t)) return 'hashlock';
@@ -360,6 +361,13 @@ export function parseIntent(text, prev = null) {
     if (params.dueAt && params.dueAt < Date.now() - 60000 && !params.unlockAnytime) {
       missing.push('a future due date');
     }
+  } else if (type === 'changenow') {
+    if (tokenAmt) {
+      params.amountToken = tokenAmt.amount;
+      params.tick = tokenAmt.tick;
+      params.from = tokenAmt.tick;
+    }
+    if (!params.amountToken && !params.amountKas) missing.push('how much USDC or USDT to send (e.g. 20 USDC)');
   } else {
     if (!params.amountKas) missing.push('amount in KAS');
     if ((type === 'timelock' || type === 'sentinel' || type === 'recurring' || type === 'hashlock') && !params.lockMinutes && !params.lockDays) missing.push('how long (e.g. 3 minutes)');
@@ -402,6 +410,7 @@ export function describeIntent(intent) {
   if (intent.type === 'escrow') return `Escrow ${amt} for buyer ${p.buyerAddress || '…'}.`;
   if (intent.type === 'multisig') return `2-of-2 vault of ${amt} with ${p.counterparty || 'a counterparty'}.`;
   if (intent.type === 'send') return `Send ${amt} to ${p.destination || '…'}.`;
+  if (intent.type === 'changenow') return `ChangeNOW floating swap: send ${p.amountToken || p.amountKas || 'an amount'} ${p.from || p.tick || 'USDC'} — KAS pays out to this wallet.`;
   return `${intent.type}: ${amt}`;
 }
 

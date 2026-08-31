@@ -11,8 +11,9 @@ import {
   fetchKcc20Portfolio, fetchKrc20Portfolio, fetchKcc20PortfolioMany, fetchKrc20PortfolioMany,
   fetchKronAddrTrades, fetchKronTokenUtxos, fetchKronAddrHoldings, KRON_IDX,
   krc20Logo, toTokenRaw, setVaultOwner, kcc20Identicon, VAULT_GROUPS, LIFE_KINDS, lifeKindMeta
-} from './kcc20.js?v=122';
-import { parseIntent, describeIntent, askFor, parseDurationField, interpretVaultChat, normalizeChat, normalizeVaultType } from './intent.js?v=122';
+} from './kcc20.js?v=123';
+import { parseIntent, describeIntent, askFor, parseDurationField, interpretVaultChat, normalizeChat, normalizeVaultType } from './intent.js?v=123';
+import { parse as parseSilArtifact, redeemHex as silRedeemHex } from './silverscript.js?v=184';
 import { payloadFromAddress } from './script.js?v=90';
 import { explainTransaction, scorpionAnswer } from './scorpion.js?v=114';
 import {
@@ -59,7 +60,7 @@ import {
 } from './atrade.js?v=102';
 import { SCORPION_MEMORY } from './scorpionMemory.js?v=152';
 
-export const BUILD = '183';
+export const BUILD = '184';
 
 const TOKEN_FALLBACK_LOGO = 'assets/ttt.png';
 
@@ -9091,6 +9092,10 @@ async function buildCovenant(p, explicit, opts = {}) {
   if (p.type === 'recurring' && !params.payee) { fail('Need a payee kaspa:q address'); return; }
   if (p.type === 'recurring' && !params.payKas) { fail('Enter how much KAS to pay each check-in'); return; }
   if (p.type === 'xmss' && !params.kit) { fail('Paste the XMSS public kit JSON (never the private file)'); return; }
+  if (p.type === 'silverscript' && !params.artifact && !params.redeemHex) {
+    fail('Paste a silverc JSON artifact (schema_version 1). Argent does not compile .sil');
+    return;
+  }
   if (p.type === 'sentinel' && params.beneficiary && !isValidKaspaAddress(params.beneficiary)) {
     fail('Beneficiary must be a kaspa: address');
     return;
@@ -9116,6 +9121,15 @@ async function buildCovenant(p, explicit, opts = {}) {
       payload.kitHeight = kit.height;
       payload.masterRoot = kit.masterRoot;
       payload.scriptBytes = kit.scriptBytes;
+    } else if (p.type === 'silverscript') {
+      const art = parseSilArtifact(params.artifact || params.artifactJson);
+      const names = Object.keys(art.contracts || {});
+      const cName = params.contract || names[0];
+      const redeem = params.redeemHex || silRedeemHex(art, cName);
+      built = await p2shFromRedeemHex(redeem);
+      payload.silContract = cName;
+      payload.silEntries = Object.keys(art.contracts[cName].entries || {});
+      payload.redeemHex = redeem;
     } else if (p.type === 'timelock') {
       built = await buildTimelockCovenant({ pubkeyHex: wallet.pubKey, minutes });
     } else if (p.type === 'life') {

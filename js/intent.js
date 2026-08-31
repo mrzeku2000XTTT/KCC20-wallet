@@ -200,7 +200,7 @@ export function parseAddress(text) {
   return a;
 }
 
-const HARD_TYPES = { send: 1, sentinel: 1, escrow: 1, multisig: 1, recurring: 1, hashlock: 1, onramp: 1, xmss: 1, kcc20lock: 1 };
+const HARD_TYPES = { send: 1, sentinel: 1, escrow: 1, multisig: 1, recurring: 1, hashlock: 1, onramp: 1, xmss: 1, silverscript: 1, kcc20lock: 1 };
 
 export function normalizeVaultType(raw) {
   const s = String(raw || '').toLowerCase().replace(/[_/]+/g, ' ').replace(/['’]/g, '').replace(/-/g, ' ').replace(/\s+/g, ' ').trim();
@@ -217,7 +217,8 @@ export function normalizeVaultType(raw) {
     recurring: 'recurring', subscription: 'recurring', x402: 'recurring', 'pay on a timer': 'recurring',
     hashlock: 'hashlock', 'hash lock': 'hashlock', htlc: 'hashlock', 'secret lock': 'hashlock',
     onramp: 'onramp', 'on ramp': 'onramp', 'card sale': 'onramp', cardsale: 'onramp', 'debit card': 'onramp',
-    xmss: 'xmss', 'xmss vault': 'xmss'
+    xmss: 'xmss', 'xmss vault': 'xmss',
+    silverscript: 'silverscript', silverc: 'silverscript', 'silver script': 'silverscript'
   };
   if (exact[s]) return exact[s];
   if (/dead\s*mans?|deadmanswitch|sentinel|\bdms\b|\bheir\b|check\s*in/.test(s)) return 'sentinel';
@@ -227,6 +228,7 @@ export function normalizeVaultType(raw) {
   if (/on\s*ramp|card\s*sale|debit\s*card/.test(s)) return 'onramp';
   if (/hash\s*lock|htlc/.test(s)) return 'hashlock';
   if (/xmss|post\s*quantum/.test(s)) return 'xmss';
+  if (/silver\s*script|silverc|\.sil\b/.test(s)) return 'silverscript';
   if (/recurring|x402/.test(s)) return 'recurring';
   if (/kcc20\s*freeze|freeze tokens/.test(s)) return 'kcc20lock';
   return s.replace(/\s+/g, '');
@@ -245,6 +247,7 @@ function detectType(text, prev) {
   if (/\b(changenow|change\s*now)\b/.test(t) || (/\b(usdc|usdt)\b/.test(t) && /\b(kas|kaspa|swap|buy)\b/.test(t))) return 'changenow';
   if (/\b(on-?ramp|card\s*sale|buy\s+kas(pa)?\s+with\s+(a\s+)?(card|debit|dollar)|debit\s*card)\b/.test(t)) return 'onramp';
   if (/\b(xmss|post-?quantum|public kit)\b/.test(t)) return 'xmss';
+  if (/\b(silverscript|silverc|sil\s*abi|\.sil\b|kcc-?01)\b/.test(t) || /"schema_version"\s*:\s*1/.test(t)) return 'silverscript';
   if (/\b(recurring|subscription|x402)\b/.test(t)) return 'recurring';
   if (/\b(hash\s*lock|htlc|hash vault)\b/.test(t)) return 'hashlock';
   if (/\b(send|pay|transfer)\b/.test(t) && parseAddress(t)) return 'send';
@@ -340,6 +343,18 @@ export function parseIntent(text, prev = null) {
       params.durationLabel = '5 minutes';
     }
   }
+  if (type === 'silverscript') {
+    if (prev?.params?.artifact) params.artifact = prev.params.artifact;
+    if (!params.artifact) {
+      const blob = String(raw || '').match(/\{[\s\S]*"schema_version"\s*:\s*1[\s\S]*\}/);
+      if (blob) {
+        try {
+          const silJson = JSON.parse(blob[0]);
+          if (silJson?.contracts) params.artifact = silJson;
+        } catch {}
+      }
+    }
+  }
 
   const missing = [];
   if (!type) missing.push('what to do (lock, escrow, send, freeze, rent, savings)');
@@ -361,6 +376,9 @@ export function parseIntent(text, prev = null) {
     if (params.dueAt && params.dueAt < Date.now() - 60000 && !params.unlockAnytime) {
       missing.push('a future due date');
     }
+  } else if (type === 'silverscript') {
+    if (!params.amountKas) missing.push('amount in KAS');
+    if (!params.artifact) missing.push('silverc JSON artifact (schema_version 1). Compile .sil with silverc — Argent does not compile .sil');
   } else if (type === 'changenow') {
     if (tokenAmt) {
       params.amountToken = tokenAmt.amount;
@@ -410,6 +428,7 @@ export function describeIntent(intent) {
   if (intent.type === 'escrow') return `Escrow ${amt} for buyer ${p.buyerAddress || '…'}.`;
   if (intent.type === 'multisig') return `2-of-2 vault of ${amt} with ${p.counterparty || 'a counterparty'}.`;
   if (intent.type === 'send') return `Send ${amt} to ${p.destination || '…'}.`;
+  if (intent.type === 'silverscript') return `SilverScript: lock ${amt} into silverc bytecode (P2SH). Spend with a KCC-01 entry. Argent does not compile .sil.`;
   if (intent.type === 'changenow') return `ChangeNOW floating swap: send ${p.amountToken || p.amountKas || 'an amount'} ${p.from || p.tick || 'USDC'} — KAS pays out to this wallet.`;
   return `${intent.type}: ${amt}`;
 }
@@ -431,6 +450,7 @@ export function askFor(missing) {
   if (first.includes('destination')) return 'Paste the destination kaspa: address.';
   if (first.includes('heir') || first.includes('beneficiary')) return 'Paste the heir’s kaspa:q address (grandson, etc). Timeout pays that address.';
   if (first.includes('payee')) return 'Paste the payee’s kaspa: address.';
+  if (first.includes('silverc') || first.includes('.sil')) return 'Paste the silverc JSON (schema_version 1). Compile with silverc; Argent does not compile .sil.';
   return `I still need ${first}.`;
 }
 
@@ -479,7 +499,7 @@ function editDist(a, b) {
   return dp[a.length][b.length];
 }
 
-const KNOWN = ['lock', 'freeze', 'send', 'pay', 'escrow', 'multisig', 'sentinel', 'capsule', 'minutes', 'hours', 'days', 'kas', 'kkdag', 'kron', 'kpulse', 'vault', 'hold', 'rent', 'until', 'due', 'save', 'sale', 'onramp', 'deadman', 'card'];
+const KNOWN = ['lock', 'freeze', 'send', 'pay', 'escrow', 'multisig', 'sentinel', 'capsule', 'minutes', 'hours', 'days', 'kas', 'kkdag', 'kron', 'kpulse', 'vault', 'hold', 'rent', 'until', 'due', 'save', 'sale', 'onramp', 'deadman', 'card', 'silverscript', 'silverc'];
 
 export function normalizeChat(text) {
   let t = String(text || '').trim();

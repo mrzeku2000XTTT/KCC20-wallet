@@ -121,6 +121,15 @@ export const VAULT_PRODUCTS = [
     tag: '⚛',
     why: 'The real post-quantum vault from this repo. Paste a public kit, fund, spend with a witness.',
     blurb: 'Same deploy/spend as covenants/xmsslock. Keys stay offline (xmss_keygen.py / xmss_sign.py). This wallet only funds the P2SH and broadcasts the witness. Spend needs ~0.32 KAS extra for the large script fee.'
+  },
+  {
+    id: 'silverscript',
+    group: 'quantum',
+    name: 'SilverScript',
+    type: 'silverscript',
+    tag: 'Ag',
+    why: 'Official Kaspa covenant language (v1-rc1). Paste a silverc JSON artifact. Argent does not compile .sil.',
+    blurb: 'Compile .sil with silverc from kaspanet/silverscript. We P2SH-hash the bytecode (kaspa:p) and fund it. Spend uses KCC-01 dispatch (args + 4-byte tag). Keys stay in this wallet.'
   }
 ];
 

@@ -281,11 +281,16 @@ export async function sendKrc20WithKasware({ dest, tick, amtRaw }) {
   return { txId: revealId, revealId, commitTxId: commitId };
 }
 
+/** kaspa-wasm serde rejects trailing commas. Do not JSON.parse/stringify KRON PSKTs. */
+export function repairSafeJson(s) {
+  return String(s || '').replace(/,(\s*[}\]])/g, '$1');
+}
+
 function signedJsonFrom(res) {
-  if (typeof res === 'string' && res.length > 2) return res;
+  if (typeof res === 'string' && res.length > 2) return repairSafeJson(res);
   if (!res || typeof res !== 'object') return '';
   const s = res.txJsonString || res.signedTx || res.tx || res.data?.txJsonString;
-  if (typeof s === 'string' && s.length > 2) return s;
+  if (typeof s === 'string' && s.length > 2) return repairSafeJson(s);
   if (Array.isArray(res.inputs) || res.transaction?.inputs) return JSON.stringify(res);
   return '';
 }
@@ -297,15 +302,12 @@ export async function signPsktWithKasware(txJsonString, signInputs) {
   if (typeof fn !== 'function') {
     throw new Error('This KasWare version cannot sign PSKT. Update KasWare to sign KCC20 trades.');
   }
-  const json = String(txJsonString || '');
+  const json = repairSafeJson(txJsonString);
   const inputs = (signInputs || []).map(s => ({
     index: Number(s.index),
     sighashType: Number(s.sighashType ?? 1)
   }));
-  // sign only — we broadcast. KasWare pushTx would hit its node, which often
-  // does not have KRON curve/pool parents and returns "orphan is disallowed".
-  const opts = { signInputs: inputs, broadcast: false };
-  const payload = { txJsonString: json, options: opts };
+  const payload = { txJsonString: json, options: { signInputs: inputs } };
   let res;
   try {
     res = await fn.call(p, payload);
@@ -313,7 +315,7 @@ export async function signPsktWithKasware(txJsonString, signInputs) {
     const recovered = signedJsonFrom(e1) || signedJsonFrom(e1?.data) || signedJsonFrom(e1?.result);
     if (recovered) return recovered;
     try {
-      res = await fn.call(p, json, opts);
+      res = await fn.call(p, json, { signInputs: inputs });
     } catch (e2) {
       const recovered2 = signedJsonFrom(e2) || signedJsonFrom(e2?.data);
       if (recovered2) return recovered2;

@@ -1,8 +1,8 @@
 /* KRON DEX trades via @kronsdk/kron-sdk (v0.17.2). Quotes + builders from the SDK;
    templates from the CORS-open token descriptor; live heads from idx.kron.technology. */
 import * as kron from '../vendor/kron-sdk/index.js';
-import { loadKaspaSdk, connectPublicNode, fetchAddressUtxos, toRpcTransaction } from './tx.js?v=182';
-import { kaswareSigning, signPsktWithKasware, fetchKaswareUtxos } from './kasware.js?v=160';
+import { loadKaspaSdk, connectPublicNode, fetchAddressUtxos, toRpcTransaction } from './tx.js?v=183';
+import { kaswareSigning, signPsktWithKasware, fetchKaswareUtxos, repairSafeJson } from './kasware.js?v=161';
 
 const IDX = 'https://idx.kron.technology/v1/kcc20';
 const REG = 'https://api.kron.technology';
@@ -657,36 +657,13 @@ export function kronPsktPlan(asm) {
   return kron.spend.toPsktJson(asm, 1);
 }
 
-/** KasWare needs per-input utxo blobs to sighash P2PK funding. serializeToSafeJSON often drops them. */
-export function attachKronPsktUtxos(json, asm, address) {
-  let o;
-  try { o = JSON.parse(String(json || '')); } catch { return String(json || ''); }
-  const tx = o.transaction || o;
-  const ins = tx.inputs || [];
-  const live = [...(asm?.transaction?.inputs || [])];
-  const fund = new Set(asm?.fundingInputIndexes || []);
-  let missing = 0;
-  for (let i = 0; i < ins.length; i++) {
-    if (!fund.has(i)) continue;
-    const src = live[i]?.utxo;
-    if (!src) { missing += 1; continue; }
-    const script = hexish(src.scriptPublicKey?.script || src.scriptPublicKey);
-    if (!isNativeP2pkScript(script)) { missing += 1; continue; }
-    ins[i].utxo = {
-      address: src.address || address,
-      amount: typeof src.amount === 'bigint' ? src.amount.toString() : String(src.amount),
-      scriptPublicKey: {
-        version: Number(src.scriptPublicKey?.version || 0),
-        script
-      },
-      blockDaaScore: typeof src.blockDaaScore === 'bigint' ? src.blockDaaScore.toString() : String(src.blockDaaScore || 0),
-      isCoinbase: !!src.isCoinbase
-    };
-  }
-  if (missing) {
-    throw new Error('KasWare PSKT missing UTXO data on ' + missing + ' funding input(s). Tap Buy again.');
-  }
-  return JSON.stringify(o);
+/**
+ * Do not JSON.parse/stringify a KRON PSKT (~175KB). That rewrites WASM Safe JSON
+ * (scriptPublicKey hex vs object) and KasWare dies: "trailing comma at line 1 column …".
+ * serializeToSafeJSON already carries funding utxo from inputFromUtxo. Only repair commas.
+ */
+export function attachKronPsktUtxos(json) {
+  return repairSafeJson(json);
 }
 
 async function utxosOnNode(rpc, address) {
@@ -888,17 +865,30 @@ export async function executeKronTrade({ wallet, tick, side, amount, utxos, onSt
     let plan;
     try {
       plan = kronPsktPlan(asm);
-      plan.txJsonString = attachKronPsktUtxos(plan.txJsonString, asm, wallet.address);
+      plan.txJsonString = attachKronPsktUtxos(plan.txJsonString);
     } catch (e) {
       throw new Error('Could not export this KCC20 swap for KasWare: ' + errText(e));
     }
     if (!plan?.txJsonString) throw new Error('Could not export this KCC20 swap for KasWare');
-    const signedJson = await signPsktWithKasware(plan.txJsonString, plan.signInputs);
+    let signedJson;
+    try {
+      signedJson = await signPsktWithKasware(plan.txJsonString, plan.signInputs);
+    } catch (e) {
+      const msg = errText(e);
+      if (/trailing comma|processing JSON/i.test(msg)) {
+        throw new Error('KasWare could not read this KRON swap JSON. Hard-refresh, reject leftover popups, tap Buy again.');
+      }
+      throw e;
+    }
     let signedTx;
     try {
-      signedTx = k.Transaction.deserializeFromSafeJSON(signedJson);
+      signedTx = k.Transaction.deserializeFromSafeJSON(repairSafeJson(signedJson));
     } catch (e) {
-      throw new Error('KasWare returned a tx this app could not read: ' + errText(e));
+      const msg = errText(e);
+      if (/trailing comma|processing JSON/i.test(msg)) {
+        throw new Error('KasWare JSON for this KRON swap was unreadable. Hard-refresh, reject leftover popups, tap Buy again.');
+      }
+      throw new Error('KasWare returned a tx this app could not read: ' + msg);
     }
     mergeFundingSignatures(asm.transaction, signedTx, asm.fundingInputIndexes);
   } else {

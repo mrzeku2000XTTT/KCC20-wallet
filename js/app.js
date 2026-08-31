@@ -23,7 +23,7 @@ import {
   fetchOwnedUtxos, collectSpendableUtxos, buildSentinelChain, buildRecurringChain, buildHashlockCovenant,
   newHashlockSecret, checkinHop, currentHop, parseXmssKit, p2shFromRedeemHex, spendXmssVault,
   disconnectRpc, buildDcaDrips, sendKasMany, releaseDcaDrip, cancelDcaDrip, isMassError
-} from './tx.js?v=168';
+} from './tx.js?v=181';
 import { bootDappConnect, pingTttDappFrame, TTT_TREASURY } from './dappConnect.js?v=171';
 import { changenowEstimate, changenowCreate, changenowWidgetUrl, cnFrom } from './changenow.js?v=180';
 import { schedulePersistIframeVault, bootIframeVaultWatch } from './iframeVault.js?v=120';
@@ -59,7 +59,7 @@ import {
 } from './atrade.js?v=102';
 import { SCORPION_MEMORY } from './scorpionMemory.js?v=152';
 
-export const BUILD = '180';
+export const BUILD = '181';
 
 const TOKEN_FALLBACK_LOGO = 'assets/ttt.png';
 
@@ -7797,8 +7797,12 @@ async function runCompound() {
       <p class="muted" style="text-align:left;">This wallet now has one spendable UTXO. Vault capsules are separate and are not counted here.</p>
     `, { confirm: 'Done', cancel: false, onConfirm: () => { closeSheet(); refreshAll(); } });
   } catch (e) {
-    toast(errText(e));
-    setSheetStatus(errText(e), true);
+    let msg = errText(e);
+    if (/false stack/i.test(msg)) {
+      msg = 'KasWare signature did not match these UTXOs (false stack). Reject any leftover popup, hard-refresh, then Compound again. Only native kaspa:q coins merge — not vaults or token cells.';
+    }
+    toast(msg);
+    setSheetStatus(msg, true);
   }
 }
 

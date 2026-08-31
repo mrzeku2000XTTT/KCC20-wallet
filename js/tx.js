@@ -1554,6 +1554,55 @@ function isP2pkAddr(addr, fallback) {
   return /:q/i.test(a) || !a;
 }
 
+/** Schnorr P2PK redeem: <32-byte x-only pubkey> CHECKSIG. Token/covenant scripts must not be merged. */
+function isNativeP2pkScript(script) {
+  return /^20[0-9a-f]{64}ac$/i.test(hexish(script));
+}
+
+function attachUtxosToSafeJson(json, entries, address) {
+  let o;
+  try { o = JSON.parse(String(json || '')); } catch { return String(json || ''); }
+  const tx = o.transaction || o;
+  const ins = tx.inputs || [];
+  const map = new Map();
+  for (const e of entries || []) {
+    const id = String(e.outpoint?.transactionId || '').replace(/^0x/i, '').toLowerCase();
+    map.set(id + ':' + Number(e.outpoint?.index || 0), e);
+  }
+  let missing = 0;
+  for (const inp of ins) {
+    const prev = inp.previousOutpoint || inp.previous_outpoint || {};
+    const id = String(prev.transactionId || prev.transaction_id || '').replace(/^0x/i, '').toLowerCase();
+    const e = map.get(id + ':' + Number(prev.index || 0));
+    if (!e) { missing += 1; continue; }
+    const script = hexish(e.scriptPublicKey?.script || e.scriptPublicKey);
+    const blob = {
+      address: e.address || address,
+      amount: typeof e.amount === 'bigint' ? e.amount.toString() : String(e.amount),
+      scriptPublicKey: {
+        version: Number(e.scriptPublicKey?.version || 0),
+        script
+      },
+      blockDaaScore: typeof e.blockDaaScore === 'bigint' ? e.blockDaaScore.toString() : String(e.blockDaaScore || 0)
+    };
+    inp.utxo = blob;
+  }
+  if (missing) {
+    throw new Error('Compound PSKT missing UTXO data on ' + missing + ' input(s). Tap Compound again.');
+  }
+  return JSON.stringify(o);
+}
+
+function assertKaswareP2pkSigs(tx) {
+  const ins = [...(tx.inputs || [])];
+  for (let i = 0; i < ins.length; i++) {
+    const sig = hexish(ins[i].signatureScript);
+    if (sig.length < 128) {
+      throw new Error('KasWare did not sign input ' + i + ' (false stack if we broadcast). Reject the popup and tap Compound again.');
+    }
+  }
+}
+
 export async function collectSpendableUtxos(wallet) {
   const map = new Map();
   const add = (list, meta = {}) => {
@@ -1562,6 +1611,7 @@ export async function collectSpendableUtxos(wallet) {
       if (!c?.outpoint?.transactionId || !(c.amount > 0n)) continue;
       const addr = u.address || meta.address || wallet.address;
       if (!isP2pkAddr(addr, wallet.address)) continue;
+      if (!isNativeP2pkScript(c.scriptPublicKey?.script || c.scriptPublicKey)) continue;
       const key = utxoKey(c);
       if (!key || map.has(key)) continue;
       map.set(key, {
@@ -1882,6 +1932,7 @@ export async function compoundUtxos({ wallet, utxos, signWithKasware = false }) 
   const seen = new Set();
   let entries = spendEntriesFrom(utxos, wallet, { allowWatch: external }).filter(e => {
     if (!isP2pkAddr(e.address, wallet.address)) return false;
+    if (!isNativeP2pkScript(e.scriptPublicKey?.script || e.scriptPublicKey)) return false;
     const key = utxoKey(e);
     if (!key || seen.has(key)) return false;
     seen.add(key);
@@ -1904,13 +1955,15 @@ export async function compoundUtxos({ wallet, utxos, signWithKasware = false }) 
   let txId = null;
 
   if (external) {
-    const json = tx.serializeToSafeJSON();
+    let json = tx.serializeToSafeJSON();
+    json = attachUtxosToSafeJson(json, entries, wallet.address);
     const signInputs = [...tx.inputs].map((_, i) => ({ index: i, sighashType: 1 }));
     const signedJson = await signPsktWithKasware(json, signInputs);
     const signed = k.Transaction.deserializeFromSafeJSON(signedJson);
     if (compoundOutputCount(signed) !== 1) {
       throw new Error('KasWare added a leftover coin. Reject that popup and tap Compound again — merge must stay one UTXO.');
     }
+    assertKaswareP2pkSigs(signed);
     txId = await submitSignedRpc(k, rpc, url, signed, {
       sigOpCount: 0,
       computeBudget: 10,

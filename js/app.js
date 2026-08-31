@@ -24,11 +24,11 @@ import {
   fetchOwnedUtxos, collectSpendableUtxos, buildSentinelChain, buildRecurringChain, buildHashlockCovenant,
   newHashlockSecret, checkinHop, currentHop, parseXmssKit, p2shFromRedeemHex, spendXmssVault,
   disconnectRpc, buildDcaDrips, sendKasMany, releaseDcaDrip, cancelDcaDrip, isMassError
-} from './tx.js?v=183';
+} from './tx.js?v=185';
 import { bootDappConnect, pingTttDappFrame, TTT_TREASURY } from './dappConnect.js?v=171';
 import { changenowEstimate, changenowCreate, changenowWidgetUrl, cnFrom } from './changenow.js?v=180';
 import { schedulePersistIframeVault, bootIframeVaultWatch } from './iframeVault.js?v=120';
-import { kronMarkets, quoteKronTrade, executeKronTrade, formatKasSompi, lookupKronTick, liveQuote, tradeCostLines, attachKronLogos, kronCandles, kronLogoFor, quoteKcc20Bridge, executeKcc20Bridge, formatTokenRaw } from './kronTrade.js?v=145';
+import { kronMarkets, quoteKronTrade, executeKronTrade, formatKasSompi, lookupKronTick, liveQuote, tradeCostLines, attachKronLogos, kronCandles, kronLogoFor, quoteKcc20Bridge, executeKcc20Bridge, formatTokenRaw } from './kronTrade.js?v=146';
 import {
   BET_AGENT_ADDR, TTT_TICK, WINDOW_MS, windowBounds, fmtRemain,
   kkdagsHeld, isKcc20Pass, hireCost, maxHireHours,
@@ -48,8 +48,9 @@ import { runPhoneStudio, runServerStudio } from './studio.js?v=89';
 import {
   isKaswareInstalled, isDesktopBrowser, kaswareEnabled, kaswareSigning, kaswareConnectedAddress,
   connectKasware, disconnectKasware, bindKaswareEvents, loadKaswarePref, compoundWithKasware,
-  ensureKaswareSigner, syncKaswareNetwork, walletIsKaswareChip, autoArmKaswareForWallet
-} from './kasware.js?v=161';
+  ensureKaswareSigner, syncKaswareNetwork, walletIsKaswareChip, autoArmKaswareForWallet,
+  fetchKaswareUtxos
+} from './kasware.js?v=162';
 import {
   cookMarkets, cookQuote, cookWrappers, pickWrappedMarketId, cookOrderbook, cookCandles,
   cookDeploy, cookBuildOrder, cookFillOrder, cookSweep, cookWrap, cookMint,
@@ -60,7 +61,7 @@ import {
 } from './atrade.js?v=102';
 import { SCORPION_MEMORY } from './scorpionMemory.js?v=152';
 
-export const BUILD = '184';
+export const BUILD = '185';
 
 const TOKEN_FALLBACK_LOGO = 'assets/ttt.png';
 
@@ -4179,7 +4180,7 @@ async function tickLive(full) {
   try {
     migrateReceiveBook(wallet);
     const owned = ownedAddresses(wallet);
-    const [bals, ownedBag] = await Promise.all([
+    const [bals, ownedRaw] = await Promise.all([
       Promise.all(owned.map(o => fetchAddressBalance(o.address).catch(() => 0))),
       fetchOwnedUtxos(wallet).catch(() => null)
     ]);
@@ -4188,6 +4189,14 @@ async function tickLive(full) {
     owned.forEach((o, i) => {
       if (o.role !== 'home' && Number(bals[i] || 0) > 0) markAddressUsed(wallet, o.address, true);
     });
+    let ownedBag = ownedRaw;
+    if (kaswareSigning(wallet) || walletIsKaswareChip(wallet)) {
+      try {
+        const kw = await fetchKaswareUtxos(wallet.address);
+        const cleaned = (kw || []).map(u => validateAndCleanUtxo(u)).filter(Boolean);
+        if (cleaned.length) ownedBag = cleaned;
+      } catch {}
+    }
     if (Array.isArray(ownedBag)) {
       const keepOptimistic = Date.now() < hushUtxosUntil
         && Array.isArray(utxos) && utxos.length === 1
@@ -7639,7 +7648,9 @@ async function runTrade({ tick, side, amount, quote, forceKasware = false }) {
   try {
     if (!kw) hydrateNativeKey(wallet);
     await loadKaspaSdk();
-    const utxosNow = await fetchAddressUtxos(wallet.address).catch(() => []);
+    const utxosNow = kw
+      ? await fetchKaswareUtxos(wallet.address).catch(() => [])
+      : await fetchAddressUtxos(wallet.address).catch(() => []);
     const result = await executeKronTrade({
       wallet,
       tick,

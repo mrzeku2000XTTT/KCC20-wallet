@@ -1,8 +1,8 @@
 /* KRON DEX trades via @kronsdk/kron-sdk (v0.17.2). Quotes + builders from the SDK;
    templates from the CORS-open token descriptor; live heads from idx.kron.technology. */
 import * as kron from '../vendor/kron-sdk/index.js';
-import { loadKaspaSdk, connectPublicNode, fetchAddressUtxos, toRpcTransaction } from './tx.js?v=183';
-import { kaswareSigning, signPsktWithKasware, fetchKaswareUtxos, repairSafeJson } from './kasware.js?v=161';
+import { loadKaspaSdk, connectPublicNode, fetchAddressUtxos, toRpcTransaction } from './tx.js?v=185';
+import { kaswareSigning, signPsktWithKasware, fetchKaswareUtxos, repairSafeJson } from './kasware.js?v=162';
 
 const IDX = 'https://idx.kron.technology/v1/kcc20';
 const REG = 'https://api.kron.technology';
@@ -829,21 +829,27 @@ export async function executeKronTrade({ wallet, tick, side, amount, utxos, onSt
   const { rpc, url: nodeUrl } = await connectTradeNode(k);
 
   onStatus?.('Selecting KAS UTXOs…');
-  let rest = [];
+  const useKw = !!(forceKasware || kaswareSigning(wallet));
   const nodeRows = await utxosOnNode(rpc, wallet.address);
-  if (nodeRows.length) rest = nodeRows;
-  if (!rest.length && utxos?.length) rest = utxos;
-  if (!rest.length) {
-    try { rest = await fetchAddressUtxos(wallet.address); } catch { rest = []; }
+  let fundingAll = [];
+  if (useKw) {
+    let kwRows = [];
+    try { kwRows = await fetchKaswareUtxos(wallet.address); } catch { kwRows = []; }
+    const kwFund = restFunding(kwRows, wallet.address);
+    if (kwFund.length) {
+      const kwKeys = new Set(kwFund.map(e => String(e.outpoint.transactionId).replace(/^0x/i, '').toLowerCase() + ':' + Number(e.outpoint.index)));
+      const nodeFund = restFunding(nodeRows, wallet.address);
+      const both = nodeFund.filter(e => kwKeys.has(String(e.outpoint.transactionId).replace(/^0x/i, '').toLowerCase() + ':' + Number(e.outpoint.index)));
+      fundingAll = both.length ? both : kwFund;
+    }
   }
-  if (!rest.length && kaswareSigning(wallet)) {
-    try {
-      const kwUtxos = await fetchKaswareUtxos(wallet.address);
-      if (kwUtxos.length) rest = kwUtxos;
-    } catch {}
+  if (!fundingAll.length) {
+    let rest = nodeRows.length ? nodeRows : (utxos?.length ? utxos : []);
+    if (!rest.length) {
+      try { rest = await fetchAddressUtxos(wallet.address); } catch { rest = []; }
+    }
+    fundingAll = restFunding(rest, wallet.address);
   }
-  if (!rest.length) rest = await fetchAddressUtxos(wallet.address);
-  const fundingAll = restFunding(rest, wallet.address);
   const needGuess = (quoted.total || quoted.fee || 0n) + (merge.length ? 0n : DUST) + 80_000_000n;
   const funding = [];
   let sum = 0n;
@@ -962,8 +968,8 @@ async function submitKronSigned(rpc0, tx, onStatus, startUrl) {
       }
       if (!isOrphanReject(e) && n > 0) throw e;
       onStatus?.(isOrphanReject(e)
-        ? 'KRON parents not on this node yet — trying another Kaspa node…'
-        : 'Trying another Kaspa node so this KRON swap can land…');
+        ? 'Landing the swap on another Kaspa node…'
+        : 'Broadcasting on another Kaspa node…');
       try {
         const next = await connectPublicNode({ force: true, avoid: lastUrl });
         rpc = next.rpc;
@@ -971,7 +977,6 @@ async function submitKronSigned(rpc0, tx, onStatus, startUrl) {
       } catch (e2) {
         last = e2;
       }
-      await sleep(800 * (n + 1));
     }
   }
   if (last && isOrphanReject(last)) throw new Error(orphanHint());

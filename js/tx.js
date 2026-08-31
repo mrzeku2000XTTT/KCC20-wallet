@@ -4,7 +4,7 @@ import {
   validateAndCleanUtxo, deepCloneAndFreeze, kasToSompi,
   kaspaRestBase, networkId
 } from './crypto.js?v=90';
-import { kaswareSigning, sendKaspaWithKasware, sendKrc20WithKasware, signPsktWithKasware, fetchKaswareUtxos } from './kasware.js?v=161';
+import { kaswareSigning, sendKaspaWithKasware, sendKrc20WithKasware, signPsktWithKasware, fetchKaswareUtxos } from './kasware.js?v=162';
 import * as kron from '../vendor/kron-sdk/index.js';
 
 function API() { return kaspaRestBase(); }
@@ -1543,8 +1543,9 @@ export async function fetchOwnedUtxos(wallet) {
 }
 
 function utxoKey(u) {
-  const id = u?.outpoint?.transactionId || u?.transaction_id || u?.transactionId || '';
-  const idx = u?.outpoint?.index ?? u?.index ?? 0;
+  const raw = u?.outpoint?.transactionId || u?.transaction_id || u?.transactionId || '';
+  const id = String(raw).replace(/^0x/i, '').toLowerCase();
+  const idx = Number(u?.outpoint?.index ?? u?.index ?? 0);
   return id ? id + ':' + idx : '';
 }
 
@@ -1556,7 +1557,9 @@ function isP2pkAddr(addr, fallback) {
 
 /** Schnorr P2PK redeem: <32-byte x-only pubkey> CHECKSIG. Token/covenant scripts must not be merged. */
 function isNativeP2pkScript(script) {
-  return /^20[0-9a-f]{64}ac$/i.test(hexish(script));
+  let h = hexish(script);
+  if (/^000020[0-9a-f]{64}ac$/i.test(h)) h = h.slice(4);
+  return /^20[0-9a-f]{64}ac$/i.test(h);
 }
 
 function attachUtxosToSafeJson(json, entries, address) {
@@ -1622,12 +1625,19 @@ export async function collectSpendableUtxos(wallet) {
       });
     }
   };
+  // KasWare chip: extension UTXO set is what it can sign. Do not union REST ghosts.
+  if (kaswareSigning(wallet) || wallet?.kasware) {
+    try {
+      const kw = await fetchKaswareUtxos(wallet.address);
+      if (kw.length) {
+        add(kw, { address: wallet.address });
+        if (map.size) return [...map.values()];
+      }
+    } catch {}
+  }
   try { add(await fetchOwnedUtxos(wallet)); } catch {}
   for (const row of ownedSpendRows(wallet)) {
     try { add(await fetchAddressUtxos(row.address), row); } catch {}
-  }
-  if (kaswareSigning(wallet) || wallet?.kasware) {
-    try { add(await fetchKaswareUtxos(wallet.address), { address: wallet.address }); } catch {}
   }
   return [...map.values()];
 }

@@ -340,11 +340,18 @@ export async function fetchKaswareUtxos(address) {
     const e = u.entry || u;
     const out = u.outpoint || e.outpoint || {};
     const spk = u.scriptPublicKey || e.scriptPublicKey || {};
-    const script = typeof spk === 'string' ? spk : (spk.script || spk.scriptPublicKey || '');
-    const txid = out.transactionId || out.transaction_id;
-    if (!txid || !script) return null;
+    let script = typeof spk === 'string' ? spk : (spk.script || spk.scriptPublicKey || '');
+    if (script && typeof script !== 'string') {
+      try { script = Array.from(script, b => (b + 256).toString(16).slice(-2)).join(''); } catch { script = String(script || ''); }
+    }
+    script = String(script || '').replace(/^0x/i, '');
+    if (/^000020[0-9a-f]{64}ac$/i.test(script)) script = script.slice(4);
+    let txid = out.transactionId || out.transaction_id || '';
+    if (txid && typeof txid !== 'string') txid = txid.toString ? txid.toString() : String(txid);
+    txid = String(txid).replace(/^0x/i, '').toLowerCase();
+    if (!/^[0-9a-f]{64}$/.test(txid) || !script) return null;
     return {
-      outpoint: { transactionId: String(txid), index: Number(out.index || 0) },
+      outpoint: { transactionId: txid, index: Number(out.index || 0) },
       utxoEntry: {
         amount: e.amount ?? u.amount,
         scriptPublicKey: { version: Number(spk.version || 0), script },

@@ -62,7 +62,7 @@ import {
 import { SCORPION_MEMORY } from './scorpionMemory.js?v=152';
 import { DESK_PLAYBOOK, scalpGate, factCheck } from './deskPlaybook.js?v=187';
 
-export const BUILD = '187';
+export const BUILD = '188';
 const DESK_ID_KEY = 'kcc20_desk_id_v1';
 
 const TOKEN_FALLBACK_LOGO = 'assets/ttt.png';
@@ -3882,6 +3882,53 @@ function openScorpionSheet() {
     </div>
   `, { confirm: 'Close', cancel: false });
   bindScorpionSheet();
+}
+
+function openBotSheet() {
+  haptic();
+  openSheet('Bot', `
+    <div class="desk-box" style="padding:0;margin:0;">
+      <p class="at-tiny">Local desk. You create its wallet, send it KAS, then sign before it can trade. Keys stay on this phone. Not Binance — KRON AMM. Thin books are skipped. No guaranteed profit.</p>
+      <p class="at-tiny" id="desk-wallet-line">No desk wallet yet.</p>
+      <div class="at-row">
+        <label class="field grow"><span>Research ticker</span>
+          <input id="desk-tick" placeholder="KKDAG" value="KKDAG" spellcheck="false">
+        </label>
+      </div>
+      <div class="btn-row" style="margin-top:8px;">
+        <button class="btn btn-glass" id="desk-research" type="button">Research + fact-check</button>
+        <button class="btn btn-glass" id="desk-new" type="button">New desk wallet</button>
+      </div>
+      <div class="btn-row" style="margin-top:8px;">
+        <button class="btn btn-glass" id="desk-fund" type="button">Send it KAS</button>
+        <button class="btn btn-glass" id="desk-keys" type="button">Show desk key</button>
+      </div>
+      <div class="at-row" style="margin-top:8px;">
+        <label class="field small"><span>Size KAS</span>
+          <input id="desk-size" type="number" min="0.05" step="0.05" value="0.15">
+        </label>
+        <label class="field small"><span>Max KAS</span>
+          <input id="desk-max" type="number" min="0.15" step="0.15" value="1">
+        </label>
+      </div>
+      <button class="btn btn-gold" id="desk-deploy" type="button" style="margin-top:8px;">Sign and deploy desk</button>
+      <button class="btn btn-glass" id="desk-stop" type="button" style="margin-top:8px;">Stop desk</button>
+      <p class="at-quote" id="desk-status">Idle.</p>
+      <div class="desk-verdict" id="desk-verdict"></div>
+      <ul class="desk-facts" id="desk-facts"></ul>
+    </div>
+  `, { confirm: 'Close', cancel: false });
+  bindDeskSheet();
+  paintDesk();
+}
+
+function bindDeskSheet() {
+  click('desk-research', () => researchDeskTick().catch(err => toast(errText(err))));
+  click('desk-new', () => createDeskWallet().catch(err => toast(errText(err))));
+  click('desk-fund', fundDesk);
+  click('desk-keys', () => showDeskKey().catch(err => toast(errText(err))));
+  click('desk-deploy', () => deployDesk().catch(err => toast(errText(err))));
+  click('desk-stop', stopDesk);
 }
 
 function openImportAnother() {
@@ -10455,16 +10502,7 @@ function bind() {
   click('profile-look', openLookSheet);
   click('profile-name', openLookSheet);
   click('profile-scorpion', openScorpionSheet);
-  click('profile-desk', () => {
-    $('you-desk')?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
-    paintDesk();
-  });
-  click('desk-research', () => researchDeskTick().catch(err => toast(errText(err))));
-  click('desk-new', () => createDeskWallet().catch(err => toast(errText(err))));
-  click('desk-fund', fundDesk);
-  click('desk-keys', () => showDeskKey().catch(err => toast(errText(err))));
-  click('desk-deploy', () => deployDesk().catch(err => toast(errText(err))));
-  click('desk-stop', stopDesk);
+  click('profile-bot', openBotSheet);
   click('profile-wipe', logout);
   click('you-cover-btn', (e) => { e?.stopPropagation?.(); $('you-cover-file')?.click(); });
   click('profile-avatar', () => $('you-avatar-file')?.click());

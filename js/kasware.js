@@ -281,6 +281,15 @@ export async function sendKrc20WithKasware({ dest, tick, amtRaw }) {
   return { txId: revealId, revealId, commitTxId: commitId };
 }
 
+function signedJsonFrom(res) {
+  if (typeof res === 'string' && res.length > 2) return res;
+  if (!res || typeof res !== 'object') return '';
+  const s = res.txJsonString || res.signedTx || res.tx || res.data?.txJsonString;
+  if (typeof s === 'string' && s.length > 2) return s;
+  if (Array.isArray(res.inputs) || res.transaction?.inputs) return JSON.stringify(res);
+  return '';
+}
+
 export async function signPsktWithKasware(txJsonString, signInputs) {
   const p = kaswareProvider();
   if (!p) throw new Error('KasWare is not installed');
@@ -293,21 +302,26 @@ export async function signPsktWithKasware(txJsonString, signInputs) {
     index: Number(s.index),
     sighashType: Number(s.sighashType ?? 1)
   }));
-  const payload = { txJsonString: json, options: { signInputs: inputs } };
+  // sign only — we broadcast. KasWare pushTx would hit its node, which often
+  // does not have KRON curve/pool parents and returns "orphan is disallowed".
+  const opts = { signInputs: inputs, broadcast: false };
+  const payload = { txJsonString: json, options: opts };
   let res;
   try {
     res = await fn.call(p, payload);
   } catch (e1) {
+    const recovered = signedJsonFrom(e1) || signedJsonFrom(e1?.data) || signedJsonFrom(e1?.result);
+    if (recovered) return recovered;
     try {
-      res = await fn.call(p, json, { signInputs: inputs });
+      res = await fn.call(p, json, opts);
     } catch (e2) {
+      const recovered2 = signedJsonFrom(e2) || signedJsonFrom(e2?.data);
+      if (recovered2) return recovered2;
       rejectUser(e1);
     }
   }
-  if (typeof res === 'string' && res) return res;
-  if (res && typeof res === 'object') {
-    return res.txJsonString || res.signedTx || res.tx || JSON.stringify(res);
-  }
+  const out = signedJsonFrom(res);
+  if (out) return out;
   throw new Error('KasWare did not return a signed transaction');
 }
 

@@ -1,8 +1,8 @@
 /* KRON DEX trades via @kronsdk/kron-sdk (v0.17.2). Quotes + builders from the SDK;
    templates from the CORS-open token descriptor; live heads from idx.kron.technology. */
 import * as kron from '../vendor/kron-sdk/index.js';
-import { loadKaspaSdk, connectPublicNode, fetchAddressUtxos, toRpcTransaction } from './tx.js?v=168';
-import { kaswareSigning, signPsktWithKasware, fetchKaswareUtxos } from './kasware.js?v=85';
+import { loadKaspaSdk, connectPublicNode, fetchAddressUtxos, toRpcTransaction } from './tx.js?v=182';
+import { kaswareSigning, signPsktWithKasware, fetchKaswareUtxos } from './kasware.js?v=160';
 
 const IDX = 'https://idx.kron.technology/v1/kcc20';
 const REG = 'https://api.kron.technology';
@@ -590,14 +590,21 @@ function inputFromUtxo(k, { txid, index, amount, scriptPublicKey, signatureScrip
   });
 }
 
+function isNativeP2pkScript(script) {
+  let h = hexish(script);
+  if (/^000020[0-9a-f]{64}ac$/i.test(h)) h = h.slice(4);
+  return /^20[0-9a-f]{64}ac$/i.test(h);
+}
+
 function restFunding(utxos, address) {
   const list = Array.isArray(utxos) ? utxos : [];
   return list.map(u => {
     const e = u.utxoEntry || u;
     const spk = e.scriptPublicKey || e.script_public_key || {};
-    const script = spk.scriptPublicKey || spk.script_public_key || spk.script || '';
+    const script = hexish(spk.scriptPublicKey || spk.script_public_key || spk.script || e.scriptPublicKey || '');
     const txid = u.outpoint?.transactionId || u.outpoint?.transaction_id;
     if (!txid || !script) return null;
+    if (!isNativeP2pkScript(script)) return null;
     return {
       address,
       outpoint: { transactionId: txid, index: Number(u.outpoint.index || 0) },
@@ -648,6 +655,48 @@ export function mergeFundingSignatures(original, signed, indexes) {
 
 export function kronPsktPlan(asm) {
   return kron.spend.toPsktJson(asm, 1);
+}
+
+/** KasWare needs per-input utxo blobs to sighash P2PK funding. serializeToSafeJSON often drops them. */
+export function attachKronPsktUtxos(json, asm, address) {
+  let o;
+  try { o = JSON.parse(String(json || '')); } catch { return String(json || ''); }
+  const tx = o.transaction || o;
+  const ins = tx.inputs || [];
+  const live = [...(asm?.transaction?.inputs || [])];
+  const fund = new Set(asm?.fundingInputIndexes || []);
+  let missing = 0;
+  for (let i = 0; i < ins.length; i++) {
+    if (!fund.has(i)) continue;
+    const src = live[i]?.utxo;
+    if (!src) { missing += 1; continue; }
+    const script = hexish(src.scriptPublicKey?.script || src.scriptPublicKey);
+    if (!isNativeP2pkScript(script)) { missing += 1; continue; }
+    ins[i].utxo = {
+      address: src.address || address,
+      amount: typeof src.amount === 'bigint' ? src.amount.toString() : String(src.amount),
+      scriptPublicKey: {
+        version: Number(src.scriptPublicKey?.version || 0),
+        script
+      },
+      blockDaaScore: typeof src.blockDaaScore === 'bigint' ? src.blockDaaScore.toString() : String(src.blockDaaScore || 0),
+      isCoinbase: !!src.isCoinbase
+    };
+  }
+  if (missing) {
+    throw new Error('KasWare PSKT missing UTXO data on ' + missing + ' funding input(s). Tap Buy again.');
+  }
+  return JSON.stringify(o);
+}
+
+async function utxosOnNode(rpc, address) {
+  if (!rpc || !address) return [];
+  try {
+    const res = await rpc.getUtxosByAddresses({ addresses: [address] });
+    return [...(res?.entries || [])];
+  } catch {
+    return [];
+  }
 }
 
 function assembleSpend(k, spend, fundingEntries, changeAddress, networkFee) {
@@ -799,8 +848,14 @@ export async function executeKronTrade({ wallet, tick, side, amount, utxos, onSt
     );
   }
 
+  onStatus?.('Connecting to Kaspa…');
+  const { rpc, url: nodeUrl } = await connectTradeNode(k);
+
   onStatus?.('Selecting KAS UTXOs…');
-  let rest = utxos?.length ? utxos : [];
+  let rest = [];
+  const nodeRows = await utxosOnNode(rpc, wallet.address);
+  if (nodeRows.length) rest = nodeRows;
+  if (!rest.length && utxos?.length) rest = utxos;
   if (!rest.length) {
     try { rest = await fetchAddressUtxos(wallet.address); } catch { rest = []; }
   }
@@ -824,8 +879,6 @@ export async function executeKronTrade({ wallet, tick, side, amount, utxos, onSt
     throw new Error(`Need about ${Number(needGuess) / 1e8} KAS UTXO in this wallet for the swap (trade + 0.5 KAS cell + network fee).`);
   }
 
-  onStatus?.('Connecting to Kaspa…');
-  const { rpc, url: nodeUrl } = await connectTradeNode(k);
   let asm = assembleSpend(k, spend, funding, wallet.address, 10_000n);
   const fee = kron.spend.estimateNativeFee(k, 'mainnet', asm, 100);
   asm = assembleSpend(k, spend, funding, wallet.address, fee);
@@ -835,6 +888,7 @@ export async function executeKronTrade({ wallet, tick, side, amount, utxos, onSt
     let plan;
     try {
       plan = kronPsktPlan(asm);
+      plan.txJsonString = attachKronPsktUtxos(plan.txJsonString, asm, wallet.address);
     } catch (e) {
       throw new Error('Could not export this KCC20 swap for KasWare: ' + errText(e));
     }
@@ -873,22 +927,37 @@ function isSpentHead(e) {
   return /missing outpoint|already spent|double.?spend|utxo.*not found|no utxo|outpoint.*not found/i.test(errText(e));
 }
 
+function isFalseStack(e) {
+  return /false stack|verify the signature script/i.test(errText(e));
+}
+
 async function trySubmit(rpc, tx, allowOrphan) {
+  const allow = !!allowOrphan;
   try {
-    const submitted = await rpc.submitTransaction({ transaction: tx, allowOrphan: !!allowOrphan });
+    const submitted = await rpc.submitTransaction({ transaction: tx, allowOrphan: allow });
     return submitted?.transactionId || submitted || tx.id || null;
   } catch (e) {
-    if (allowOrphan) throw e;
-    const submitted = await rpc.submitTransaction({ transaction: tx, allowOrphan: true });
-    return submitted?.transactionId || submitted || tx.id || null;
+    const plain = toRpcTransaction(tx, { version: 1, sigOpCount: 0 });
+    try {
+      const submitted = await rpc.submitTransaction({ transaction: plain, allowOrphan: allow });
+      return submitted?.transactionId || submitted || tx.id || null;
+    } catch {
+      if (allow) throw e;
+      const submitted = await rpc.submitTransaction({ transaction: tx, allowOrphan: true });
+      return submitted?.transactionId || submitted || tx.id || null;
+    }
   }
+}
+
+function orphanHint() {
+  return 'KRON curve/pool is not on this Kaspa node yet (orphan — not a bad KasWare signature). Wait ~10 seconds, reject leftover KasWare popups, then tap Buy again.';
 }
 
 async function submitKronSigned(rpc0, tx, onStatus, startUrl) {
   let rpc = rpc0;
   let lastUrl = startUrl || '';
   let last = null;
-  for (let n = 0; n < 4; n++) {
+  for (let n = 0; n < 8; n++) {
     try {
       const txId = await trySubmit(rpc, tx, true);
       if (txId) return txId;
@@ -898,8 +967,13 @@ async function submitKronSigned(rpc0, tx, onStatus, startUrl) {
       if (isSpentHead(e)) {
         throw new Error('KRON curve/pool moved before this swap landed. Tap Buy again for a fresh quote.');
       }
+      if (isFalseStack(e)) {
+        throw new Error('KasWare signature did not verify. Reject leftover popups, hard-refresh this wallet, tap Buy again.');
+      }
       if (!isOrphanReject(e) && n > 0) throw e;
-      onStatus?.('Trying another Kaspa node so this TEST/KRON swap can land…');
+      onStatus?.(isOrphanReject(e)
+        ? 'KRON parents not on this node yet — trying another Kaspa node…'
+        : 'Trying another Kaspa node so this KRON swap can land…');
       try {
         const next = await connectPublicNode({ force: true, avoid: lastUrl });
         rpc = next.rpc;
@@ -907,19 +981,10 @@ async function submitKronSigned(rpc0, tx, onStatus, startUrl) {
       } catch (e2) {
         last = e2;
       }
-      await sleep(400 * (n + 1));
+      await sleep(800 * (n + 1));
     }
   }
-  if (last && isOrphanReject(last)) {
-    try {
-      const plain = toRpcTransaction(tx, { version: 1, sigOpCount: 0 });
-      const submitted = await rpc.submitTransaction({ transaction: plain, allowOrphan: true });
-      const txId = submitted?.transactionId || submitted || tx.id;
-      if (txId) return txId;
-    } catch (e) {
-      last = e;
-    }
-  }
+  if (last && isOrphanReject(last)) throw new Error(orphanHint());
   throw last || new Error('Node did not return a transaction id');
 }
 

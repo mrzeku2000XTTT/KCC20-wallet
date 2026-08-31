@@ -45,7 +45,8 @@ assert.equal(kaswareSigning({ address: ADDR.toUpperCase() }), true, 'address com
 assert.equal(kaswareSigning({ address: 'kaspa:qother' }), false, 'wrong address → not signing');
 
 saveKaswarePref({ enabled: false, address: ADDR });
-assert.equal(kaswareSigning({ address: ADDR }), false, 'toggle off → not signing');
+assert.equal(kaswareSigning({ address: ADDR }), true, 'KasWare-named chip still signs when the Settings toggle is off');
+assert.equal(kaswareSigning({ address: 'kaspa:qother' }), false, 'toggle off + other address → not signing');
 saveKaswarePref({ enabled: true, address: ADDR });
 
 const asm = {
@@ -68,6 +69,7 @@ const signed = await signPsktWithKasware(plan.txJsonString, plan.signInputs);
 assert.equal(signed, '{"id":"signed-by-kasware"}');
 assert.equal(captured.txJsonString, plan.txJsonString);
 assert.deepEqual(captured.options.signInputs, plan.signInputs);
+assert.equal(captured.options.broadcast, false, 'KasWare must sign only — we broadcast KRON ourselves');
 
 globalThis.kasware.signPskt = async () => ({ txJsonString: '{"id":"obj"}' });
 assert.equal(await signPsktWithKasware('{}', [{ index: 1 }]), '{"id":"obj"}');
@@ -124,5 +126,46 @@ delete globalThis.kasware.signPskt;
 let missing = '';
 try { await signPsktWithKasware('{}', []); } catch (e) { missing = e.message; }
 assert.match(missing, /PSKT|Update KasWare/i);
+
+function attachKronPsktUtxos(json, asm, address) {
+  const o = JSON.parse(String(json || '{}'));
+  const tx = o.transaction || o;
+  const ins = tx.inputs || [];
+  const live = [...(asm?.transaction?.inputs || [])];
+  const fund = new Set(asm?.fundingInputIndexes || []);
+  for (let i = 0; i < ins.length; i++) {
+    if (!fund.has(i)) continue;
+    const src = live[i]?.utxo;
+    if (!src) throw new Error('missing funding utxo ' + i);
+    ins[i].utxo = {
+      address: src.address || address,
+      amount: String(src.amount),
+      scriptPublicKey: { version: 0, script: src.scriptPublicKey.script },
+      blockDaaScore: String(src.blockDaaScore || 0),
+      isCoinbase: !!src.isCoinbase
+    };
+  }
+  return JSON.stringify(o);
+}
+
+const pskt = {
+  inputs: [
+    { previousOutpoint: { transactionId: 'aa', index: 0 }, signatureScript: 'cov' },
+    { previousOutpoint: { transactionId: 'bb', index: 0 }, signatureScript: '' }
+  ]
+};
+const asmLive = {
+  transaction: {
+    inputs: [
+      { utxo: { amount: 1, scriptPublicKey: { script: 'aa20' + '00'.repeat(32) + '87' } } },
+      { utxo: { address: ADDR, amount: 1000, scriptPublicKey: { version: 0, script: '20' + 'ab'.repeat(32) + 'ac' }, blockDaaScore: 1 } }
+    ]
+  },
+  fundingInputIndexes: [1]
+};
+const attached = JSON.parse(attachKronPsktUtxos(JSON.stringify(pskt), asmLive, ADDR));
+assert.equal(attached.inputs[0].utxo, undefined, 'do not attach covenant utxo for KasWare');
+assert.equal(attached.inputs[1].utxo.scriptPublicKey.script, '20' + 'ab'.repeat(32) + 'ac');
+assert.equal(attached.inputs[1].utxo.address, ADDR);
 
 console.log('kasware trade signing tests: ok');

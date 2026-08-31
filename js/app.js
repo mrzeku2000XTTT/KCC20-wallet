@@ -28,7 +28,7 @@ import {
 import { bootDappConnect, pingTttDappFrame, TTT_TREASURY } from './dappConnect.js?v=171';
 import { changenowEstimate, changenowCreate, changenowWidgetUrl, cnFrom } from './changenow.js?v=180';
 import { schedulePersistIframeVault, bootIframeVaultWatch } from './iframeVault.js?v=120';
-import { kronMarkets, quoteKronTrade, executeKronTrade, formatKasSompi, lookupKronTick, liveQuote, tradeCostLines, attachKronLogos, kronCandles, kronLogoFor, quoteKcc20Bridge, executeKcc20Bridge, formatTokenRaw } from './kronTrade.js?v=146';
+import { kronMarkets, quoteKronTrade, executeKronTrade, formatKasSompi, lookupKronTick, liveQuote, tradeCostLines, attachKronLogos, kronCandles, kronLogoFor, quoteKcc20Bridge, executeKcc20Bridge, formatTokenRaw } from './kronTrade.js?v=147';
 import {
   BET_AGENT_ADDR, TTT_TICK, WINDOW_MS, windowBounds, fmtRemain,
   kkdagsHeld, isKcc20Pass, hireCost, maxHireHours,
@@ -50,7 +50,7 @@ import {
   connectKasware, disconnectKasware, bindKaswareEvents, loadKaswarePref, compoundWithKasware,
   ensureKaswareSigner, syncKaswareNetwork, walletIsKaswareChip, autoArmKaswareForWallet,
   fetchKaswareUtxos
-} from './kasware.js?v=162';
+} from './kasware.js?v=163';
 import {
   cookMarkets, cookQuote, cookWrappers, pickWrappedMarketId, cookOrderbook, cookCandles,
   cookDeploy, cookBuildOrder, cookFillOrder, cookSweep, cookWrap, cookMint,
@@ -61,7 +61,7 @@ import {
 } from './atrade.js?v=102';
 import { SCORPION_MEMORY } from './scorpionMemory.js?v=152';
 
-export const BUILD = '185';
+export const BUILD = '186';
 
 const TOKEN_FALLBACK_LOGO = 'assets/ttt.png';
 
@@ -1746,6 +1746,29 @@ function logout() {
 
 function kas() { return balanceSompi / 1e8; }
 function usd(n) { return (n * (price || 0)).toLocaleString(undefined, { style: 'currency', currency: 'USD' }); }
+
+async function refreshKasPrice() {
+  const apply = (n) => {
+    if (!(n > 0)) return false;
+    price = n;
+    if ($('card-usd')) $('card-usd').textContent = `≈ ${usd(kas())}`;
+    return true;
+  };
+  try {
+    const pRes = await fetch(`${API_BASE()}/info/price?stringOnly=false`, { cache: 'no-store' });
+    if (pRes.ok) {
+      const data = await pRes.json();
+      if (apply(Number(data.price ?? data ?? 0))) return;
+    }
+  } catch {}
+  try {
+    const r = await fetch('https://api.coinpaprika.com/v1/tickers/kas-kaspa', { cache: 'no-store' });
+    if (r.ok) {
+      const j = await r.json();
+      if (apply(Number(j?.quotes?.USD?.price))) return;
+    }
+  } catch {}
+}
 
 function paintIfChanged(el, html) {
   if (!el) return;
@@ -4177,6 +4200,7 @@ function kickTokenRefresh() {
 async function tickLive(full) {
   if (!wallet) return;
   const addr = wallet.address;
+  if (full || !price) refreshKasPrice().catch(() => {});
   try {
     migrateReceiveBook(wallet);
     const owned = ownedAddresses(wallet);
@@ -4252,8 +4276,11 @@ async function tickLive(full) {
         if (!wallet || wallet.address !== addr) return;
         if (pRes.ok) {
           const data = await pRes.json();
-          price = Number(data.price ?? data ?? 0);
-          if ($('card-usd')) $('card-usd').textContent = price ? `≈ ${usd(kas())}` : 'Fetching price…';
+          const n = Number(data.price ?? data ?? 0);
+          if (n > 0) {
+            price = n;
+            if ($('card-usd')) $('card-usd').textContent = `≈ ${usd(kas())}`;
+          }
         }
         if (tRes.ok) {
           const txs = await tRes.json();
@@ -7739,8 +7766,12 @@ async function runTrade({ tick, side, amount, quote, forceKasware = false }) {
     `, { confirm: 'Done', cancel: false, onConfirm: () => { closeSheet(); refreshAll(); } });
   } catch (e) {
     if (errText(e) === 'cancelled') return;
-    toast(errText(e));
-    setSheetStatus(errText(e), true);
+    let msg = errText(e);
+    if (/failed to fetch|networkerror|load failed/i.test(msg)) {
+      msg = 'Could not reach Kaspa/KRON (network). Turn VPN off if it is on, hard-refresh, tap Buy again.';
+    }
+    toast(msg);
+    setSheetStatus(msg, true);
   }
 }
 

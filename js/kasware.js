@@ -327,14 +327,21 @@ export async function signPsktWithKasware(txJsonString, signInputs) {
   throw new Error('KasWare did not return a signed transaction');
 }
 
+function withMs(p, ms) {
+  return Promise.race([
+    p,
+    new Promise((_, rej) => setTimeout(() => rej(new Error('timeout')), ms))
+  ]);
+}
+
 export async function fetchKaswareUtxos(address) {
   const p = kaswareProvider();
   if (!p?.getUtxoEntries) return [];
   let rows = [];
   try {
-    rows = address ? await p.getUtxoEntries(address) : await p.getUtxoEntries();
+    rows = await withMs(address ? p.getUtxoEntries(address) : p.getUtxoEntries(), 2500);
   } catch {
-    try { rows = await p.getUtxoEntries(); } catch { return []; }
+    try { rows = await withMs(p.getUtxoEntries(), 2500); } catch { return []; }
   }
   return (Array.isArray(rows) ? rows : []).map(u => {
     const e = u.entry || u;

@@ -2,7 +2,7 @@
    templates from the CORS-open token descriptor; live heads from idx.kron.technology. */
 import * as kron from '../vendor/kron-sdk/index.js';
 import { loadKaspaSdk, connectPublicNode, fetchAddressUtxos, toRpcTransaction } from './tx.js?v=185';
-import { kaswareSigning, signPsktWithKasware, fetchKaswareUtxos, repairSafeJson } from './kasware.js?v=162';
+import { kaswareSigning, signPsktWithKasware, fetchKaswareUtxos, repairSafeJson } from './kasware.js?v=163';
 
 const IDX = 'https://idx.kron.technology/v1/kcc20';
 const REG = 'https://api.kron.technology';
@@ -38,11 +38,24 @@ function xOnly(wallet) {
 }
 
 async function idx(path) {
-  const res = await fetch(IDX + path, { cache: 'no-store' });
-  if (res.status === 404) return null;
-  if (!res.ok) throw new Error('KRON indexer HTTP ' + res.status);
-  const body = await res.json();
-  return body.result;
+  let last = null;
+  for (let i = 0; i < 3; i++) {
+    try {
+      const res = await fetch(IDX + path, { cache: 'no-store' });
+      if (res.status === 404) return null;
+      if (!res.ok) throw new Error('KRON indexer HTTP ' + res.status);
+      const body = await res.json();
+      return body.result;
+    } catch (e) {
+      last = e;
+      await new Promise(r => setTimeout(r, 250 * (i + 1)));
+    }
+  }
+  const m = errText(last);
+  if (/failed to fetch|networkerror|load failed/i.test(m)) {
+    throw new Error('Could not reach KRON indexer. Check VPN/network, tap Buy again.');
+  }
+  throw last || new Error('KRON indexer failed');
 }
 
 async function idxToken(tick) {
@@ -285,9 +298,22 @@ function curveQuoteState(token, entry) {
 }
 
 async function kaspaTx(id) {
-  const res = await fetch(`${KASPA}/transactions/${id}?resolve_previous_outpoints=no`, { cache: 'no-store' });
-  if (!res.ok) throw new Error('Kaspa tx lookup failed');
-  return res.json();
+  let last = null;
+  for (let i = 0; i < 3; i++) {
+    try {
+      const res = await fetch(`${KASPA}/transactions/${id}?resolve_previous_outpoints=no`, { cache: 'no-store' });
+      if (!res.ok) throw new Error('Kaspa tx lookup failed');
+      return await res.json();
+    } catch (e) {
+      last = e;
+      await new Promise(r => setTimeout(r, 250 * (i + 1)));
+    }
+  }
+  const m = errText(last);
+  if (/failed to fetch|networkerror|load failed/i.test(m)) {
+    throw new Error('Could not reach api.kaspa.org for the KRON pool tx. Check VPN/network, tap Buy again.');
+  }
+  throw last || new Error('Kaspa tx lookup failed');
 }
 
 function txOutValue(tx, index) {

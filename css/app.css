@@ -1386,6 +1386,16 @@ img { display: block; max-width: 100%; }
 .you-tile .glyph.wipe { background: rgba(255,69,58,.16); color: var(--red); }
 .you-tile .glyph.kw { background: rgba(73,234,203,.16); color: var(--teal); font-weight: 800; }
 .you-tile .glyph.net { background: rgba(10,132,255,.16); color: #64d2ff; font-weight: 800; }
+.you-tile .glyph.desk { background: rgba(48,209,88,.16); color: var(--green); }
+.desk-box { padding: 10px 12px 12px; margin-bottom: 10px; text-align: left; }
+.desk-box .at-tiny { margin: 6px 0; }
+.desk-verdict { font-size: 12px; line-height: 1.45; color: var(--label-2); white-space: pre-wrap; min-height: 48px; }
+.desk-facts { list-style: none; padding: 0; margin: 8px 0 0; }
+.desk-facts li { font-size: 12px; padding: 6px 0; border-bottom: 0.5px solid var(--hairline); }
+.desk-facts b { color: var(--gold-2); }
+.desk-facts .false { color: var(--red); }
+.desk-facts .true { color: var(--green); }
+.desk-facts .weak, .desk-facts .unproven { color: var(--orange); }
 .kw-toggle {
   display: flex; align-items: center; gap: 10px;
   margin: 14px 0 4px; font-size: 15px; font-weight: 650;

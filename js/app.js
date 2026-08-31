@@ -60,8 +60,10 @@ import {
   cookTickOf, cookBookLevels
 } from './atrade.js?v=102';
 import { SCORPION_MEMORY } from './scorpionMemory.js?v=152';
+import { DESK_PLAYBOOK, scalpGate, factCheck } from './deskPlaybook.js?v=187';
 
-export const BUILD = '186';
+export const BUILD = '187';
+const DESK_ID_KEY = 'kcc20_desk_id_v1';
 
 const TOKEN_FALLBACK_LOGO = 'assets/ttt.png';
 
@@ -3566,6 +3568,7 @@ function renderProfile() {
       : 'Not linked';
   }
   refreshKnsQuiet();
+  paintDesk();
   const box = $('wallet-list');
   if (box) {
     const list = loadWalletList();
@@ -5802,6 +5805,15 @@ function lastClosesDir(candles, n = 3) {
 }
 
 function agentWants(job, { px, candles, graduated, change24h }) {
+  if (job.scalp) {
+    const sma = candleSma(candles, 8);
+    const gap = sma > 0 ? (px - sma) / sma : 0;
+    return {
+      buy: sma > 0 && gap <= -0.02,
+      sell: sma > 0 && gap >= 0.02,
+      why: sma ? ('scalp vs SMA ' + fmtPx(sma) + ' · gap ' + (gap * 100).toFixed(1) + '%') : 'need candles for mean-revert'
+    };
+  }
   const strat = job.strat || 'range';
   const buyCap = Number(job.buyBelow || 0);
   const sellCap = Number(job.sellAbove || 0);
@@ -6042,6 +6054,193 @@ function dropAgentWake() {
   agentWake = null;
 }
 
+function loadDeskId() {
+  try { return localStorage.getItem(DESK_ID_KEY) || ''; } catch { return ''; }
+}
+function saveDeskId(id) {
+  try {
+    if (id) localStorage.setItem(DESK_ID_KEY, id);
+    else localStorage.removeItem(DESK_ID_KEY);
+  } catch {}
+}
+function deskWallet() {
+  const id = loadDeskId();
+  if (!id) return null;
+  return loadWalletList().find(w => w.id === id && w.role === 'desk') || loadWalletList().find(w => w.id === id) || null;
+}
+function agentWallet() {
+  const job = loadAgentJob();
+  if (job?.deskId) {
+    const w = loadWalletList().find(x => x.id === job.deskId);
+    if (w) return w;
+  }
+  return deskWallet() || wallet;
+}
+
+function paintDesk() {
+  const dw = deskWallet();
+  const line = $('desk-wallet-line');
+  const st = $('desk-status');
+  const job = loadAgentJob();
+  if (line) {
+    line.textContent = dw
+      ? ('Desk ' + (dw.address || '').slice(0, 18) + '… · keys on this device')
+      : 'No desk wallet yet. New desk wallet creates a local key you can export.';
+  }
+  if (st) {
+    if (job?.on && job.deskId) st.textContent = (job.last || 'armed') + ' · ' + (job.tick || '');
+    else if (dw) st.textContent = 'Desk funded only after you send it KAS. Sign and deploy to arm.';
+  }
+}
+
+async function researchDeskTick() {
+  const tick = String($('desk-tick')?.value || 'KKDAG').trim().toUpperCase();
+  if (!tick) { toast('Set a ticker'); return; }
+  $('desk-verdict').textContent = 'Checking ' + tick + ' on KRON idx + AMM…';
+  $('desk-facts').innerHTML = '';
+  let info = {};
+  let q = null;
+  let candles = [];
+  const sizeKas = Number($('desk-size')?.value || 0.15);
+  try { info = await lookupKronTick(tick); } catch (e) { info = { error: errText(e) }; }
+  try { q = await quoteKronTrade({ tick, side: 'buy', amount: String(sizeKas) }); } catch (e) { q = { error: errText(e) }; }
+  try { candles = await kronCandles(tick, 48); } catch { candles = []; }
+  const indexPx = Number(info?.price || 0);
+  const ammPx = q && !q.error ? impliedKronPx(q) : 0;
+  const gate = scalpGate({
+    sizeKas,
+    indexPx,
+    ammPx,
+    quote: q && !q.error ? q : null,
+    lastFillAt: 0
+  });
+  const report = {
+    tick,
+    indexPx,
+    ammPx,
+    change24h: Number(info?.change24h || 0),
+    graduated: !!(info?.graduated || q?.graduated),
+    feeBps: gate.feeBps,
+    poolKas: gate.poolKas,
+    candles: (candles || []).length
+  };
+  const facts = factCheck(report);
+  $('desk-verdict').textContent =
+    (gate.tradable ? 'Gates open for a tiny mean-revert. ' : 'Do not scalp this size. ')
+    + (gate.reasons[0] || 'fees and pool look usable.')
+    + '\n\n' + DESK_PLAYBOOK.split('\n').slice(0, 4).join('\n');
+  $('desk-facts').innerHTML = facts.map(f => {
+    const cls = String(f.verdict).toLowerCase();
+    return '<li><b class="' + cls + '">' + esc(f.verdict) + '</b> ' + esc(f.claim) + ' — ' + esc(f.why) + '</li>';
+  }).join('');
+  try {
+    const grok = await fetch('/api/desk', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ report, facts })
+    });
+    if (grok.ok) {
+      const j = await grok.json();
+      if (j.summary) $('desk-verdict').textContent = String(j.trade || 'wait').toUpperCase() + ' — ' + j.summary + (j.why ? '\n' + j.why : '');
+    }
+  } catch {}
+  toast(gate.tradable ? tick + ' · desk could try a tiny size' : tick + ' · skip (thin or expensive)');
+}
+
+async function createDeskWallet() {
+  if (!wallet) { toast('Unlock a wallet first'); return; }
+  if (deskWallet()) { toast('Desk already exists — Show desk key or Send it KAS'); paintDesk(); return; }
+  await requirePin('Create Scorpion desk wallet');
+  await loadCryptoLibs();
+  const priv = await generatePrivateKey();
+  const kp = await createKeypairFromHex(priv);
+  const list = loadWalletList();
+  const w = {
+    ...kp,
+    id: uid(),
+    name: 'Scorpion Desk',
+    role: 'desk',
+    createdAt: Date.now()
+  };
+  list.push(w);
+  saveWalletList(list);
+  saveDeskId(w.id);
+  paintDesk();
+  renderProfile();
+  toast('Desk wallet created. Send it KAS, then sign to deploy. Export the key anytime — it is yours.');
+}
+
+function fundDesk() {
+  const dw = deskWallet();
+  if (!dw) { toast('Create the desk wallet first'); return; }
+  openSend({ destination: dw.address, amountKas: $('desk-max')?.value || '1' });
+}
+
+async function showDeskKey() {
+  const dw = deskWallet();
+  if (!dw?.privKey) { toast('No local desk key'); return; }
+  await requirePin('Show Scorpion desk private key');
+  openSheet('Desk key', `
+    <p class="muted" style="text-align:left;">This hex is the desk’s Schnorr key. It never left this device. Anyone with it can spend the KAS you sent the desk.</p>
+    <div class="field"><label>Private key</label><textarea id="desk-hex" rows="3" readonly>${esc(dw.privKey)}</textarea></div>
+    <p class="at-tiny">${esc(dw.address || '')}</p>
+  `, {
+    confirm: 'Copy key', gold: true, cancel: 'Hide', onConfirm: async () => {
+      await navigator.clipboard.writeText(dw.privKey);
+      toast('Desk key copied');
+    }
+  });
+}
+
+async function deployDesk() {
+  const dw = deskWallet();
+  if (!dw) { toast('Create the desk wallet first'); return; }
+  const tick = String($('desk-tick')?.value || 'KKDAG').trim().toUpperCase();
+  const sizeKas = Number($('desk-size')?.value || 0.15);
+  const maxKas = Number($('desk-max')?.value || 1);
+  if (isTestnet()) { toast('Desk scalp is mainnet KRON. Switch Network off TN10.'); return; }
+  if (!tick || tick === 'KRON') { toast('Pick a KRON KCC20 tick (e.g. KKDAG), not the venue name'); return; }
+  if (!(sizeKas > 0) || !(maxKas > 0)) { toast('Set Size and Max KAS'); return; }
+  await requirePin('Sign desk policy: ' + tick + ' · max ' + maxKas + ' KAS from desk wallet');
+  const prev = loadAgentJob();
+  saveAgentJob({
+    on: true,
+    tick,
+    sizeKas,
+    maxKas,
+    strat: 'range',
+    pct: 5,
+    buyBelow: 0,
+    sellAbove: 0,
+    scalp: true,
+    deskId: dw.id,
+    spentKas: 0,
+    last: 'signed desk · ' + tick,
+    startedAt: Date.now(),
+    signedAt: Date.now(),
+    signer: wallet?.address || '',
+    venue: 'kron',
+    tokenId: '',
+    fills: Array.isArray(prev?.fills) ? prev.fills.slice(-12) : []
+  });
+  if ($('ag-tick')) $('ag-tick').value = tick;
+  if ($('ag-size')) $('ag-size').value = String(sizeKas);
+  if ($('ag-max')) $('ag-max').value = String(maxKas);
+  startAgentLoop();
+  paintDesk();
+  paintAgentStatus();
+  toast('Desk signed. It spends only the desk wallet. Stop anytime.');
+}
+
+function stopDesk() {
+  const job = loadAgentJob();
+  if (job?.on) saveAgentJob({ ...job, on: false, last: 'desk stopped' });
+  stopAgentLoop();
+  paintDesk();
+  paintAgentStatus();
+  toast('Desk stopped');
+}
+
 function startAgentLoop() {
   stopAgentLoop();
   const job = loadAgentJob();
@@ -6125,6 +6324,8 @@ async function tickAgent() {
   }
   const job = loadAgentJob();
   if (!job?.on) { stopAgentLoop(); return; }
+  const signer = agentWallet();
+  if (!signer?.address) { job.last = 'no desk/signer'; saveAgentJob(job); paintAgentStatus(); return; }
   agentBusy = true;
   try {
     if (job.venue === 'cook' && job.tokenId) {
@@ -6192,17 +6393,42 @@ async function tickAgent() {
       change24h: Number(info?.change24h || 0)
     });
     const canBuy = (job.spentKas || 0) + job.sizeKas <= Number(job.maxKas || 0) + 1e-9;
+    if (job.scalp && (want.buy || want.sell)) {
+      const lastFillAt = (job.fills || []).slice(-1)[0]?.t || 0;
+      const hold = holdingForTick(job.tick);
+      const dec = Number(hold?.decimals ?? job.preview?.decimals ?? 0);
+      const holdTokens = hold ? Number(hold.balance || 0) / (10 ** dec) : 0;
+      const gate = scalpGate({
+        sizeKas: job.sizeKas,
+        indexPx,
+        ammPx: px,
+        quote: qBuy,
+        lastFillAt,
+        holdTokens: want.buy ? holdTokens : 0,
+        sizeTokens: px > 0 ? job.sizeKas / px : 0
+      });
+      if (!gate.tradable) {
+        job.last = 'no scalp · ' + (gate.reasons[0] || 'gate');
+        saveAgentJob(job);
+        paintAgentStatus();
+        paintDesk();
+        return;
+      }
+    }
+    const tradeWallet = signer;
+    const tradeUtxos = await fetchAddressUtxos(tradeWallet.address).catch(() => []);
+    const forceKw = !!(tradeWallet.kasware && kaswareEnabled());
     if (want.buy && canBuy) {
       job.last = 'buying AMM @ ' + px.toPrecision(4);
       saveAgentJob(job);
       paintAgentStatus();
       const result = await executeKronTrade({
-        wallet,
+        wallet: tradeWallet,
         tick: job.tick,
         side: 'buy',
         amount: String(job.sizeKas),
-        utxos: await fetchAddressUtxos(wallet.address).catch(() => []),
-        forceKasware: kaswareEnabled(),
+        utxos: tradeUtxos,
+        forceKasware: forceKw,
         onStatus: (m) => toast(m)
       });
       job.spentKas = (job.spentKas || 0) + job.sizeKas;
@@ -6213,7 +6439,11 @@ async function tickAgent() {
       saveAgentJob(job);
       afterTx();
     } else if (want.sell) {
-      const hold = holdingForTick(job.tick);
+      let hold = holdingForTick(job.tick);
+      if (job.deskId && tradeWallet.address !== wallet?.address) {
+        const rows = await fetchKronAddrHoldings(tradeWallet.address);
+        hold = (rows || []).find(x => String(x.ticker || x.tick || '').toUpperCase() === job.tick) || hold;
+      }
       if (!hold || !(Number(hold.balance) > 0)) {
         job.last = fmtPx(px) + ' AMM · no ' + job.tick + ' to sell';
         saveAgentJob(job);
@@ -6230,12 +6460,12 @@ async function tickAgent() {
       saveAgentJob(job);
       paintAgentStatus();
       const result = await executeKronTrade({
-        wallet,
+        wallet: tradeWallet,
         tick: job.tick,
         side: 'sell',
         amount: String(amt),
-        utxos: await fetchAddressUtxos(wallet.address).catch(() => []),
-        forceKasware: kaswareEnabled(),
+        utxos: await fetchAddressUtxos(tradeWallet.address).catch(() => []),
+        forceKasware: forceKw,
         onStatus: (m) => toast(m)
       });
       job.last = 'sold AMM · ' + px.toPrecision(4);
@@ -10225,6 +10455,16 @@ function bind() {
   click('profile-look', openLookSheet);
   click('profile-name', openLookSheet);
   click('profile-scorpion', openScorpionSheet);
+  click('profile-desk', () => {
+    $('you-desk')?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+    paintDesk();
+  });
+  click('desk-research', () => researchDeskTick().catch(err => toast(errText(err))));
+  click('desk-new', () => createDeskWallet().catch(err => toast(errText(err))));
+  click('desk-fund', fundDesk);
+  click('desk-keys', () => showDeskKey().catch(err => toast(errText(err))));
+  click('desk-deploy', () => deployDesk().catch(err => toast(errText(err))));
+  click('desk-stop', stopDesk);
   click('profile-wipe', logout);
   click('you-cover-btn', (e) => { e?.stopPropagation?.(); $('you-cover-file')?.click(); });
   click('profile-avatar', () => $('you-avatar-file')?.click());

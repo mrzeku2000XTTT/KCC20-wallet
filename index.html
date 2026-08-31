@@ -12,7 +12,7 @@
   <link rel="icon" href="assets/icon.png">
   <title>KCC20 Wallet</title>
   <meta http-equiv="Cache-Control" content="no-store, no-cache, must-revalidate">
-  <link rel="stylesheet" href="css/app.css?v=169">
+  <link rel="stylesheet" href="css/app.css?v=170">
 </head>
 <body>
   <img class="bg-poster" src="assets/bg.jpg" alt="">
@@ -503,6 +503,40 @@
             <div class="glass list you-wallet-list" id="wallet-list"></div>
           </div>
 
+          <div class="you-settings" id="you-desk">
+            <div class="you-head"><span>Scorpion desk</span></div>
+            <div class="glass desk-box">
+              <p class="at-tiny">Local autonomous desk. You create its wallet, send it KAS, then <b>sign</b> before it can trade. Keys stay on this phone. Not Binance — KRON AMM / Cook. No guaranteed profit. Thin books are skipped.</p>
+              <p class="at-tiny" id="desk-wallet-line">No desk wallet yet.</p>
+              <div class="at-row">
+                <label class="field grow"><span>Research ticker</span>
+                  <input id="desk-tick" placeholder="KKDAG / KRON tick" value="KKDAG" spellcheck="false">
+                </label>
+              </div>
+              <div class="btn-row" style="margin-top:8px;">
+                <button class="btn btn-glass" id="desk-research" type="button">Research + fact-check</button>
+                <button class="btn btn-glass" id="desk-new" type="button">New desk wallet</button>
+              </div>
+              <div class="btn-row" style="margin-top:8px;">
+                <button class="btn btn-glass" id="desk-fund" type="button">Send it KAS</button>
+                <button class="btn btn-glass" id="desk-keys" type="button">Show desk key</button>
+              </div>
+              <div class="at-row" style="margin-top:8px;">
+                <label class="field small"><span>Size KAS</span>
+                  <input id="desk-size" type="number" min="0.05" step="0.05" value="0.15">
+                </label>
+                <label class="field small"><span>Max KAS</span>
+                  <input id="desk-max" type="number" min="0.15" step="0.15" value="1">
+                </label>
+              </div>
+              <button class="btn btn-gold" id="desk-deploy" type="button" style="margin-top:8px;">Sign and deploy desk</button>
+              <button class="btn btn-glass" id="desk-stop" type="button" style="margin-top:8px;">Stop desk</button>
+              <p class="at-quote" id="desk-status">Idle. Research a ticker, fund the desk, sign to arm it.</p>
+              <div class="desk-verdict" id="desk-verdict"></div>
+              <ul class="desk-facts" id="desk-facts"></ul>
+            </div>
+          </div>
+
           <div class="you-settings">
             <div class="you-head"><span>Settings</span></div>
             <div class="you-grid">
@@ -512,6 +546,7 @@
               <button class="you-tile" id="profile-keys" type="button"><span class="glyph keys">🔑</span>Keys</button>
               <button class="you-tile" id="profile-look" type="button"><span class="glyph look">◐</span>Look</button>
               <button class="you-tile" id="profile-scorpion" type="button"><span class="glyph sco">🦂</span>Scorpion</button>
+              <button class="you-tile" id="profile-desk" type="button"><span class="glyph desk">⌬</span>Desk</button>
               <button class="you-tile" id="profile-kasware" type="button"><span class="glyph kw">K</span>KasWare</button>
               <button class="you-tile" id="profile-net" type="button"><span class="glyph net">N</span>Network</button>
               <button class="you-tile danger" id="profile-wipe" type="button"><span class="glyph wipe">✕</span>Remove</button>
@@ -811,7 +846,7 @@
   <script type="module">
     import('./js/iframeVault.js?v=121').then(function (mod) {
       return (mod.restoreIframeVault ? mod.restoreIframeVault() : Promise.resolve()).then(function () {
-        return import('./js/app.js?v=181');
+        return import('./js/app.js?v=187');
       });
     }).catch(function (err) {
       console.error(err);

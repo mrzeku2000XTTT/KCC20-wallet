@@ -67,7 +67,7 @@ import {
   ksocialFeeKas
 } from './ksocial.js?v=196';
 
-export const BUILD = '196';
+export const BUILD = '197';
 const DESK_ID_KEY = 'kcc20_desk_id_v1';
 const DESK_VAULT_KEY = 'kcc20_desk_vault_v1';
 
@@ -1227,7 +1227,25 @@ function resetLiveState() {
   tokenActBackfill = false;
 }
 
-async function activateWallet(w, { toastMsg } = {}) {
+function ksocialOpen() {
+  return !!$('build-screen') && !$('build-screen').classList.contains('hidden')
+    && !!$('app-ksocial') && !$('app-ksocial').classList.contains('hidden');
+}
+
+function syncKsocialAfterWalletChange() {
+  ksocialBusy = false;
+  try { paintKsocialAs(); } catch {}
+  try { syncKsocialCount(); } catch {}
+  if ($('live-pill')) {
+    $('live-pill').textContent = (isTestnet() ? 'TN10 · ' : (kaswareEnabled() ? 'KasWare · ' : 'Live · ')) + BUILD;
+  }
+  if (!ksocialOpen()) return;
+  refreshKsocialKns().catch(() => {});
+  loadKsocialFeed().catch(() => {});
+}
+
+async function activateWallet(w, { toastMsg, reuseSession } = {}) {
+  const keep = !!(reuseSession && wallet && (sessionUnlocked || pinUnlockedFor));
   wallet = migrateReceiveBook(migratePinOnto(w));
   hydrateNativeKey(wallet);
   applyWalletNetwork(wallet);
@@ -1243,6 +1261,17 @@ async function activateWallet(w, { toastMsg } = {}) {
   resetLiveState();
   hydrateFromSnap(w.address);
   if (toastMsg) toast(toastMsg);
+  if (keep) {
+    pinUnlockedFor = wallet.id;
+    sessionUnlocked = true;
+    persistSession();
+    $('tabbar')?.classList.add('show');
+    startLiveSync();
+    renderHome();
+    if (currentTab === 'you') renderProfile();
+    syncKsocialAfterWalletChange();
+    return;
+  }
   pinUnlockedFor = '';
   sessionUnlocked = false;
   $('tabbar')?.classList.remove('show');
@@ -1253,6 +1282,7 @@ async function activateWallet(w, { toastMsg } = {}) {
     pinUnlockedFor = wallet.id;
     sessionUnlocked = true;
     await unlockToHome();
+    syncKsocialAfterWalletChange();
     return;
   }
   if (!loadPin()) {
@@ -1937,7 +1967,11 @@ function openMoveToOwned() {
 function switchToWallet(id) {
   const w = loadWalletList().find(x => x.id === id);
   if (!w || w.id === wallet?.id) return;
-  activateWallet(w, { toastMsg: 'Sending from ' + (w.name || 'wallet') }).catch(err => toast(errText(err)));
+  const stay = !!(sessionUnlocked || pinUnlockedFor);
+  activateWallet(w, {
+    toastMsg: 'Using ' + (w.knsDomain || w.name || 'wallet'),
+    reuseSession: stay
+  }).catch(err => toast(errText(err)));
 }
 
 function openWalletSwitcher() {
@@ -3302,14 +3336,14 @@ function remindKasware(kind) {
 
 async function ksocialSignerGate() {
   if (!wallet) throw new Error('Open a wallet first');
-  const native = !!hexKey(wallet.privKey);
+  hydrateNativeKey(wallet);
   const kwOn = kaswareEnabled();
   const kwAddr = kaswareConnectedAddress();
-  if (!native) {
+  const nativeNow = !!hexKey(wallet.privKey);
+  if (!nativeNow) {
     await new Promise((resolve, reject) => {
       openSheet('Post from a PIN wallet', `
-        <p class="muted" style="text-align:left;">That KasWare window was a raw message blob — not the send. K posts are signed on this device with the wallet’s hex key (same as KaChat). KasWare only approves the tiny KAS self-send.</p>
-        <p class="muted" style="text-align:left;padding-top:8px;">Switch Home to a PIN wallet that has the key, or import the 64-character hex for this address. Then Post. If KasWare is on and matches, you get one Send approval.</p>
+        <p class="muted" style="text-align:left;">K posts are signed on this device with this wallet’s hex key. Switch Home to the imported PIN wallet that owns your .kas name (KasWare off is fine), then Post. KasWare only approves the tiny KAS send when the toggle matches this address.</p>
       `, {
         confirm: 'Got it',
         gold: true,
@@ -3317,17 +3351,17 @@ async function ksocialSignerGate() {
       });
       $('sheet-cancel')?.addEventListener('click', () => reject(new Error('cancelled')));
     });
-    return;
+    throw new Error('cancelled');
   }
   if (kwOn && kwAddr && !sameKasAddr(wallet.address, kwAddr)) {
-    await remindKasware('mismatch');
+    toast('KasWare is on another account. This post uses this wallet’s PIN key.');
     return;
   }
-  if (kwOn) {
+  if (kwOn && kaswareSigning(wallet)) {
     try { await ensureKaswareSigner(wallet); } catch (e) {
       const m = errText(e);
       if (/different account/i.test(m)) {
-        await remindKasware('mismatch');
+        toast('KasWare mismatch — posting with this wallet’s PIN key.');
         return;
       }
       throw e;
@@ -9492,8 +9526,23 @@ function openKaswareSheet() {
         await disconnectKasware();
         if (wallet) wallet.kasware = false;
         hydrateNativeKey(wallet);
-        saveWallet();
-        toast(hexKey(wallet?.privKey) ? 'Signing with in-app key' : 'KasWare off — import the hex key to sign natively');
+        if (wallet && !hexKey(wallet.privKey)) {
+          const native = loadWalletList().find(x =>
+            hexKey(x.privKey) && sameAddrPayload(x.address, wallet.address)
+          );
+          if (native) {
+            await activateWallet({ ...native, kasware: false }, {
+              toastMsg: 'Signing with in-app key',
+              reuseSession: true
+            });
+          } else {
+            saveWallet();
+            toast('KasWare off — import the hex key to post on K Social');
+          }
+        } else {
+          saveWallet();
+          toast('Signing with in-app key');
+        }
       }
     } catch (err) {
       e.target.checked = !want;
@@ -9505,12 +9554,23 @@ function openKaswareSheet() {
     if (currentTab === 'you') renderProfile();
     if (currentTab === 'home') renderHome();
     syncAtKwBtn();
+    syncKsocialAfterWalletChange();
   });
 }
 
 async function adoptKaswareAccount(linked) {
   const addr = String(linked?.address || '');
   if (!addr) return;
+  if (wallet && hexKey(wallet.privKey) && sameKasAddr(wallet.address, addr)) {
+    wallet.kasware = true;
+    if (linked.pubKey) wallet.pubKey = wallet.pubKey || linked.pubKey;
+    saveWallet();
+    pinUnlockedFor = wallet.id;
+    sessionUnlocked = true;
+    persistSession();
+    syncKsocialAfterWalletChange();
+    return;
+  }
   const list = loadWalletList();
   const pk = String(linked.pubKey || '').replace(/^0x/i, '');
   const existing = list.find(w =>
@@ -9521,18 +9581,21 @@ async function adoptKaswareAccount(linked) {
     existing.kasware = true;
     existing.address = addr;
     if (linked.pubKey && !existing.pubKey) existing.pubKey = linked.pubKey;
-    if (!existing.name || existing.name.startsWith('Wallet ')) existing.name = 'KasWare';
+    if (!existing.name || existing.name.startsWith('Wallet ')) existing.name = hexKey(existing.privKey) ? existing.name : 'KasWare';
     saveWalletList(list);
     if (!wallet || wallet.id !== existing.id) {
-      await activateWallet(existing, { toastMsg: 'Using KasWare account' });
+      await activateWallet(existing, { toastMsg: 'Using KasWare account', reuseSession: true });
       return;
     }
     wallet.kasware = true;
     wallet.address = addr;
     if (linked.pubKey) wallet.pubKey = wallet.pubKey || linked.pubKey;
+    hydrateNativeKey(wallet);
     saveWallet();
     pinUnlockedFor = wallet.id;
     sessionUnlocked = true;
+    persistSession();
+    syncKsocialAfterWalletChange();
     return;
   }
   const w = {
@@ -9557,7 +9620,7 @@ async function adoptKaswareAccount(linked) {
   };
   list.push(w);
   saveWalletList(list);
-  await activateWallet(w, { toastMsg: 'KasWare connected' });
+  await activateWallet(w, { toastMsg: 'KasWare connected', reuseSession: true });
 }
 
 function openSettings() {
@@ -11259,6 +11322,12 @@ async function init() {
   try { bindKaswareEvents(); } catch {}
   try { bootIframeVaultWatch(); } catch {}
   try { bootDappConnect(dappHooks()); } catch {}
+  window.addEventListener('kcc20-kasware', () => {
+    if (wallet) hydrateNativeKey(wallet);
+    syncKsocialAfterWalletChange();
+    if (currentTab === 'you') renderProfile();
+    if (currentTab === 'home') renderHome();
+  });
   window.addEventListener('kcc20-kasware-net', async (ev) => {
     if (!kaswareEnabled()) return;
     const want = isTestnet() ? 'kaspa_testnet_10' : 'kaspa_mainnet';

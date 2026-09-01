@@ -1400,6 +1400,10 @@ img { display: block; max-width: 100%; }
   flex-shrink: 0; margin: 8px 0 10px; padding: 10px;
   border-radius: 16px; background: var(--glass-2); border: 0.5px solid var(--hairline);
 }
+.ksocial-as {
+  font-size: 11px; color: var(--label-3); margin: 0 0 6px;
+}
+.ksocial-as.on { color: var(--gold-2); font-weight: 650; }
 .ksocial-compose textarea {
   width: 100%; min-height: 64px; resize: none; border: 0; outline: none;
   background: transparent; color: var(--label); font-size: 14px; line-height: 1.4;

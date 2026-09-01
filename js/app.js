@@ -24,11 +24,11 @@ import {
   fetchOwnedUtxos, collectSpendableUtxos, buildSentinelChain, buildRecurringChain, buildHashlockCovenant,
   newHashlockSecret, checkinHop, currentHop, parseXmssKit, p2shFromRedeemHex, spendXmssVault,
   disconnectRpc, buildDcaDrips, sendKasMany, releaseDcaDrip, cancelDcaDrip, isMassError
-} from './tx.js?v=193';
-import { bootDappConnect, pingTttDappFrame, TTT_TREASURY } from './dappConnect.js?v=193';
+} from './tx.js?v=194';
+import { bootDappConnect, pingTttDappFrame, TTT_TREASURY } from './dappConnect.js?v=194';
 import { changenowEstimate, changenowCreate, changenowWidgetUrl, cnFrom } from './changenow.js?v=180';
 import { schedulePersistIframeVault, bootIframeVaultWatch } from './iframeVault.js?v=120';
-import { kronMarkets, quoteKronTrade, executeKronTrade, formatKasSompi, lookupKronTick, liveQuote, tradeCostLines, attachKronLogos, kronCandles, kronLogoFor, quoteKcc20Bridge, executeKcc20Bridge, formatTokenRaw } from './kronTrade.js?v=193';
+import { kronMarkets, quoteKronTrade, executeKronTrade, formatKasSompi, lookupKronTick, liveQuote, tradeCostLines, attachKronLogos, kronCandles, kronLogoFor, quoteKcc20Bridge, executeKcc20Bridge, formatTokenRaw } from './kronTrade.js?v=194';
 import {
   BET_AGENT_ADDR, TTT_TICK, WINDOW_MS, windowBounds, fmtRemain,
   kkdagsHeld, isKcc20Pass, hireCost, maxHireHours,
@@ -49,8 +49,8 @@ import {
   isKaswareInstalled, isDesktopBrowser, kaswareEnabled, kaswareSigning, kaswareConnectedAddress,
   connectKasware, disconnectKasware, bindKaswareEvents, loadKaswarePref, compoundWithKasware,
   ensureKaswareSigner, syncKaswareNetwork, walletIsKaswareChip, autoArmKaswareForWallet,
-  fetchKaswareUtxos
-} from './kasware.js?v=193';
+  fetchKaswareUtxos, sameKasAddr
+} from './kasware.js?v=194';
 import {
   cookMarkets, cookQuote, cookWrappers, pickWrappedMarketId, cookOrderbook, cookCandles,
   cookDeploy, cookBuildOrder, cookFillOrder, cookSweep, cookWrap, cookMint,
@@ -58,15 +58,15 @@ import {
   loadAgentJob, saveAgentJob, sompiToKas, kasToSompiNum,
   rememberLaunch, loadLaunched, cookOwnerBalances, cookDeployed,
   cookTickOf, cookBookLevels
-} from './atrade.js?v=193';
+} from './atrade.js?v=194';
 import { SCORPION_MEMORY } from './scorpionMemory.js?v=152';
 import { DESK_PLAYBOOK, scalpGate, factCheck } from './deskPlaybook.js?v=187';
 import {
   ksocialFeed, ksocialReplies, ksocialSubmitPost, ksocialSubmitReply, ksocialSubmitVote,
-  ksocialRich, KSOCIAL_MAX
-} from './ksocial.js?v=193';
+  ksocialRich, KSOCIAL_MAX, ksocialCachedFeed
+} from './ksocial.js?v=194';
 
-export const BUILD = '193';
+export const BUILD = '194';
 const DESK_ID_KEY = 'kcc20_desk_id_v1';
 const DESK_VAULT_KEY = 'kcc20_desk_vault_v1';
 
@@ -3154,7 +3154,9 @@ function showBuildApp(name) {
   if (view === 'ksocial') {
     ksocialThreadId = '';
     $('ksocial-compose')?.classList.remove('hidden');
+    paintKsocialAs();
     loadKsocialFeed().catch(err => toast(errText(err)));
+    refreshKsocialKns().catch(() => {});
   }
   if (view !== 'studio') {
     $('app-studio')?.classList.remove('playing', 'working');
@@ -3180,6 +3182,111 @@ let ksocialThreadId = '';
 let ksocialThreadPost = null;
 let ksocialBusy = false;
 
+function paintKsocialAs() {
+  const el = $('ksocial-as');
+  if (!el) return;
+  const kns = String(wallet?.knsDomain || '').trim();
+  if (kns) {
+    el.textContent = 'Posting as ' + kns;
+    el.classList.add('on');
+    return;
+  }
+  el.textContent = 'Posting as ' + (walletPublicName(wallet) || 'this wallet');
+  el.classList.remove('on');
+}
+
+async function refreshKsocialKns() {
+  if (!wallet?.address || isTestnet()) { paintKsocialAs(); return; }
+  try {
+    const primary = await knsPrimary(wallet.address);
+    if (primary && wallet.knsDomain !== primary) {
+      wallet.knsDomain = primary;
+      try { saveWallet(); } catch {}
+    }
+  } catch {}
+  paintKsocialAs();
+}
+
+function ksocialPostError(e) {
+  const m = errText(e);
+  if (/cancelled/i.test(m)) return m;
+  if (/false stack|failed to verify the signature/i.test(m)) {
+    const kwAddr = kaswareConnectedAddress();
+    if (!kaswareEnabled()) {
+      return 'KasWare is off in You → Settings. Turn it on so the extension can sign this post.';
+    }
+    if (kwAddr && wallet?.address && !sameKasAddr(wallet.address, kwAddr)) {
+      return 'KasWare is connected to a different account than this wallet. Switch the extension to this same address, or switch Home to the KasWare chip.';
+    }
+    return 'KasWare signed a different coin set than this wallet. Confirm the extension is on this same address, then Post again.';
+  }
+  return m;
+}
+
+function remindKasware(kind) {
+  return new Promise((resolve, reject) => {
+    if (kind === 'off') {
+      openSheet('Turn on KasWare', `
+        <p class="muted" style="text-align:left;">This wallet has no in-app key. KasWare in You → Settings has to be on so the extension can sign the K post — it is not a hard fail, just the signer this chip needs.</p>
+      `, {
+        confirm: 'Open Settings',
+        gold: true,
+        onConfirm: () => { closeSheet(); openKaswareSheet(); reject(new Error('cancelled')); }
+      });
+      $('sheet-cancel')?.addEventListener('click', () => reject(new Error('cancelled')));
+      return;
+    }
+    if (kind === 'mismatch') {
+      openSheet('KasWare is a different wallet', `
+        <div class="kv"><span class="k">This wallet</span><span class="v">${esc(shortAddr(wallet?.address || '', 10, 6))}</span></div>
+        <div class="kv"><span class="k">KasWare</span><span class="v">${esc(shortAddr(kaswareConnectedAddress() || '', 10, 6) || 'Not connected')}</span></div>
+        <p class="muted" style="text-align:left;padding-top:8px;">The extension is on another account, so it cannot sign this post. Switch KasWare to this same address, or switch Home to the KasWare chip.</p>
+      `, {
+        confirm: 'Open Settings',
+        gold: true,
+        onConfirm: () => { closeSheet(); openKaswareSheet(); reject(new Error('cancelled')); }
+      });
+      $('sheet-cancel')?.addEventListener('click', () => reject(new Error('cancelled')));
+      return;
+    }
+    reject(new Error('KasWare is not ready'));
+  });
+}
+
+async function ksocialSignerGate() {
+  if (!wallet) throw new Error('Open a wallet first');
+  const native = !!hexKey(wallet.privKey);
+  const kwOn = kaswareEnabled();
+  const kwInst = isKaswareInstalled();
+  const kwAddr = kaswareConnectedAddress();
+  const chip = walletIsKaswareChip(wallet);
+  if (chip || (!native && (kwInst || kwOn))) {
+    if (!kwInst) {
+      throw new Error('This wallet signs with KasWare. Open Chrome or Edge with the KasWare extension.');
+    }
+    if (!kwOn) {
+      await remindKasware('off');
+      return;
+    }
+    if (kwAddr && !sameKasAddr(wallet.address, kwAddr)) {
+      await remindKasware('mismatch');
+      return;
+    }
+    await ensureKaswareSigner(wallet);
+    return;
+  }
+  if (!native) {
+    if (kwInst && !kwOn) {
+      await remindKasware('off');
+      return;
+    }
+    throw new Error('This wallet has no signing key. Import the hex key, or turn on KasWare in You → Settings.');
+  }
+  if (kwOn && kwAddr && !sameKasAddr(wallet.address, kwAddr)) {
+    toast('KasWare is on another account. This post will use this wallet’s PIN key, not KasWare.');
+  }
+}
+
 function ksocialCardHtml(p, { thread = false } = {}) {
   if (!p) return '';
   const quote = p.quote ? `<div class="ksocial-quote"><b>${esc(p.quote.nick || 'anon')}</b><p>${ksocialRich(p.quote.text)}</p></div>` : '';
@@ -3202,16 +3309,28 @@ async function loadKsocialFeed({ append = false } = {}) {
   const meta = $('ksocial-meta');
   const more = $('ksocial-more');
   if (!box) return;
+  paintKsocialAs();
   if (!append) {
     ksocialThreadId = '';
     ksocialThreadPost = null;
     ksocialCursor = '';
     $('ksocial-compose')?.classList.remove('hidden');
-    box.innerHTML = '<div class="empty">Indexing Kaposts…</div>';
+    more?.classList.add('hidden');
+    const cached = ksocialCachedFeed();
+    if (cached?.posts?.length) {
+      box.innerHTML = cached.posts.map(p => ksocialCardHtml(p)).join('');
+      if (meta) {
+        meta.textContent = 'Kaposts · kaspatalk'
+          + (cached.count ? ' · ' + cached.count + ' users' : '')
+          + ' · in this wallet';
+      }
+    } else {
+      box.innerHTML = '<div class="empty">Indexing Kaposts…</div>';
+    }
   }
   const data = await ksocialFeed({
     wallet,
-    limit: 24,
+    limit: 12,
     before: append ? ksocialCursor : ''
   });
   if (meta) {
@@ -3274,23 +3393,38 @@ async function postKsocial() {
   if (!wallet) { toast('Open a wallet first'); return; }
   ksocialBusy = true;
   try {
+    await ksocialSignerGate();
     await requirePin('Post on K Social');
-    toast('Signing k:1:post…');
+    toast(kaswareSigning(wallet) ? 'Approve the post in KasWare…' : 'Signing k:1:post…');
     const res = await ksocialSubmitPost({ wallet, text });
     if ($('ksocial-text')) $('ksocial-text').value = '';
     syncKsocialCount();
+    const box = $('ksocial-feed');
+    if (box && !ksocialThreadId) {
+      const empty = box.querySelector('.empty');
+      if (empty) empty.remove();
+      box.insertAdjacentHTML('afterbegin', ksocialCardHtml({
+        id: res.txId || ('local-' + Date.now()),
+        pub: wallet.pubKey || '',
+        nick: wallet.knsDomain || walletPublicName(wallet),
+        text,
+        time: 'now',
+        up: 0,
+        replies: 0
+      }));
+    }
     toast('Posted · indexer will pick it up');
-    setTimeout(() => loadKsocialFeed().catch(() => {}), 2500);
+    setTimeout(() => loadKsocialFeed().catch(() => {}), 4000);
     if (res?.txId) {
       openSheet('Posted on K Social', `
-        <p class="muted" style="text-align:left;">Self-send with k:1:post payload. Same path as KaChat — the kaspatalk indexer reads the chain and the post shows on Kaposts / k-social.network.</p>
+        <p class="muted" style="text-align:left;">Self-send with k:1:post payload. ${wallet?.knsDomain ? 'Shown as ' + esc(wallet.knsDomain) + ' in this wallet (KNS). ' : ''}The kaspatalk indexer reads the chain and the post shows on Kaposts / k-social.network.</p>
         ${txidBlock(res.txId)}
         <div class="kv"><span class="k">Fee</span><span class="v">${Number(res.feeKas || 0).toFixed(6)} KAS</span></div>
       `, { confirm: 'Done', cancel: false, onConfirm: () => closeSheet() });
     }
   } catch (e) {
     if (errText(e) === 'cancelled') return;
-    toast(errText(e));
+    toast(ksocialPostError(e));
   } finally {
     ksocialBusy = false;
   }
@@ -3303,8 +3437,9 @@ async function replyKsocial() {
   if (!text) { toast('Type a reply'); return; }
   ksocialBusy = true;
   try {
+    await ksocialSignerGate();
     await requirePin('Reply on K Social');
-    toast('Signing k:1:reply…');
+    toast(kaswareSigning(wallet) ? 'Approve the reply in KasWare…' : 'Signing k:1:reply…');
     await ksocialSubmitReply({
       wallet,
       text,
@@ -3315,7 +3450,7 @@ async function replyKsocial() {
     await openKsocialThread(ksocialThreadId, ksocialThreadPost);
   } catch (e) {
     if (errText(e) === 'cancelled') return;
-    toast(errText(e));
+    toast(ksocialPostError(e));
   } finally {
     ksocialBusy = false;
   }
@@ -3326,13 +3461,14 @@ async function voteKsocial(id, pub) {
   if (isTestnet()) { toast('K Social is mainnet. Switch off TN10.'); return; }
   ksocialBusy = true;
   try {
+    await ksocialSignerGate();
     await requirePin('Vote on K Social');
-    toast('Signing k:1:vote…');
+    toast(kaswareSigning(wallet) ? 'Approve the vote in KasWare…' : 'Signing k:1:vote…');
     await ksocialSubmitVote({ wallet, postId: id, authorPubkey: pub, upvote: true });
     toast('Upvote broadcast');
   } catch (e) {
     if (errText(e) === 'cancelled') return;
-    toast(errText(e));
+    toast(ksocialPostError(e));
   } finally {
     ksocialBusy = false;
   }

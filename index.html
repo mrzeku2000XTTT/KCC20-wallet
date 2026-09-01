@@ -12,7 +12,7 @@
   <link rel="icon" href="assets/icon.png">
   <title>KCC20 Wallet</title>
   <meta http-equiv="Cache-Control" content="no-store, no-cache, must-revalidate">
-  <link rel="stylesheet" href="css/app.css?v=193">
+  <link rel="stylesheet" href="css/app.css?v=194">
 </head>
 <body>
   <img class="bg-poster" src="assets/bg.jpg" alt="">
@@ -630,6 +630,7 @@
             <button type="button" class="ksocial-refresh" id="ksocial-refresh">Refresh</button>
           </div>
           <div class="ksocial-compose" id="ksocial-compose">
+            <p class="ksocial-as" id="ksocial-as"></p>
             <textarea id="ksocial-text" rows="3" maxlength="500" placeholder="Post to K Social. Lands on Kaposts after the indexer sees the tx."></textarea>
             <div class="ksocial-compose-row">
               <span id="ksocial-count">0 / 500</span>
@@ -847,7 +848,7 @@
   <script type="module">
     import('./js/iframeVault.js?v=121').then(function (mod) {
       return (mod.restoreIframeVault ? mod.restoreIframeVault() : Promise.resolve()).then(function () {
-        return import('./js/app.js?v=193');
+        return import('./js/app.js?v=194');
       });
     }).catch(function (err) {
       console.error(err);

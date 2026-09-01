@@ -235,6 +235,23 @@ export function bindKaswareEvents() {
   }); } catch {}
 }
 
+export async function kaswarePublicKey() {
+  const p = kaswareProvider();
+  const stored = String(loadKaswarePref().pubKey || '').replace(/^0x/i, '');
+  if (p?.getPublicKey) {
+    try {
+      const live = String(await p.getPublicKey() || '').replace(/^0x/i, '');
+      if (live) {
+        const pref = loadKaswarePref();
+        pref.pubKey = live;
+        saveKaswarePref(pref);
+        return live;
+      }
+    } catch {}
+  }
+  return stored;
+}
+
 export async function signMessageWithKasware(message) {
   const p = kaswareProvider();
   if (!p?.signMessage) throw new Error('KasWare cannot sign a K Social post from this browser.');

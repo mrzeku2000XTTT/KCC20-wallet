@@ -235,6 +235,16 @@ export function bindKaswareEvents() {
   }); } catch {}
 }
 
+export async function signMessageWithKasware(message) {
+  const p = kaswareProvider();
+  if (!p?.signMessage) throw new Error('KasWare cannot sign a K Social post from this browser.');
+  let sig;
+  try {
+    sig = await p.signMessage(String(message || ''));
+  } catch (e) { rejectUser(e); }
+  return String(sig || '').replace(/^0x/i, '');
+}
+
 export async function sendKaspaWithKasware(dest, amountKas) {
   const p = kaswareProvider();
   if (!p) throw new Error('KasWare is not installed');

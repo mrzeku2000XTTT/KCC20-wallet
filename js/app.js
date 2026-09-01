@@ -24,11 +24,11 @@ import {
   fetchOwnedUtxos, collectSpendableUtxos, buildSentinelChain, buildRecurringChain, buildHashlockCovenant,
   newHashlockSecret, checkinHop, currentHop, parseXmssKit, p2shFromRedeemHex, spendXmssVault,
   disconnectRpc, buildDcaDrips, sendKasMany, releaseDcaDrip, cancelDcaDrip, isMassError
-} from './tx.js?v=185';
-import { bootDappConnect, pingTttDappFrame, TTT_TREASURY } from './dappConnect.js?v=171';
+} from './tx.js?v=193';
+import { bootDappConnect, pingTttDappFrame, TTT_TREASURY } from './dappConnect.js?v=193';
 import { changenowEstimate, changenowCreate, changenowWidgetUrl, cnFrom } from './changenow.js?v=180';
 import { schedulePersistIframeVault, bootIframeVaultWatch } from './iframeVault.js?v=120';
-import { kronMarkets, quoteKronTrade, executeKronTrade, formatKasSompi, lookupKronTick, liveQuote, tradeCostLines, attachKronLogos, kronCandles, kronLogoFor, quoteKcc20Bridge, executeKcc20Bridge, formatTokenRaw } from './kronTrade.js?v=147';
+import { kronMarkets, quoteKronTrade, executeKronTrade, formatKasSompi, lookupKronTick, liveQuote, tradeCostLines, attachKronLogos, kronCandles, kronLogoFor, quoteKcc20Bridge, executeKcc20Bridge, formatTokenRaw } from './kronTrade.js?v=193';
 import {
   BET_AGENT_ADDR, TTT_TICK, WINDOW_MS, windowBounds, fmtRemain,
   kkdagsHeld, isKcc20Pass, hireCost, maxHireHours,
@@ -50,7 +50,7 @@ import {
   connectKasware, disconnectKasware, bindKaswareEvents, loadKaswarePref, compoundWithKasware,
   ensureKaswareSigner, syncKaswareNetwork, walletIsKaswareChip, autoArmKaswareForWallet,
   fetchKaswareUtxos
-} from './kasware.js?v=163';
+} from './kasware.js?v=193';
 import {
   cookMarkets, cookQuote, cookWrappers, pickWrappedMarketId, cookOrderbook, cookCandles,
   cookDeploy, cookBuildOrder, cookFillOrder, cookSweep, cookWrap, cookMint,
@@ -58,12 +58,15 @@ import {
   loadAgentJob, saveAgentJob, sompiToKas, kasToSompiNum,
   rememberLaunch, loadLaunched, cookOwnerBalances, cookDeployed,
   cookTickOf, cookBookLevels
-} from './atrade.js?v=102';
+} from './atrade.js?v=193';
 import { SCORPION_MEMORY } from './scorpionMemory.js?v=152';
 import { DESK_PLAYBOOK, scalpGate, factCheck } from './deskPlaybook.js?v=187';
-import { ksocialFeed, KSOCIAL_SITE } from './ksocial.js?v=192';
+import {
+  ksocialFeed, ksocialReplies, ksocialSubmitPost, ksocialSubmitReply, ksocialSubmitVote,
+  ksocialRich, KSOCIAL_MAX
+} from './ksocial.js?v=193';
 
-export const BUILD = '192';
+export const BUILD = '193';
 const DESK_ID_KEY = 'kcc20_desk_id_v1';
 const DESK_VAULT_KEY = 'kcc20_desk_vault_v1';
 
@@ -3148,7 +3151,11 @@ function showBuildApp(name) {
   if (view === 'studio') {
     $('studio-url')?.classList.toggle('hidden', $('studio-engine')?.value !== 'server');
   }
-  if (view === 'ksocial') loadKsocialFeed().catch(err => toast(errText(err)));
+  if (view === 'ksocial') {
+    ksocialThreadId = '';
+    $('ksocial-compose')?.classList.remove('hidden');
+    loadKsocialFeed().catch(err => toast(errText(err)));
+  }
   if (view !== 'studio') {
     $('app-studio')?.classList.remove('playing', 'working');
     const v = $('studio-video');
@@ -3168,27 +3175,167 @@ function openBuildRoadmap() {
   openApps();
 }
 
-async function loadKsocialFeed() {
+let ksocialCursor = '';
+let ksocialThreadId = '';
+let ksocialThreadPost = null;
+let ksocialBusy = false;
+
+function ksocialCardHtml(p, { thread = false } = {}) {
+  if (!p) return '';
+  const quote = p.quote ? `<div class="ksocial-quote"><b>${esc(p.quote.nick || 'anon')}</b><p>${ksocialRich(p.quote.text)}</p></div>` : '';
+  return `
+    <article class="ksocial-card" data-ksid="${esc(p.id)}" data-kspub="${esc(p.pub)}">
+      <b>${esc(p.nick || 'anon')}<em>${esc(p.time)}</em></b>
+      <p>${ksocialRich(p.text)}</p>
+      ${quote}
+      <div class="ksocial-acts">
+        <button type="button" data-ksvote="up" class="${p.isUpvoted ? 'on' : ''}">▲ ${p.up || 0}</button>
+        <span>💬 ${p.replies || 0}</span>
+        ${p.quotes ? `<span>↻ ${p.quotes}</span>` : ''}
+        ${thread ? '' : '<span>Open</span>'}
+      </div>
+    </article>`;
+}
+
+async function loadKsocialFeed({ append = false } = {}) {
   const box = $('ksocial-feed');
   const meta = $('ksocial-meta');
+  const more = $('ksocial-more');
   if (!box) return;
-  box.innerHTML = '<div class="empty">Indexing K Social…</div>';
-  const pk = String(wallet?.pubKey || '').replace(/^0x/i, '');
-  const data = await ksocialFeed({ requesterPubkey: pk, limit: 24 });
-  if (meta) {
-    meta.textContent = 'K Social · ' + (data.count ? data.count + ' users · ' : '') + data.source
-      + ' · kaspatalk indexer';
+  if (!append) {
+    ksocialThreadId = '';
+    ksocialThreadPost = null;
+    ksocialCursor = '';
+    $('ksocial-compose')?.classList.remove('hidden');
+    box.innerHTML = '<div class="empty">Indexing Kaposts…</div>';
   }
-  if (!data.posts.length) {
-    box.innerHTML = '<div class="empty">Indexer returned no posts. Open <a href="' + KSOCIAL_SITE + '" target="_blank" rel="noopener">k-social.network</a>.</div>';
+  const data = await ksocialFeed({
+    wallet,
+    limit: 24,
+    before: append ? ksocialCursor : ''
+  });
+  if (meta) {
+    meta.textContent = 'Kaposts · kaspatalk'
+      + (data.count ? ' · ' + data.count + ' users' : '')
+      + ' · in this wallet';
+  }
+  ksocialCursor = data.nextCursor || '';
+  if (more) more.classList.toggle('hidden', !data.hasMore || !ksocialCursor);
+  if (!data.posts.length && !append) {
+    box.innerHTML = '<div class="empty">Indexer returned no posts yet. Pull Refresh, or post from this wallet — it lands on K Social after the next index.</div>';
     return;
   }
-  box.innerHTML = data.posts.map(p => `
-    <a class="ksocial-card" href="${esc(p.href)}" target="_blank" rel="noopener">
-      <b>${esc(p.nick || 'anon')}<em>${esc(p.time)}${p.contents ? ' · ' + p.contents + ' posts' : ''}</em></b>
-      <p>${esc(p.text)}</p>
-    </a>
-  `).join('') + '<a class="ksocial-card" href="' + KSOCIAL_SITE + '" target="_blank" rel="noopener"><b>Open k-social.network</b><p>Post, follow, and vote on Kaspa L1.</p></a>';
+  const html = data.posts.map(p => ksocialCardHtml(p)).join('');
+  if (append) box.insertAdjacentHTML('beforeend', html);
+  else box.innerHTML = html;
+}
+
+async function openKsocialThread(id, fallback) {
+  const box = $('ksocial-feed');
+  if (!box || !id) return;
+  ksocialThreadId = id;
+  $('ksocial-compose')?.classList.add('hidden');
+  $('ksocial-more')?.classList.add('hidden');
+  box.innerHTML = '<div class="empty">Opening thread…</div>';
+  const data = await ksocialReplies({ wallet, postId: id });
+  const post = data.post || fallback || { id, nick: 'post', text: '', pub: '' };
+  ksocialThreadPost = post;
+  const replies = data.replies || [];
+  box.innerHTML = `
+    <p class="ksocial-thread-head">Thread · replies stay in this wallet</p>
+    ${ksocialCardHtml(post, { thread: true })}
+    ${replies.map(r => ksocialCardHtml(r, { thread: true })).join('') || '<div class="empty">No replies yet.</div>'}
+    <div class="ksocial-compose">
+      <textarea id="ksocial-reply" rows="2" maxlength="${KSOCIAL_MAX}" placeholder="Reply on-chain…"></textarea>
+      <div class="ksocial-compose-row">
+        <span>PIN signs a k:1:reply self-send</span>
+        <button type="button" class="btn btn-gold" id="ksocial-reply-go">Reply</button>
+      </div>
+    </div>`;
+}
+
+function closeKsocialThread() {
+  ksocialThreadId = '';
+  ksocialThreadPost = null;
+  $('ksocial-compose')?.classList.remove('hidden');
+  loadKsocialFeed().catch(err => toast(errText(err)));
+}
+
+function syncKsocialCount() {
+  const n = ($('ksocial-text')?.value || '').length;
+  if ($('ksocial-count')) $('ksocial-count').textContent = n + ' / ' + KSOCIAL_MAX;
+}
+
+async function postKsocial() {
+  if (ksocialBusy) return;
+  if (isTestnet()) { toast('K Social / Kaposts is mainnet. Switch Network off TN10.'); return; }
+  const text = ($('ksocial-text')?.value || '').trim();
+  if (!text) { toast('Type a post first'); return; }
+  if (!wallet) { toast('Open a wallet first'); return; }
+  ksocialBusy = true;
+  try {
+    await requirePin('Post on K Social');
+    toast('Signing k:1:post…');
+    const res = await ksocialSubmitPost({ wallet, text });
+    if ($('ksocial-text')) $('ksocial-text').value = '';
+    syncKsocialCount();
+    toast('Posted · indexer will pick it up');
+    setTimeout(() => loadKsocialFeed().catch(() => {}), 2500);
+    if (res?.txId) {
+      openSheet('Posted on K Social', `
+        <p class="muted" style="text-align:left;">Self-send with k:1:post payload. Same path as KaChat — the kaspatalk indexer reads the chain and the post shows on Kaposts / k-social.network.</p>
+        ${txidBlock(res.txId)}
+        <div class="kv"><span class="k">Fee</span><span class="v">${Number(res.feeKas || 0).toFixed(6)} KAS</span></div>
+      `, { confirm: 'Done', cancel: false, onConfirm: () => closeSheet() });
+    }
+  } catch (e) {
+    if (errText(e) === 'cancelled') return;
+    toast(errText(e));
+  } finally {
+    ksocialBusy = false;
+  }
+}
+
+async function replyKsocial() {
+  if (ksocialBusy || !ksocialThreadId) return;
+  if (isTestnet()) { toast('K Social is mainnet. Switch off TN10.'); return; }
+  const text = ($('ksocial-reply')?.value || '').trim();
+  if (!text) { toast('Type a reply'); return; }
+  ksocialBusy = true;
+  try {
+    await requirePin('Reply on K Social');
+    toast('Signing k:1:reply…');
+    await ksocialSubmitReply({
+      wallet,
+      text,
+      postId: ksocialThreadId,
+      parentPubkey: ksocialThreadPost?.pub || ''
+    });
+    toast('Reply broadcast · wait for indexer');
+    await openKsocialThread(ksocialThreadId, ksocialThreadPost);
+  } catch (e) {
+    if (errText(e) === 'cancelled') return;
+    toast(errText(e));
+  } finally {
+    ksocialBusy = false;
+  }
+}
+
+async function voteKsocial(id, pub) {
+  if (ksocialBusy || !id || !pub) return;
+  if (isTestnet()) { toast('K Social is mainnet. Switch off TN10.'); return; }
+  ksocialBusy = true;
+  try {
+    await requirePin('Vote on K Social');
+    toast('Signing k:1:vote…');
+    await ksocialSubmitVote({ wallet, postId: id, authorPubkey: pub, upvote: true });
+    toast('Upvote broadcast');
+  } catch (e) {
+    if (errText(e) === 'cancelled') return;
+    toast(errText(e));
+  } finally {
+    ksocialBusy = false;
+  }
 }
 
 function openTtt() {
@@ -10641,7 +10788,42 @@ function bind() {
   click('ttt-fund', openTttFund);
   click('ttt-sweep', () => openTreasurySweep().catch(e => toast(errText(e))));
   click('build-close', closeBuildRoadmap);
-  click('build-back', () => showBuildApp('home'));
+  click('build-back', () => {
+    if (!$('app-ksocial')?.classList.contains('hidden') && ksocialThreadId) {
+      closeKsocialThread();
+      return;
+    }
+    showBuildApp('home');
+  });
+  click('ksocial-refresh', () => loadKsocialFeed().catch(err => toast(errText(err))));
+  click('ksocial-post', () => postKsocial().catch(err => toast(errText(err))));
+  click('ksocial-more', () => loadKsocialFeed({ append: true }).catch(err => toast(errText(err))));
+  $('ksocial-text')?.addEventListener('input', syncKsocialCount);
+  $('ksocial-feed')?.addEventListener('click', e => {
+    const vote = e.target.closest('[data-ksvote]');
+    const card = e.target.closest('[data-ksid]');
+    if (e.target.closest('#ksocial-reply-go')) {
+      replyKsocial().catch(err => toast(errText(err)));
+      return;
+    }
+    if (e.target.closest('a, img, textarea, input')) return;
+    if (vote && card) {
+      e.preventDefault();
+      e.stopPropagation();
+      voteKsocial(card.dataset.ksid, card.dataset.kspub).catch(err => toast(errText(err)));
+      return;
+    }
+    if (card?.dataset.ksid && !ksocialThreadId) {
+      openKsocialThread(card.dataset.ksid, {
+        id: card.dataset.ksid,
+        pub: card.dataset.kspub,
+        nick: card.querySelector('b')?.childNodes?.[0]?.textContent || 'anon',
+        text: card.querySelector('p')?.textContent || '',
+        time: card.querySelector('em')?.textContent || '',
+        up: 0, replies: 0
+      }).catch(err => toast(errText(err)));
+    }
+  });
   click('studio-go', () => generateStudio().catch(err => toast(errText(err))));
   click('studio-pause', toggleStudioPlay);
   $('studio-video')?.addEventListener('click', toggleStudioPlay);

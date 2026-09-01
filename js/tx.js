@@ -4,7 +4,7 @@ import {
   validateAndCleanUtxo, deepCloneAndFreeze, kasToSompi,
   kaspaRestBase, networkId
 } from './crypto.js?v=90';
-import { kaswareSigning, sendKaspaWithKasware, sendKrc20WithKasware, signPsktWithKasware, fetchKaswareUtxos } from './kasware.js?v=163';
+import { kaswareSigning, sendKaspaWithKasware, sendKrc20WithKasware, signPsktWithKasware, fetchKaswareUtxos } from './kasware.js?v=193';
 import * as kron from '../vendor/kron-sdk/index.js';
 
 function API() { return kaspaRestBase(); }
@@ -598,6 +598,99 @@ export async function sendKasMany({ wallet, outputs, utxos, signWithKasware = fa
   }
   if (!txId) throw new Error(lastErr || 'DCA fund broadcast failed');
   return { txId, feeKas: Number(paidFee) / 1e8, outputs: dests.length, node: url };
+}
+
+/** Self-send with a full UTF-8 payload (K Social k:1:… posts). Does not drop payloads > 80 bytes. */
+export async function sendPayloadSelf({ wallet, payload, utxos }) {
+  const k = await loadKaspaSdk();
+  const external = !!(kaswareSigning(wallet) && !cleanPrivHex(wallet?.privKey));
+  const payBytes = payload instanceof Uint8Array
+    ? payload
+    : new TextEncoder().encode(String(payload || ''));
+  if (!payBytes.length) throw new Error('Empty K payload');
+  if (payBytes.length > 20000) throw new Error('Post is too large for a Kaspa payload');
+  let entries = restUtxosToEntries(utxos || [], wallet.address)
+    .map(e => ({ ...e, privKey: e.privKey || wallet.privKey || '', redeemHex: e.redeemHex || '' }))
+    .filter(e => !e.redeemHex);
+  if (!entries.length) throw new Error('Need KAS in this wallet to post on K Social (self-send + fee).');
+  entries = [...entries].sort((a, b) => (a.amount < b.amount ? 1 : -1));
+  const dust = 200_000n;
+  const feeGuess = 1_200_000n + BigInt(payBytes.length) * 2_000n;
+  let chosen = [];
+  let sum = 0n;
+  for (const e of entries) {
+    chosen.push(e);
+    sum += e.amount;
+    if (sum >= dust + feeGuess) break;
+    if (chosen.length >= 4) break;
+  }
+  if (sum < dust + feeGuess) {
+    throw new Error('Need about ' + (Number(dust + feeGuess) / 1e8).toFixed(3) + ' KAS here to post (dust to yourself + network fee).');
+  }
+  entries = chosen;
+  const { rpc, url } = await connectPublicNode();
+  const net = networkId();
+  const feeRate = await nodeFeeRate(rpc);
+  let pendingList = [];
+  let lastErr = '';
+  try {
+    const built = await k.createTransactions({
+      entries,
+      outputs: [{ address: wallet.address, amount: dust }],
+      changeAddress: wallet.address,
+      priorityFee: 0n,
+      feeRate,
+      sigOpCount: 1,
+      networkId: net,
+      payload: payBytes
+    });
+    pendingList = built.transactions || [];
+  } catch (e) {
+    lastErr = errText(e);
+  }
+  if (!pendingList.length) {
+    const fee = feeGuess;
+    const ins = [];
+    let got = 0n;
+    for (const e of entries) {
+      ins.push(e);
+      got += e.amount;
+      if (got >= dust + fee) break;
+    }
+    const change = got - dust - fee;
+    const outs = [{ address: wallet.address, amount: dust }];
+    if (change > dust) outs.push({ address: wallet.address, amount: change });
+    const tx = k.createTransaction(ins, outs, 0n, payBytes, 1);
+    pendingList = [{ transaction: tx }];
+    entries = ins;
+  }
+  for (const p of pendingList) {
+    try { p.transaction.payload = payBytes; } catch {}
+  }
+  const priv = !external && cleanPrivHex(wallet?.privKey) ? new k.PrivateKey(cleanPrivHex(wallet.privKey)) : null;
+  let txId = null;
+  let paidFee = 0n;
+  for (let p = 0; p < pendingList.length; p++) {
+    const tx = pendingList[p].transaction;
+    tx.version = 1;
+    try { tx.payload = payBytes; } catch {}
+    prepInputs(tx, { sigOpCount: 0, computeBudget: 10 });
+    try { k.updateTransactionMass(net, tx); } catch {}
+    if (external) {
+      const json = tx.serializeToSafeJSON();
+      const signInputs = [...tx.inputs].map((_, i) => ({ index: i, sighashType: 1 }));
+      const signedJson = await signPsktWithKasware(json, signInputs);
+      const signed = k.Transaction.deserializeFromSafeJSON(signedJson);
+      txId = await submitSignedRpc(k, rpc, url, signed, { sigOpCount: 0, computeBudget: 10, lockTime: 0 });
+    } else {
+      if (!priv) throw new Error('Need a native PIN wallet to post on K Social.');
+      const scripts = meetToccataFee(k, tx, priv, entries, 0n, -1);
+      txId = await submitSignedRpc(k, rpc, url, tx, { sigOpCount: 0, computeBudget: 10, lockTime: 0, scripts });
+    }
+    paidFee = txInputSum(tx, entries) - txOutputSum(tx);
+  }
+  if (!txId) throw new Error(lastErr || 'K post broadcast failed');
+  return { txId, feeKas: Number(paidFee) / 1e8, node: url };
 }
 
 export async function buildHashlockCovenant({

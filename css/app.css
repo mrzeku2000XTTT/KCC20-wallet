@@ -1384,13 +1384,61 @@ img { display: block; max-width: 100%; }
   flex: 1; min-height: 0; overflow-y: auto; -webkit-overflow-scrolling: touch;
   margin: 0 -4px 8px;
 }
+.ksocial-bar {
+  display: flex; align-items: center; justify-content: space-between; gap: 8px;
+  flex-shrink: 0;
+}
+.ksocial-bar .build-lede { margin: 0; }
+.ksocial-refresh, .ksocial-more {
+  flex-shrink: 0; height: 28px; padding: 0 10px; border-radius: 999px;
+  background: var(--fill); border: 0.5px solid var(--hairline);
+  color: var(--label-2); font-size: 11px; font-weight: 650;
+}
+.ksocial-more { display: block; width: 100%; height: 36px; margin: 0 0 8px; }
+.ksocial-more.hidden { display: none !important; }
+.ksocial-compose {
+  flex-shrink: 0; margin: 8px 0 10px; padding: 10px;
+  border-radius: 16px; background: var(--glass-2); border: 0.5px solid var(--hairline);
+}
+.ksocial-compose textarea {
+  width: 100%; min-height: 64px; resize: none; border: 0; outline: none;
+  background: transparent; color: var(--label); font-size: 14px; line-height: 1.4;
+}
+.ksocial-compose-row {
+  display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-top: 6px;
+}
+.ksocial-compose-row span { font-size: 11px; color: var(--label-3); }
+.ksocial-compose-row .btn { height: 34px; padding: 0 14px; font-size: 13px; width: auto; }
 .ksocial-card {
   display: block; width: 100%; text-align: left; color: inherit; text-decoration: none;
   padding: 12px 10px; border-bottom: 0.5px solid var(--hairline);
+  background: transparent; border-left: 0; border-right: 0; border-top: 0;
 }
 .ksocial-card b { display: block; font-size: 13px; color: var(--gold-2); }
 .ksocial-card em { font-style: normal; font-size: 11px; color: var(--label-3); margin-left: 6px; }
 .ksocial-card p { margin: 6px 0 0; font-size: 14px; line-height: 1.4; color: var(--label); white-space: pre-wrap; word-break: break-word; }
+.ksocial-quote {
+  margin: 8px 0 0; padding: 8px 10px; border-radius: 12px;
+  background: rgba(255,255,255,0.04); border: 0.5px solid var(--hairline);
+}
+.ksocial-quote b { font-size: 11px; }
+.ksocial-quote p { font-size: 12px; color: var(--label-2); }
+.ksocial-pic {
+  display: block; width: 100%; max-height: 220px; object-fit: cover;
+  border-radius: 12px; margin-top: 8px;
+}
+.ksocial-link { color: var(--teal); word-break: break-all; }
+.ksocial-acts {
+  display: flex; align-items: center; gap: 12px; margin-top: 8px;
+}
+.ksocial-acts button, .ksocial-acts span {
+  background: transparent; border: 0; color: var(--label-3);
+  font-size: 11px; font-weight: 650; padding: 0;
+}
+.ksocial-acts button.on { color: var(--gold-2); }
+.ksocial-thread-head {
+  flex-shrink: 0; font-size: 12px; color: var(--label-2); margin: 0 0 6px;
+}
 .you-grid {
   display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px;
 }

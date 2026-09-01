@@ -25,7 +25,7 @@ import {
   newHashlockSecret, checkinHop, currentHop, parseXmssKit, p2shFromRedeemHex, spendXmssVault,
   disconnectRpc, buildDcaDrips, sendKasMany, releaseDcaDrip, cancelDcaDrip, isMassError
 } from './tx.js?v=196';
-import { bootDappConnect, pingTttDappFrame, TTT_TREASURY } from './dappConnect.js?v=195';
+import { bootDappConnect, pingTttDappFrame, TTT_TREASURY } from './dappConnect.js?v=198';
 import { changenowEstimate, changenowCreate, changenowWidgetUrl, cnFrom } from './changenow.js?v=180';
 import { schedulePersistIframeVault, bootIframeVaultWatch } from './iframeVault.js?v=120';
 import { kronMarkets, quoteKronTrade, executeKronTrade, formatKasSompi, lookupKronTick, liveQuote, tradeCostLines, attachKronLogos, kronCandles, kronLogoFor, quoteKcc20Bridge, executeKcc20Bridge, formatTokenRaw } from './kronTrade.js?v=195';
@@ -67,7 +67,7 @@ import {
   ksocialFeeKas
 } from './ksocial.js?v=196';
 
-export const BUILD = '197';
+export const BUILD = '198';
 const DESK_ID_KEY = 'kcc20_desk_id_v1';
 const DESK_VAULT_KEY = 'kcc20_desk_vault_v1';
 
@@ -1621,18 +1621,57 @@ async function dappCompileVault(spec) {
 }
 
 async function dappSendKas({ dest, amount, amountKas }) {
-  const amt = amountKas || amount;
-  if (!(Number(amt) > 0)) throw new Error('Enter an amount like 0.15');
-  if (!wallet?.address) throw new Error('No wallet');
-  hydrateNativeKey(wallet);
-  const result = await sendKas({ wallet, dest, amountKas: amt });
+  const payer = walletForDapp() || wallet;
+  const amt = String(amountKas || amount || '').trim();
+  if (!(Number(amt) > 0)) throw new Error('Enter an amount of KAS greater than 0');
+  if (!payer?.address) throw new Error('Unlock KCC20 Wallet first');
+  const destOk = validateKaspaAddress(dest, networkId());
+  if (!destOk.isValid) throw new Error(destOk.error || 'Bad destination address');
+  hydrateNativeKey(payer);
+  await loadKaspaSdk();
+  await pingPublicNode();
+  let availableUtxos = [];
+  try {
+    availableUtxos = payer.receiveAddrs?.length > 1
+      ? await fetchOwnedUtxos(payer)
+      : await fetchAddressUtxos(payer.address);
+  } catch {}
+  if (!availableUtxos.length) {
+    try { availableUtxos = await fetchAddressUtxos(payer.address); } catch {}
+  }
+  toast('Sending ' + amt + ' KAS from ' + (payer.name || 'wallet'));
+  const result = await sendKas({
+    wallet: payer,
+    dest,
+    amountKas: amt,
+    utxos: availableUtxos.length ? availableUtxos : undefined
+  });
   afterTx();
+  const sent = Number(result.amountKas || amt);
   return {
     txId: result.txId,
+    amount: String(sent),
+    from: payer.address,
+    to: dest,
     dest,
-    amountKas: Number(result.amountKas || amt),
+    amountKas: sent,
+    feeKas: Number(result.feeKas || 0),
     explorer: result.txId ? ('https://kas.fyi/transaction/' + result.txId) : ''
   };
+}
+
+function dappOpenWallet({ screen, to, amount, amountKas }) {
+  const s = String(screen || 'send').toLowerCase();
+  const dest = String(to || '').trim();
+  const amt = String(amountKas || amount || '').trim();
+  if (s === 'tokens') showPage('tokens');
+  else if (s === 'home') showPage('home');
+  else {
+    showPage('home');
+    openSend({ destination: dest || wallet?.address || '', amountKas: amt, assetKey: 'kas' });
+  }
+  $('tabbar')?.classList.add('show');
+  return { ok: true, screen: s === 'tokens' || s === 'home' ? s : 'send', address: wallet?.address || '', to: dest };
 }
 
 function consumeArgentDeepLink() {
@@ -1687,6 +1726,7 @@ function dappHooks() {
     describeVaultIntent,
     compileVault: dappCompileVault,
     sendKas: dappSendKas,
+    openWallet: dappOpenWallet,
     afterTx
   };
 }

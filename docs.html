@@ -53,14 +53,14 @@
 
     <div class="ok">
       <b>Install (one line)</b>
-      <pre style="margin:10px 0 0">script src="https://kcc-20-wallet.vercel.app/sdk.js?v=166"</pre>
+      <pre style="margin:10px 0 0">script src="https://kcc-20-wallet.vercel.app/sdk.js?v=169"</pre>
       After load: <code>window.kcc20.sdkVersion === "166"</code>
     </div>
 
     <h2>1. Getting started</h2>
     <p>Only call Connect from a <b>user click</b>. Never on page load. Never on app switch. That is the same rule KasWare documents.</p>
 <pre>const s = document.createElement('script');
-s.src = 'https://kcc-20-wallet.vercel.app/sdk.js?v=166';
+s.src = 'https://kcc-20-wallet.vercel.app/sdk.js?v=169';
 s.onload = () => console.log(window.kcc20.sdkVersion); // "166"
 document.head.appendChild(s);
 
@@ -92,7 +92,7 @@ const signed = await kcc.signPskt({
 const { txId } = await kcc.pushTx(signed);</pre>
 
     <div class="warn">
-      After <code>connect()</code> the wallet window <b>closes on purpose</b>. If you still get <code>Connect KCC20 Wallet first</code> on <code>getPublicKey</code> / <code>getUtxoEntries</code>, you are on a stale SDK. Delete <code>window.kcc20</code>, load <code>sdk.js?v=166</code>, hard-reload, Connect once more.
+      After <code>connect()</code> the wallet window <b>closes on purpose</b> so reads stay silent. To self-send KAS (TTT app-store unlock) call <code>request('sendKaspa', { to, amount })</code> — it reopens the popup and the user confirms. Pin <code>sdk.js?v=169</code>.
     </div>
 
     <h2>3. Popup vs silent</h2>

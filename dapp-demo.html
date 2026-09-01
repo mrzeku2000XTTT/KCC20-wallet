@@ -36,6 +36,8 @@
       <button class="ghost" id="kkdag" type="button">KKDAG</button>
       <button class="ghost" id="sign" type="button">Sign PSKT</button>
       <button class="ghost" id="push" type="button">Push signed</button>
+      <button class="ghost" id="sendkas" type="button">Self-send KAS</button>
+      <button class="ghost" id="openw" type="button">Open Send</button>
       <button class="ghost" id="disc" type="button">Disconnect</button>
     </div>
     <textarea id="pskt" placeholder='Paste a PSKT JSON string (txJsonString) to test signPskt'></textarea>
@@ -68,6 +70,19 @@
     document.getElementById('push').onclick = () => {
       const json = document.getElementById('pskt').value.trim();
       api().pushTx(json).then(log).catch(e => log(e.message));
+    };
+    document.getElementById('sendkas').onclick = async () => {
+      try {
+        const acc = await api().getAccounts();
+        const to = (acc && acc[0]) || '';
+        log(await api().request('sendKaspa', { to, amount: '0.002' }));
+      } catch (e) { log(e.message); }
+    };
+    document.getElementById('openw').onclick = async () => {
+      try {
+        const acc = await api().getAccounts();
+        log(await api().request('openWallet', { screen: 'send', to: (acc && acc[0]) || '' }));
+      } catch (e) { log(e.message); }
     };
     document.getElementById('disc').onclick = () => api().disconnect().then(() => log('disconnected')).catch(e => log(e.message));
   </script>

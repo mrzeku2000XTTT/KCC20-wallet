@@ -11,7 +11,7 @@ const HOST_METHODS = [
   'switchNetwork', 'signPskt', 'signPsbt', 'pushTx', 'getUtxoEntries', 'getBalance',
   'getTokenBalance', 'getHoldings', 'getState', 'sendToken', 'sendKcc20', 'payToken', 'payKcc20', 'fundCredits',
   'quoteKron', 'quoteToken', 'buyKron', 'buyToken', 'sellKron', 'sellToken', 'tradeKron', 'tradeToken',
-  'compileVault', 'lockVault', 'sendKas', 'sendKaspa'
+  'compileVault', 'lockVault', 'sendKas', 'sendKaspa', 'openWallet'
 ];
 
 let hooks = null;
@@ -167,6 +167,7 @@ function maybeCloseDappPopup(method) {
       buyKron: 1, buyToken: 1, sellKron: 1, sellToken: 1, tradeKron: 1, tradeToken: 1,
       compileVault: 1, lockVault: 1, sendKas: 1, sendKaspa: 1
     };
+    // openWallet must keep the popup visible (TTT Send / app-store unlock).
     if (!closeAfter[String(method || '')]) return;
     setTimeout(() => closeDappPopupKeepOpener(), 50);
   } catch {}
@@ -736,46 +737,74 @@ async function handleSendKas(req) {
   let w = await ensureUnlocked();
   const origin = req.origin;
   if (!originAllowed(origin)) await handleConnect(req);
-  const amount = String(req.params?.amount ?? req.params?.amountKas ?? req.params?.kas ?? '').trim();
+  w = hooks.getWallet?.() || w;
+  let amount = String(req.params?.amount ?? req.params?.amountKas ?? req.params?.kas ?? '').trim();
   let dest = cleanKaspaDest(
     req.params?.dest || req.params?.to || req.params?.destination || req.params?.destinationAddress || req.params?.recipient || ''
   );
-  if (!(Number(amount) > 0)) throw new Error('Enter an amount of KAS greater than 0');
+  if (!dest) dest = String(w?.address || '');
   const parsed = validateKaspaAddress(dest, netName() === 'kaspa_testnet_10' ? 'testnet-10' : 'mainnet');
   if (!parsed.isValid) {
     throw new Error('Need a full kaspa:q… receive address (not truncated, not kaspa:p). ' + (parsed.error || ''));
   }
   dest = dest.toLowerCase();
+  const selfSend = dest === String(w?.address || '').toLowerCase();
+  if (!(Number(amount) > 0)) amount = '0.002';
   const payBody = async () => {
     const live = hooks.getWallet?.() || w;
     const payerLine = (typeof hooks.payerLabel === 'function' && hooks.payerLabel())
       || (live?.name || 'Wallet') + ' · ' + (live?.address || '');
     return {
       html:
-        '<p class="muted" style="text-align:left;padding:0 0 8px;"><b>Plain KAS send.</b> Not a vault. Argent does not compile a covenant for this.</p>'
+        '<p class="muted" style="text-align:left;padding:0 0 8px;"><b>'
+        + (selfSend ? 'Self-send KAS.' : 'Plain KAS send.')
+        + '</b> You review and confirm here. The dApp never sees your key'
+        + (selfSend ? '. Miner fee only — used to unlock TTT.' : '.')
+        + '</p>'
         + '<div class="kv kv-stack"><span class="k">FROM</span><span class="v">' + esc(payerLine) + '</span></div>'
-        + '<div class="kv"><span class="k">Send</span><span class="v">' + esc(amount) + ' KAS</span></div>'
-        + '<div class="kv kv-stack"><span class="k">TO</span><span class="v">' + esc(dest) + '</span></div>'
+        + '<div class="kv kv-stack"><span class="k">TO</span><span class="v">' + esc(dest) + (selfSend ? ' · self' : '') + '</span></div>'
+        + '<div class="field" style="margin-top:10px;"><label>Amount (KAS)</label>'
+        + '<input id="dapp-kas-amt" type="text" inputmode="decimal" value="' + esc(amount) + '"></div>'
+        + '<p class="muted" style="text-align:left;padding:8px 0 0;">Network fee is extra (~0.001–0.004 KAS). Change stays in this wallet.</p>'
     };
   };
   let view = await payBody();
   await showOverlay({
-    title: 'Send ' + amount + ' KAS',
+    title: selfSend ? 'Self-send KAS' : 'Send KAS',
     origin,
-    approveLabel: 'Send ' + amount + ' KAS',
+    approveLabel: 'Send KAS',
     body: view.html,
     onWalletChange: async () => {
       view = await payBody();
       if ($('dapp-body')) $('dapp-body').innerHTML = view.html;
     }
   });
+  const typed = String($('dapp-kas-amt')?.value || amount).trim();
+  if (!(Number(typed) > 0)) throw new Error('Enter an amount of KAS greater than 0');
+  amount = typed;
   w = hooks.getWallet?.() || w;
+  dest = cleanKaspaDest(dest) || String(w?.address || '').toLowerCase();
   if (typeof hooks.hydrateNativeKey === 'function') hooks.hydrateNativeKey(w);
   if (typeof hooks.requirePin === 'function' && !kaswareSigning(w)) {
     await hooks.requirePin('Send ' + amount + ' KAS');
   }
   if (typeof hooks.sendKas !== 'function') throw new Error('Wallet cannot send KAS from this session');
   return hooks.sendKas({ dest, amount, amountKas: amount, skipPin: true });
+}
+
+async function handleOpenWallet(req) {
+  await ensureBoundPayer();
+  const w = await ensureUnlocked();
+  const origin = req.origin;
+  if (!originAllowed(origin)) await handleConnect(req);
+  const screen = String(req.params?.screen || 'send').toLowerCase();
+  const to = cleanKaspaDest(req.params?.to || req.params?.dest || req.params?.destination || '')
+    || String(w?.address || '');
+  const amount = String(req.params?.amount ?? req.params?.amountKas ?? '').trim();
+  if (typeof hooks.openWallet === 'function') {
+    return hooks.openWallet({ screen, to, amount, amountKas: amount });
+  }
+  return { ok: true, screen, address: w?.address || '', to };
 }
 
 async function dispatch(req) {
@@ -815,6 +844,7 @@ async function dispatch(req) {
   }
   if (method === 'compileVault' || method === 'lockVault') return handleCompileVault(req);
   if (method === 'sendKas' || method === 'sendKaspa') return handleSendKas(req);
+  if (method === 'openWallet') return handleOpenWallet(req);
   throw new Error('Unknown method ' + method);
 }
 

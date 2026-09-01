@@ -24,7 +24,7 @@ import {
   fetchOwnedUtxos, collectSpendableUtxos, buildSentinelChain, buildRecurringChain, buildHashlockCovenant,
   newHashlockSecret, checkinHop, currentHop, parseXmssKit, p2shFromRedeemHex, spendXmssVault,
   disconnectRpc, buildDcaDrips, sendKasMany, releaseDcaDrip, cancelDcaDrip, isMassError
-} from './tx.js?v=196';
+} from './tx.js?v=201';
 import { bootDappConnect, pingTttDappFrame, TTT_TREASURY } from './dappConnect.js?v=198';
 import { changenowEstimate, changenowCreate, changenowWidgetUrl, cnFrom } from './changenow.js?v=180';
 import { schedulePersistIframeVault, bootIframeVaultWatch } from './iframeVault.js?v=120';
@@ -65,9 +65,9 @@ import {
   ksocialFeed, ksocialReplies, ksocialSubmitPost, ksocialSubmitReply, ksocialSubmitVote,
   ksocialRich, KSOCIAL_MAX, ksocialCachedFeed, detectWalletKns, knsNameForPubkey,
   ksocialFeeKas
-} from './ksocial.js?v=196';
+} from './ksocial.js?v=201';
 
-export const BUILD = '200';
+export const BUILD = '201';
 const DESK_ID_KEY = 'kcc20_desk_id_v1';
 const DESK_VAULT_KEY = 'kcc20_desk_vault_v1';
 
@@ -3339,6 +3339,9 @@ async function fillKnsNicks(posts) {
 function ksocialPostError(e) {
   const m = errText(e);
   if (/cancelled/i.test(m)) return m;
+  if (/missing coin data|missing UTXO/i.test(m)) {
+    return 'KasWare could not see this wallet’s coins on the post. Turn KasWare off in You → Settings and Post with the PIN key on tttz.xyz.kas (same address), or Post again.';
+  }
   if (/false stack|failed to verify the signature/i.test(m)) {
     const kwAddr = kaswareConnectedAddress();
     if (!kaswareEnabled()) {

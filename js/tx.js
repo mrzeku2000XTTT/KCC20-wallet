@@ -610,7 +610,7 @@ export function estimateKsocialFeeKas(payloadLen) {
 export async function sendPayloadSelf({ wallet, payload, utxos }) {
   const k = await loadKaspaSdk();
   const nativeHex = cleanPrivHex(wallet?.privKey);
-  const useKasware = !!kaswareSigning(wallet);
+  const useKasware = !!kaswareSigning(wallet) && !nativeHex;
   const payBytes = payload instanceof Uint8Array
     ? payload
     : new TextEncoder().encode(String(payload || ''));
@@ -1644,6 +1644,14 @@ function isNativeP2pkScript(script) {
   return /^20[0-9a-f]{64}ac$/i.test(h);
 }
 
+function outpointId(raw) {
+  if (raw == null) return '';
+  if (typeof raw === 'object') {
+    return String(raw.hex || raw.id || raw.toString?.() || '').replace(/^0x/i, '').toLowerCase();
+  }
+  return String(raw).replace(/^0x/i, '').toLowerCase();
+}
+
 function attachUtxosToSafeJson(json, entries, address) {
   let o;
   try { o = JSON.parse(String(json || '')); } catch { return String(json || ''); }
@@ -1651,14 +1659,17 @@ function attachUtxosToSafeJson(json, entries, address) {
   const ins = tx.inputs || [];
   const map = new Map();
   for (const e of entries || []) {
-    const id = String(e.outpoint?.transactionId || '').replace(/^0x/i, '').toLowerCase();
-    map.set(id + ':' + Number(e.outpoint?.index || 0), e);
+    const id = outpointId(e.outpoint?.transactionId || e.transactionId);
+    map.set(id + ':' + Number(e.outpoint?.index ?? e.index ?? 0), e);
   }
   let missing = 0;
-  for (const inp of ins) {
-    const prev = inp.previousOutpoint || inp.previous_outpoint || {};
-    const id = String(prev.transactionId || prev.transaction_id || '').replace(/^0x/i, '').toLowerCase();
-    const e = map.get(id + ':' + Number(prev.index || 0));
+  for (let i = 0; i < ins.length; i++) {
+    const inp = ins[i];
+    const prev = inp.previousOutpoint || inp.previous_outpoint || inp.previousOutPoint || {};
+    const id = outpointId(prev.transactionId || prev.transaction_id);
+    let e = map.get(id + ':' + Number(prev.index ?? 0));
+    if (!e && entries[i]) e = entries[i];
+    if (!e && entries.length === 1) e = entries[0];
     if (!e) { missing += 1; continue; }
     const script = hexish(e.scriptPublicKey?.script || e.scriptPublicKey);
     const blob = {
@@ -1673,7 +1684,7 @@ function attachUtxosToSafeJson(json, entries, address) {
     inp.utxo = blob;
   }
   if (missing) {
-    throw new Error('Compound PSKT missing UTXO data on ' + missing + ' input(s). Tap Compound again.');
+    throw new Error('KasWare sign is missing coin data on ' + missing + ' input(s). Post again, or turn KasWare off and use this wallet’s PIN key.');
   }
   return JSON.stringify(o);
 }
@@ -1683,7 +1694,7 @@ function assertKaswareP2pkSigs(tx) {
   for (let i = 0; i < ins.length; i++) {
     const sig = hexish(ins[i].signatureScript);
     if (sig.length < 128) {
-      throw new Error('KasWare did not sign input ' + i + ' (false stack if we broadcast). Reject the popup and tap Compound again.');
+      throw new Error('KasWare did not sign input ' + i + '. Reject the popup and Post again, or turn KasWare off and use the PIN key.');
     }
   }
 }

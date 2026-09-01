@@ -62,8 +62,9 @@ import {
 import { SCORPION_MEMORY } from './scorpionMemory.js?v=152';
 import { DESK_PLAYBOOK, scalpGate, factCheck } from './deskPlaybook.js?v=187';
 
-export const BUILD = '188';
+export const BUILD = '189';
 const DESK_ID_KEY = 'kcc20_desk_id_v1';
+const DESK_VAULT_KEY = 'kcc20_desk_vault_v1';
 
 const TOKEN_FALLBACK_LOGO = 'assets/ttt.png';
 
@@ -3888,7 +3889,7 @@ function openBotSheet() {
   haptic();
   openSheet('Bot', `
     <div class="desk-box" style="padding:0;margin:0;">
-      <p class="at-tiny">Local desk. You create its wallet, send it KAS, then sign before it can trade. Keys stay on this phone. Not Binance — KRON AMM. Thin books are skipped. No guaranteed profit.</p>
+      <p class="at-tiny">Covenant++ treasury (kaspa:p, you own it) plus a till key for KRON. Fund from any of your wallets. Sign before it trades. Thin books skipped. No guaranteed profit.</p>
       <p class="at-tiny" id="desk-wallet-line">No desk wallet yet.</p>
       <div class="at-row">
         <label class="field grow"><span>Research ticker</span>
@@ -6115,6 +6116,45 @@ function deskWallet() {
   if (!id) return null;
   return loadWalletList().find(w => w.id === id && w.role === 'desk') || loadWalletList().find(w => w.id === id) || null;
 }
+function botVault() {
+  let addr = '';
+  try { addr = localStorage.getItem(DESK_VAULT_KEY) || ''; } catch {}
+  const list = loadVaults();
+  if (addr) {
+    const hit = list.find(v => v.address === addr);
+    if (hit) return hit;
+  }
+  return list.find(v => v.bot || v.params?.bot) || null;
+}
+async function ensureBotVault() {
+  const existing = botVault();
+  if (existing) return existing;
+  if (!wallet?.pubKey) throw new Error('Unlock a wallet first');
+  await loadKaspaSdk();
+  const built = await buildOwnerEnvelope({ pubkeyHex: wallet.pubKey });
+  const v = {
+    address: built.address,
+    redeemHex: built.redeemHex,
+    scriptHex: built.redeemHex,
+    spkHex: built.spkHex,
+    type: 'life',
+    productId: 'life',
+    name: 'Scorpion Bot',
+    bot: true,
+    status: 'ready',
+    deskId: loadDeskId(),
+    ownerAddress: wallet.address,
+    params: {
+      bot: true,
+      unlockAnytime: true,
+      lifeKind: 'control',
+      lifeLabel: 'Bot treasury'
+    }
+  };
+  saveVault(v);
+  try { localStorage.setItem(DESK_VAULT_KEY, v.address); } catch {}
+  return v;
+}
 function agentWallet() {
   const job = loadAgentJob();
   if (job?.deskId) {
@@ -6126,17 +6166,18 @@ function agentWallet() {
 
 function paintDesk() {
   const dw = deskWallet();
+  const vault = botVault();
   const line = $('desk-wallet-line');
   const st = $('desk-status');
   const job = loadAgentJob();
   if (line) {
-    line.textContent = dw
-      ? ('Desk ' + (dw.address || '').slice(0, 18) + '… · keys on this device')
-      : 'No desk wallet yet. New desk wallet creates a local key you can export.';
+    if (!dw) line.textContent = 'No bot yet. New desk wallet makes a covenant++ treasury (kaspa:p) plus a till key.';
+    else if (vault) line.textContent = 'Treasury ' + shortAddr(vault.address, 12, 8) + ' · till ' + shortAddr(dw.address, 10, 6);
+    else line.textContent = 'Till ' + shortAddr(dw.address, 12, 8) + ' · keys on this device';
   }
   if (st) {
     if (job?.on && job.deskId) st.textContent = (job.last || 'armed') + ' · ' + (job.tick || '');
-    else if (dw) st.textContent = 'Desk funded only after you send it KAS. Sign and deploy to arm.';
+    else if (dw) st.textContent = 'Pick a wallet with KAS, fund the treasury, then sign to deploy.';
   }
 }
 
@@ -6212,15 +6253,89 @@ async function createDeskWallet() {
   list.push(w);
   saveWalletList(list);
   saveDeskId(w.id);
+  const vault = await ensureBotVault();
   paintDesk();
   renderProfile();
-  toast('Desk wallet created. Send it KAS, then sign to deploy. Export the key anytime — it is yours.');
+  toast('Bot treasury ' + shortAddr(vault.address, 10, 6) + ' + till key. Fund from any wallet, then sign.');
 }
 
 function fundDesk() {
+  openFundBotSheet().catch(err => toast(errText(err)));
+}
+
+function fundSources() {
+  const desk = deskWallet();
+  return loadWalletList().filter(w => w.role !== 'desk' && w.id !== desk?.id);
+}
+
+function walletKasLabel(w) {
+  const active = w.id === wallet?.id || w.address === wallet?.address;
+  const sompi = active ? balanceSompi : walletSnap[w.address]?.sompi;
+  return sompi == null ? '…' : formatAmount(sompi) + ' KAS';
+}
+
+async function openFundBotSheet() {
   const dw = deskWallet();
-  if (!dw) { toast('Create the desk wallet first'); return; }
-  openSend({ destination: dw.address, amountKas: $('desk-max')?.value || '1' });
+  if (!dw) { toast('Create the bot first'); return; }
+  const vault = await ensureBotVault();
+  const dest = vault.address || dw.address;
+  haptic();
+  refreshAllWalletSnaps().catch(() => {});
+  const amt0 = $('desk-max')?.value || '1';
+  const rows = fundSources().map(w => {
+    const active = w.id === wallet?.id;
+    const kasTxt = walletKasLabel(w);
+    return `
+      <button class="row token-row" type="button" data-fund-from="${esc(w.id)}">
+        <div class="you-wava ${active ? 'on' : ''}">${youInitial(w.name)}</div>
+        <div style="flex:1;min-width:0">
+          <div class="title">${esc(w.name || 'Wallet')}</div>
+          <div class="sub">${esc(walletKns(w) || shortAddr(w.address, 10, 6))}${active ? ' · this wallet' : ''}</div>
+        </div>
+        <div class="amt"><b>${esc(kasTxt)}</b><em>Send from here</em></div>
+      </button>`;
+  }).join('') || '<div class="empty">No other wallets. New one on You, then fund.</div>';
+  openSheet('Fund bot', `
+    <p class="muted" style="text-align:left;padding:0 0 10px;">KAS leaves the wallet you tap and lands in the <b>covenant++ treasury</b> (${esc(shortAddr(dest, 12, 8))}). The till key only spends after you Sign and deploy. Pick a wallet that actually has KAS.</p>
+    <div class="field"><label>Amount KAS</label>
+      <input id="desk-fund-amt" type="number" min="0.05" step="0.05" value="${esc(amt0)}">
+    </div>
+    <div class="glass list" id="desk-fund-list">${rows}</div>
+  `, { confirm: 'Close', cancel: false });
+  $('desk-fund-list')?.addEventListener('click', e => {
+    const btn = e.target.closest('[data-fund-from]');
+    if (!btn?.dataset.fundFrom) return;
+    fundBotFrom(btn.dataset.fundFrom).catch(err => toast(errText(err)));
+  });
+}
+
+async function fundBotFrom(id) {
+  const src = loadWalletList().find(w => w.id === id);
+  const vault = botVault();
+  const dw = deskWallet();
+  const dest = vault?.address || dw?.address;
+  const amt = Number($('desk-fund-amt')?.value || 1);
+  if (!src) throw new Error('Pick a wallet');
+  if (!dest) throw new Error('Create the bot first');
+  if (!(amt > 0)) throw new Error('Set an amount');
+  hydrateNativeKey(src);
+  if (src.id === wallet?.id || src.address === wallet?.address) {
+    closeSheet();
+    openSend({ destination: dest, amountKas: String(amt) });
+    return;
+  }
+  if (!hexKey(src.privKey)) {
+    toast('Switch to ' + (src.name || 'that wallet') + ' on You first (it has no local key here), then Bot → Send it KAS');
+    return;
+  }
+  await requirePin('Send ' + amt + ' KAS from ' + (src.name || 'wallet') + ' to bot treasury');
+  toast('Sending from ' + (src.name || 'wallet') + '…');
+  const utxos = await fetchAddressUtxos(src.address);
+  if (!utxos.length) throw new Error((src.name || 'Wallet') + ' has 0 KAS');
+  const result = await sendKas({ wallet: src, dest, amountKas: String(amt), utxos });
+  toast('Treasury funded · ' + String(result.txId || '').slice(0, 10) + '…');
+  closeSheet();
+  openBotSheet();
 }
 
 async function showDeskKey() {
@@ -6249,6 +6364,20 @@ async function deployDesk() {
   if (!tick || tick === 'KRON') { toast('Pick a KRON KCC20 tick (e.g. KKDAG), not the venue name'); return; }
   if (!(sizeKas > 0) || !(maxKas > 0)) { toast('Set Size and Max KAS'); return; }
   await requirePin('Sign desk policy: ' + tick + ' · max ' + maxKas + ' KAS from desk wallet');
+  const vault = botVault();
+  if (vault) {
+    try {
+      const vUtxos = await fetchAddressUtxos(vault.address);
+      if (vUtxos.length) {
+        toast('Sweeping treasury into till…');
+        const owner = loadWalletList().find(w => sameAddrPayload(w.address, vault.ownerAddress || vault.walletAddress)) || wallet;
+        await sweepVault({ wallet: owner, vault, utxos: vUtxos, payoutAddr: dw.address });
+        toast('Till loaded from covenant++');
+      }
+    } catch (e) {
+      toast('Treasury still locked / empty · ' + errText(e));
+    }
+  }
   const prev = loadAgentJob();
   saveAgentJob({
     on: true,

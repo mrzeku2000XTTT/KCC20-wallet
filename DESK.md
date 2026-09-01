@@ -16,6 +16,17 @@ KRON is an **on-chain AMM**. A thin pool looks like “no volume” because ther
 | KRON AMM | You sign every spend | Tiny mean-revert if fee < ~80 bps and size < ~2% of pool | Desk wallet + PIN policy |
 | Cook TN10 book | Same as K.COM | Limit/fill | Existing A-Trade Scorpion |
 
+## Covenant++ vs hot key
+
+KRON buys can only fund from a **P2PK** (`kaspa:q`). A covenant cannot be the AMM input.
+
+So the bot is two pieces:
+
+1. **Treasury** — owner-envelope P2SH (`kaspa:p`) on Vault. You own it. Any of your wallets can send KAS in.
+2. **Till** — local desk Schnorr key. After you **Sign and deploy**, leftover treasury is swept into the till for KRON fills.
+
+Stop / Sweep on Vault still returns treasury to you. The till key is exportable because it is yours.
+
 ## Deploy
 
 1. You → **Desk** (or the Scorpion desk card)

@@ -4,7 +4,7 @@ import {
   validateAndCleanUtxo, deepCloneAndFreeze, kasToSompi,
   kaspaRestBase, networkId
 } from './crypto.js?v=90';
-import { kaswareSigning, sendKaspaWithKasware, sendKrc20WithKasware, signPsktWithKasware, fetchKaswareUtxos, repairSafeJson, kaswareEnabled, isKaswareInstalled } from './kasware.js?v=203';
+import { kaswareSigning, sendKaspaWithKasware, sendKrc20WithKasware, signPsktWithKasware, fetchKaswareUtxos, repairSafeJson, kaswareEnabled, isKaswareInstalled, liveKaswareAccount } from './kasware.js?v=204';
 import * as kron from '../vendor/kron-sdk/index.js';
 
 function API() { return kaspaRestBase(); }
@@ -616,7 +616,13 @@ export async function sendPayloadSelf({ wallet, payload, utxos }) {
     : new TextEncoder().encode(String(payload || ''));
   if (!payBytes.length) throw new Error('Empty K payload');
   if (payBytes.length > 20000) throw new Error('Post is too large for a Kaspa payload');
-  const addr = wallet.address;
+  let addr = wallet.address;
+  if (useKasware) {
+    try {
+      const live = await liveKaswareAccount();
+      if (live.address) addr = live.address;
+    } catch {}
+  }
   const { rpc, url } = await connectPublicNode();
   const net = networkId();
   let bag = utxos || [];

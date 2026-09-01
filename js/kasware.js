@@ -111,7 +111,38 @@ export function sameKasAddr(a, b) {
 }
 
 export function kaswareConnectedAddress() {
-  return String(loadKaswarePref().address || '');
+  const a = String(loadKaswarePref().address || '');
+  if (!a || /^0x/i.test(a) || /\[object /i.test(a)) return '';
+  return a;
+}
+
+/** Live KasWare account (whatever the user has selected). Not a hardcoded address. */
+export async function liveKaswareAccount() {
+  const p = kaswareProvider();
+  let address = kaswareConnectedAddress();
+  let pubKey = String(loadKaswarePref().pubKey || '').replace(/^0x/i, '');
+  if (!p) return { address, pubKey };
+  try { await syncKaswareNetwork(); } catch {}
+  try { address = firstAddr(await p.getAccounts()) || address; } catch {}
+  if (!address || !/^kaspa/i.test(address)) {
+    try {
+      const linked = await connectKasware();
+      address = linked.address || address;
+      if (linked.pubKey) pubKey = String(linked.pubKey).replace(/^0x/i, '');
+    } catch {}
+  }
+  try {
+    const livePk = String(await p.getPublicKey() || '').replace(/^0x/i, '');
+    if (livePk && !/^\[object /i.test(livePk)) pubKey = livePk;
+  } catch {}
+  if (address && /^kaspa/i.test(address)) {
+    const pref = loadKaswarePref();
+    pref.enabled = true;
+    pref.address = address;
+    if (pubKey) pref.pubKey = pubKey;
+    saveKaswarePref(pref);
+  }
+  return { address: /^kaspa/i.test(address) ? address : '', pubKey };
 }
 
 export function kaswareSigning(wallet) {
@@ -233,11 +264,24 @@ export function bindKaswareEvents() {
     if (!address) {
       pref.enabled = false;
       pref.address = '';
+      pref.pubKey = '';
     } else {
       pref.address = address;
     }
     saveKaswarePref(pref);
-    window.dispatchEvent(new CustomEvent('kcc20-kasware', { detail: pref }));
+    window.dispatchEvent(new CustomEvent('kcc20-kasware', { detail: { ...pref } }));
+    const prov = kaswareProvider();
+    if (address && prov?.getPublicKey) {
+      prov.getPublicKey().then(pk => {
+        const live = String(pk || '').replace(/^0x/i, '');
+        if (!live || /^\[object /i.test(live) || /^0x/i.test(live)) return;
+        const next = loadKaswarePref();
+        next.address = address;
+        next.pubKey = live;
+        saveKaswarePref(next);
+        window.dispatchEvent(new CustomEvent('kcc20-kasware', { detail: { ...next } }));
+      }).catch(() => {});
+    }
   };
   try { p.on?.('accountsChanged', onAccounts); } catch {}
   try { p.on?.('networkChanged', (net) => {
@@ -262,13 +306,20 @@ export async function kaswarePublicKey() {
   return stored;
 }
 
-export async function signMessageWithKasware(message) {
+export async function signMessageWithKasware(message, params) {
   const p = kaswareProvider();
   if (!p?.signMessage) throw new Error('KasWare cannot sign a K Social post from this browser.');
+  const opts = params && typeof params === 'object' ? params : (params ? { type: String(params) } : { type: 'schnorr' });
   let sig;
   try {
-    sig = await p.signMessage(String(message || ''));
-  } catch (e) { rejectUser(e); }
+    sig = await p.signMessage(String(message || ''), opts);
+  } catch (e1) {
+    try {
+      sig = await p.signMessage(String(message || ''), opts.type || 'schnorr');
+    } catch (e2) {
+      rejectUser(e1);
+    }
+  }
   return String(sig || '').replace(/^0x/i, '');
 }
 
@@ -374,11 +425,15 @@ function withMs(p, ms) {
 export async function fetchKaswareUtxos(address) {
   const p = kaswareProvider();
   if (!p?.getUtxoEntries) return [];
+  const liveAddr = address || kaswareConnectedAddress();
   let rows = [];
   try {
-    rows = await withMs(address ? p.getUtxoEntries(address) : p.getUtxoEntries(), 8000);
-  } catch {
-    try { rows = await withMs(p.getUtxoEntries(), 8000); } catch { return []; }
+    rows = await withMs(p.getUtxoEntries(), 8000);
+  } catch {}
+  if (!Array.isArray(rows) || !rows.length) {
+    try {
+      rows = await withMs(liveAddr ? p.getUtxoEntries(liveAddr) : p.getUtxoEntries(), 8000);
+    } catch { return []; }
   }
   return (Array.isArray(rows) ? rows : []).map(u => {
     const e = u.entry || u;
@@ -396,7 +451,7 @@ export async function fetchKaswareUtxos(address) {
     if (!/^[0-9a-f]{64}$/.test(txid) || !script) return null;
     const amount = e.amount ?? u.amount;
     return {
-      address: address || u.address || '',
+      address: liveAddr || u.address || '',
       outpoint: { transactionId: txid, index: Number(out.index || 0) },
       amount,
       scriptPublicKey: { version: Number(spk.version || 0), script },

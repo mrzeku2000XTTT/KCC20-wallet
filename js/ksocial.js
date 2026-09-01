@@ -3,8 +3,8 @@
    Writes: Kaspa self-send whose payload is k:1:… (indexer picks it up; it lands on
    k-social.network). Do not iframe the website. Do not prepend U+2060 (KaChat-only filter). */
 
-import { loadKaspaSdk, sendPayloadSelf, fetchAddressUtxos, fetchOwnedUtxos, estimateKsocialFeeKas } from './tx.js?v=203';
-import { kaswareSigning, kaswarePublicKey } from './kasware.js?v=203';
+import { loadKaspaSdk, sendPayloadSelf, fetchAddressUtxos, fetchOwnedUtxos, estimateKsocialFeeKas } from './tx.js?v=204';
+import { kaswareSigning, kaswarePublicKey, kaswareEnabled, isKaswareInstalled, liveKaswareAccount, signMessageWithKasware } from './kasware.js?v=204';
 import { knsPrimary, knsDomainsFor } from './kns.js?v=89';
 import { pubkeyToAddress } from './crypto.js?v=100';
 
@@ -334,6 +334,15 @@ async function compressedPubkey(wallet) {
     const pub = new k.PrivateKey(hex.toLowerCase()).toPublicKey().toString();
     return String(pub).replace(/^0x/i, '').toLowerCase();
   }
+  if (kaswareEnabled() && isKaswareInstalled()) {
+    try {
+      const live = await liveKaswareAccount();
+      const fromLive = asCompressed(live.pubKey);
+      if (fromLive) return fromLive;
+    } catch {}
+    const fromKw = asCompressed(await kaswarePublicKey());
+    if (fromKw) return fromKw;
+  }
   if (kaswareSigning(wallet)) {
     const fromKw = asCompressed(await kaswarePublicKey());
     if (fromKw) return fromKw;
@@ -343,6 +352,20 @@ async function compressedPubkey(wallet) {
   throw new Error('Need a secp256k1 key on this wallet to post on K Social.');
 }
 
+function asSchnorrHex(sig) {
+  const s = String(sig || '').replace(/^0x/i, '').trim();
+  if (/^[0-9a-fA-F]{128}$/.test(s)) return s.toLowerCase();
+  try {
+    const bin = atob(s.replace(/\s/g, ''));
+    if (bin.length === 64) {
+      let hex = '';
+      for (let i = 0; i < bin.length; i++) hex += bin.charCodeAt(i).toString(16).padStart(2, '0');
+      return hex;
+    }
+  } catch {}
+  return '';
+}
+
 async function signK(wallet, message) {
   const hex = String(wallet?.privKey || '').replace(/^0x/i, '');
   if (/^[0-9a-fA-F]{64}$/.test(hex)) {
@@ -350,10 +373,16 @@ async function signK(wallet, message) {
     const sig = k.signMessage({ message, privateKey: hex.toLowerCase() });
     return String(sig).replace(/^0x/i, '').toLowerCase();
   }
-  throw new Error('K posts need this wallet’s hex key on the device (PIN wallet). KasWare only approves the small KAS send — it cannot sign the K protocol message.');
+  if (kaswareEnabled() && isKaswareInstalled()) {
+    const raw = await signMessageWithKasware(String(message || ''), { type: 'schnorr' });
+    const sig = asSchnorrHex(raw);
+    if (sig) return sig;
+  }
+  throw new Error('This KasWare account’s hex key is not on this device. Import it on You, or Approve a Schnorr message in KasWare. The KAS self-send still pops after that.');
 }
 
 async function utxosFor(wallet) {
+  if (kaswareEnabled() && isKaswareInstalled()) return fetchAddressUtxos(wallet.address);
   if (wallet?.receiveAddrs?.length > 1) return fetchOwnedUtxos(wallet);
   return fetchAddressUtxos(wallet.address);
 }

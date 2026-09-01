@@ -24,7 +24,7 @@ import {
   fetchOwnedUtxos, collectSpendableUtxos, buildSentinelChain, buildRecurringChain, buildHashlockCovenant,
   newHashlockSecret, checkinHop, currentHop, parseXmssKit, p2shFromRedeemHex, spendXmssVault,
   disconnectRpc, buildDcaDrips, sendKasMany, releaseDcaDrip, cancelDcaDrip, isMassError
-} from './tx.js?v=203';
+} from './tx.js?v=204';
 import { bootDappConnect, pingTttDappFrame, TTT_TREASURY } from './dappConnect.js?v=198';
 import { changenowEstimate, changenowCreate, changenowWidgetUrl, cnFrom } from './changenow.js?v=180';
 import { schedulePersistIframeVault, bootIframeVaultWatch } from './iframeVault.js?v=120';
@@ -49,8 +49,8 @@ import {
   isKaswareInstalled, isDesktopBrowser, kaswareEnabled, kaswareSigning, kaswareConnectedAddress,
   connectKasware, disconnectKasware, bindKaswareEvents, loadKaswarePref, compoundWithKasware,
   ensureKaswareSigner, syncKaswareNetwork, walletIsKaswareChip, autoArmKaswareForWallet,
-  fetchKaswareUtxos, sameKasAddr
-} from './kasware.js?v=203';
+  fetchKaswareUtxos, sameKasAddr, liveKaswareAccount
+} from './kasware.js?v=204';
 import {
   cookMarkets, cookQuote, cookWrappers, pickWrappedMarketId, cookOrderbook, cookCandles,
   cookDeploy, cookBuildOrder, cookFillOrder, cookSweep, cookWrap, cookMint,
@@ -65,9 +65,9 @@ import {
   ksocialFeed, ksocialReplies, ksocialSubmitPost, ksocialSubmitReply, ksocialSubmitVote,
   ksocialRich, KSOCIAL_MAX, ksocialCachedFeed, detectWalletKns, knsNameForPubkey,
   ksocialFeeKas
-} from './ksocial.js?v=203';
+} from './ksocial.js?v=204';
 
-export const BUILD = '203';
+export const BUILD = '204';
 const DESK_ID_KEY = 'kcc20_desk_id_v1';
 const DESK_VAULT_KEY = 'kcc20_desk_vault_v1';
 
@@ -3272,25 +3272,36 @@ let ksocialCursor = '';
 let ksocialThreadId = '';
 let ksocialThreadPost = null;
 let ksocialBusy = false;
+let ksocialAsGen = 0;
 
-function paintKsocialAs() {
+async function paintKsocialAs() {
   const el = $('ksocial-as');
   if (!el) return;
-  const kns = String(wallet?.knsDomain || '').trim();
+  const gen = ++ksocialAsGen;
+  let w = wallet;
+  try {
+    if (kaswareEnabled() && isKaswareInstalled()) w = await ksocialPayer();
+  } catch {}
+  if (gen !== ksocialAsGen) return;
+  const kns = String(w?.knsDomain || '').trim();
   if (kns) {
     el.textContent = 'Posting as ' + kns;
     el.classList.add('on');
     return;
   }
-  el.textContent = 'Posting as ' + (walletPublicName(wallet) || 'this wallet');
+  const name = (kaswareEnabled() && w?.address)
+    ? (shortAddr(w.address, 10, 6) || 'KasWare')
+    : (walletPublicName(w) || 'this wallet');
+  el.textContent = 'Posting as ' + name;
   el.classList.remove('on');
 }
 
 async function refreshKsocialKns() {
   if (!wallet?.address || isTestnet()) { paintKsocialAs(); return; }
   try {
-    const name = await detectWalletKns(wallet);
-    if (name && wallet.knsDomain !== name) {
+    const payer = (kaswareEnabled() && isKaswareInstalled()) ? await ksocialPayer() : wallet;
+    const name = await detectWalletKns(payer);
+    if (name && sameKasAddr(payer.address, wallet.address) && wallet.knsDomain !== name) {
       wallet.knsDomain = name;
       try { saveWallet(); } catch {}
       if ($('card-addr')) $('card-addr').textContent = name;
@@ -3299,19 +3310,29 @@ async function refreshKsocialKns() {
   paintKsocialAs();
 }
 
-function confirmKsocialFee({ title, confirm, rows, kind, opts }) {
+async function confirmKsocialFee({ title, confirm, rows, kind, opts }) {
   const feeKas = ksocialFeeKas(kind, opts);
-  const kns = String(wallet?.knsDomain || '').trim();
+  let payer = wallet;
+  try {
+    if (kaswareEnabled() && isKaswareInstalled()) payer = await ksocialPayer();
+  } catch {}
+  const kns = String(payer?.knsDomain || '').trim();
+  const asName = kns || (kaswareEnabled() ? (shortAddr(payer?.address || '', 10, 6) || 'KasWare') : (walletPublicName(payer) || 'this wallet'));
   const rowHtml = (rows || []).map(([k, v]) =>
     `<div class="kv"><span class="k">${esc(k)}</span><span class="v">${esc(v)}</span></div>`
   ).join('');
+  const fromAddr = shortAddr(payer?.address || wallet?.address || '', 10, 6);
+  const kwOn = !!(kaswareEnabled() && isKaswareInstalled());
   return new Promise((resolve, reject) => {
     openSheet(title, `
       ${rowHtml}
-      ${kns ? `<div class="kv"><span class="k">As</span><span class="v">${esc(kns)}</span></div>` : `<div class="kv"><span class="k">As</span><span class="v">${esc(walletPublicName(wallet) || 'this wallet')}</span></div>`}
+      <div class="kv"><span class="k">As</span><span class="v">${esc(asName)}</span></div>
+      <div class="kv"><span class="k">From</span><span class="v">${esc(fromAddr)}</span></div>
       <div class="kv"><span class="k">Network fee</span><span class="v">~${feeKas.toFixed(4)} KAS</span></div>
-      <div class="kv"><span class="k">This wallet</span><span class="v">${esc(formatAmount(balanceSompi))} KAS</span></div>
-      <p class="muted" style="text-align:left;padding-top:8px;">On-chain self-send. Change stays in this wallet. No KasWare needed if this PIN wallet holds the key${kns ? ' — KNS ' + esc(kns) + ' is linked to this address' : ''}.</p>
+      ${kwOn ? '' : `<div class="kv"><span class="k">This wallet</span><span class="v">${esc(formatAmount(balanceSompi))} KAS</span></div>`}
+      <p class="muted" style="text-align:left;padding-top:8px;">${kwOn
+        ? 'KasWare will pop a self-send to the account that is connected right now. Change stays there. Switch KasWare accounts and post again — no refresh.'
+        : ('On-chain self-send. Change stays in this wallet.' + (kns ? ' KNS ' + esc(kns) + ' is linked to this address.' : ''))}</p>
     `, {
       confirm: confirm || title,
       gold: true,
@@ -3378,13 +3399,46 @@ function remindKasware(kind) {
   });
 }
 
+async function ksocialPayer() {
+  if (!wallet) throw new Error('Open a wallet first');
+  const w = { ...wallet };
+  hydrateNativeKey(w);
+  if (!kaswareEnabled() || !isKaswareInstalled()) return w;
+  const live = await liveKaswareAccount();
+  if (!live.address) return w;
+  const homeHex = hexKey(w.privKey);
+  const homeMatches = !!(homeHex && sameKasAddr(w.address, live.address));
+  w.address = live.address;
+  w.kasware = true;
+  if (live.pubKey) w.pubKey = live.pubKey;
+  if (!homeMatches) {
+    w.privKey = '';
+    if (!sameKasAddr(wallet.address, live.address)) w.knsDomain = '';
+  }
+  const hit = loadWalletList().find(x => hexKey(x.privKey) && sameKasAddr(x.address, live.address));
+  if (hit) {
+    w.privKey = hexKey(hit.privKey);
+    if (hit.knsDomain) w.knsDomain = hit.knsDomain;
+    if (hit.pubKey) w.pubKey = hit.pubKey;
+    if (hit.receiveAddrs) w.receiveAddrs = hit.receiveAddrs;
+  }
+  if (!w.knsDomain && live.address && !isTestnet()) {
+    try {
+      const name = await detectWalletKns(w);
+      if (name) w.knsDomain = name;
+    } catch {}
+  }
+  return w;
+}
+
 async function ksocialSignerGate() {
   if (!wallet) throw new Error('Open a wallet first');
-  hydrateNativeKey(wallet);
-  if (hexKey(wallet.privKey)) return;
+  const payer = await ksocialPayer();
+  if (hexKey(payer.privKey)) return payer;
+  if (kaswareEnabled() && isKaswareInstalled() && payer.address) return payer;
   await new Promise((resolve, reject) => {
-    openSheet('Need this wallet’s key', `
-      <p class="muted" style="text-align:left;">Home is ${esc(shortAddr(wallet.address || '', 12, 8))}. K posts are signed with the hex key on this device (PIN). Import that key for this same kaspa:q address if it is not already here. KasWare being on the same account does not block the post.</p>
+    openSheet('Need a signer', `
+      <p class="muted" style="text-align:left;">Turn on KasWare in You → Settings (the account you want to post from), or import that account’s hex key. Post is a self-send from whichever KasWare account is connected right now — not a hardcoded wallet.</p>
     `, {
       confirm: 'Got it',
       gold: true,
@@ -3537,10 +3591,12 @@ async function postKsocial() {
   }
   ksocialBusy = true;
   try {
-    await ksocialSignerGate();
+    const payer = await ksocialSignerGate();
     if (!kaswareEnabled()) await requirePin('Post on K Social');
-    toast(kaswareEnabled() ? 'Approve the self-send in KasWare…' : 'Signing post…');
-    const res = await ksocialSubmitPost({ wallet, text });
+    toast(kaswareEnabled()
+      ? (hexKey(payer?.privKey) ? 'Approve the self-send in KasWare…' : 'Approve in KasWare (message, then self-send)…')
+      : 'Signing post…');
+    const res = await ksocialSubmitPost({ wallet: payer, text });
     if ($('ksocial-text')) $('ksocial-text').value = '';
     syncKsocialCount();
     const box = $('ksocial-feed');
@@ -3549,8 +3605,8 @@ async function postKsocial() {
       if (empty) empty.remove();
       box.insertAdjacentHTML('afterbegin', ksocialCardHtml({
         id: res.txId || ('local-' + Date.now()),
-        pub: wallet.pubKey || '',
-        nick: wallet.knsDomain || walletPublicName(wallet),
+        pub: payer.pubKey || '',
+        nick: payer.knsDomain || walletPublicName(payer),
         text,
         time: 'now',
         up: 0,
@@ -3560,7 +3616,7 @@ async function postKsocial() {
     toast('Posted');
     if (res?.txId) {
       openSheet('Posted', `
-        <p class="muted" style="text-align:left;">On-chain. ${wallet?.knsDomain ? 'Shown as ' + esc(wallet.knsDomain) + '. ' : ''}Fee is the network cost of the self-send.</p>
+        <p class="muted" style="text-align:left;">On-chain. ${payer?.knsDomain ? 'Shown as ' + esc(payer.knsDomain) + '. ' : ''}Fee is the network cost of the self-send.</p>
         ${txidBlock(res.txId)}
         <div class="kv"><span class="k">Fee</span><span class="v">${Number(res.feeKas || 0).toFixed(6)} KAS</span></div>
       `, { confirm: 'Done', cancel: false, onConfirm: () => closeSheet() });
@@ -3593,11 +3649,13 @@ async function replyKsocial() {
   }
   ksocialBusy = true;
   try {
-    await ksocialSignerGate();
+    const payer = await ksocialSignerGate();
     if (!kaswareEnabled()) await requirePin('Reply on K Social');
-    toast(kaswareEnabled() ? 'Approve the self-send in KasWare…' : 'Signing reply…');
+    toast(kaswareEnabled()
+      ? (hexKey(payer?.privKey) ? 'Approve the self-send in KasWare…' : 'Approve in KasWare (message, then self-send)…')
+      : 'Signing reply…');
     const res = await ksocialSubmitReply({
-      wallet,
+      wallet: payer,
       text,
       postId: ksocialThreadId,
       parentPubkey: ksocialThreadPost?.pub || ''
@@ -3612,8 +3670,8 @@ async function replyKsocial() {
     if (compose) {
       compose.insertAdjacentHTML('beforebegin', ksocialCardHtml({
         id: res?.txId || ('local-' + Date.now()),
-        pub: wallet.pubKey || '',
-        nick: wallet.knsDomain || walletPublicName(wallet),
+        pub: payer.pubKey || '',
+        nick: payer.knsDomain || walletPublicName(payer),
         text,
         time: 'now',
         up: 0,
@@ -3647,10 +3705,12 @@ async function voteKsocial(id, pub) {
   }
   ksocialBusy = true;
   try {
-    await ksocialSignerGate();
+    const payer = await ksocialSignerGate();
     if (!kaswareEnabled()) await requirePin('Vote on K Social');
-    toast(kaswareEnabled() ? 'Approve the self-send in KasWare…' : 'Signing vote…');
-    const res = await ksocialSubmitVote({ wallet, postId: id, authorPubkey: pub, upvote: true });
+    toast(kaswareEnabled()
+      ? (hexKey(payer?.privKey) ? 'Approve the self-send in KasWare…' : 'Approve in KasWare (message, then self-send)…')
+      : 'Signing vote…');
+    const res = await ksocialSubmitVote({ wallet: payer, postId: id, authorPubkey: pub, upvote: true });
     paintKsocialVote(id, 1);
     toast('Upvoted · ' + Number(res?.feeKas || ksocialFeeKas('vote', { postId: id, authorPubkey: pub })).toFixed(4) + ' KAS fee');
   } catch (e) {

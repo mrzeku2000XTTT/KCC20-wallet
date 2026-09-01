@@ -3,8 +3,10 @@
    Writes: Kaspa self-send whose payload is k:1:… (indexer picks it up; it lands on
    k-social.network). Do not iframe the website. Do not prepend U+2060 (KaChat-only filter). */
 
-import { loadKaspaSdk, sendPayloadSelf, fetchAddressUtxos, fetchOwnedUtxos } from './tx.js?v=195';
+import { loadKaspaSdk, sendPayloadSelf, fetchAddressUtxos, fetchOwnedUtxos, estimateKsocialFeeKas } from './tx.js?v=196';
 import { kaswareSigning, kaswarePublicKey } from './kasware.js?v=195';
+import { knsPrimary, knsDomainsFor } from './kns.js?v=89';
+import { pubkeyToAddress } from './crypto.js?v=100';
 
 export const KSOCIAL_SITE = 'https://k-social.network';
 export const KSOCIAL_INDEXER = 'https://mainnet.kaspatalk.net';
@@ -153,6 +155,67 @@ export function ksocialNickForWallet(wallet, pub, fallback) {
   return fallback || '';
 }
 
+const knsByPub = new Map();
+
+function looksLikeHexNick(s) {
+  const t = String(s || '').trim();
+  return !t || /^[0-9a-f]{6,}$/i.test(t);
+}
+
+export async function detectWalletKns(wallet) {
+  if (!wallet?.address) return '';
+  let name = '';
+  try { name = await knsPrimary(wallet.address); } catch {}
+  if (!name) {
+    try {
+      const rows = await knsDomainsFor(wallet.address);
+      name = (rows.find(r => r.verified) || rows[0] || {}).domain || '';
+    } catch {}
+  }
+  if (name && wallet.pubKey) knsByPub.set(String(wallet.pubKey).toLowerCase(), name);
+  return name;
+}
+
+export async function knsNameForPubkey(pub) {
+  const key = String(pub || '').replace(/^0x/i, '').toLowerCase();
+  if (!key) return '';
+  if (knsByPub.has(key)) return knsByPub.get(key);
+  const x = key.length === 66 ? key.slice(2) : key;
+  if (knsByPub.has(x)) return knsByPub.get(x);
+  let name = '';
+  try {
+    const addr = pubkeyToAddress(key);
+    if (addr) {
+      name = await knsPrimary(addr);
+      if (!name) {
+        const rows = await knsDomainsFor(addr);
+        name = (rows.find(r => r.verified) || rows[0] || {}).domain || '';
+      }
+    }
+  } catch {}
+  knsByPub.set(key, name || '');
+  if (x !== key) knsByPub.set(x, name || '');
+  return name || '';
+}
+
+export function ksocialPayloadBytes(kind, opts = {}) {
+  const dummyPk = '02' + '11'.repeat(32);
+  const dummySig = 'aa'.repeat(64);
+  const mentions = '[]';
+  if (kind === 'vote') {
+    return ('k:1:vote:' + dummyPk + ':' + dummySig + ':' + (opts.postId || '') + ':upvote:' + (opts.authorPubkey || dummyPk)).length;
+  }
+  const b64 = b64encode(String(opts.text || ''));
+  if (kind === 'reply') {
+    return ('k:1:reply:' + dummyPk + ':' + dummySig + ':' + (opts.postId || '') + ':' + b64 + ':' + mentions).length;
+  }
+  return ('k:1:post:' + dummyPk + ':' + dummySig + ':' + b64 + ':' + mentions).length;
+}
+
+export function ksocialFeeKas(kind, opts = {}) {
+  return estimateKsocialFeeKas(ksocialPayloadBytes(kind, opts));
+}
+
 function requesterPk(wallet) {
   const p = String(wallet?.pubKey || '').replace(/^0x/i, '');
   if (/^0[23][0-9a-fA-F]{64}$/.test(p)) return p.toLowerCase();
@@ -163,8 +226,10 @@ function requesterPk(wallet) {
 export function mapKPost(p, wallet) {
   if (!p) return null;
   const pub = String(p.userPublicKey || '');
-  const nick = ksocialNickForWallet(wallet, pub, stripMarker(b64decode(p.userNickname)))
-    || String(pub).slice(0, 8);
+  const decoded = stripMarker(b64decode(p.userNickname));
+  const cached = knsByPub.get(pub.toLowerCase()) || knsByPub.get(pub.slice(2).toLowerCase()) || '';
+  const nick = ksocialNickForWallet(wallet, pub, cached || (!looksLikeHexNick(decoded) ? decoded : ''))
+    || 'anon';
   const q = p.quote || null;
   return {
     id: String(p.id || ''),

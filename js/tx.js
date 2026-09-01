@@ -600,6 +600,12 @@ export async function sendKasMany({ wallet, outputs, utxos, signWithKasware = fa
   return { txId, feeKas: Number(paidFee) / 1e8, outputs: dests.length, node: url };
 }
 
+export function estimateKsocialFeeKas(payloadLen) {
+  const n = Math.max(0, Number(payloadLen) || 0);
+  const feeGuess = 2_000_000n + BigInt(n) * 3_000n;
+  return Number(feeGuess) / 1e8;
+}
+
 /** Self-send with a full UTF-8 payload (K Social k:1:… posts). Does not drop payloads > 80 bytes. */
 export async function sendPayloadSelf({ wallet, payload, utxos }) {
   const k = await loadKaspaSdk();

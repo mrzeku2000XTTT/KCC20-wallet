@@ -67,7 +67,7 @@ import {
   ksocialFeeKas
 } from './ksocial.js?v=196';
 
-export const BUILD = '198';
+export const BUILD = '199';
 const DESK_ID_KEY = 'kcc20_desk_id_v1';
 const DESK_VAULT_KEY = 'kcc20_desk_vault_v1';
 
@@ -3409,6 +3409,26 @@ async function ksocialSignerGate() {
   }
 }
 
+function paintKsocialVote(id, delta = 1) {
+  const sid = String(id || '').replace(/[^0-9a-f]/gi, '');
+  if (!sid) return;
+  document.querySelectorAll('.ksocial-card[data-ksid="' + sid + '"] [data-ksvote="up"]').forEach(btn => {
+    const n = Number(String(btn.textContent || '').replace(/[^\d]/g, '') || 0) + delta;
+    btn.textContent = '▲ ' + Math.max(0, n);
+    btn.classList.add('on');
+  });
+}
+
+function paintKsocialReplyCount(id, delta = 1) {
+  const sid = String(id || '').replace(/[^0-9a-f]/gi, '');
+  if (!sid) return;
+  document.querySelectorAll('.ksocial-card[data-ksid="' + sid + '"] .ksocial-acts span').forEach(sp => {
+    if (!String(sp.textContent || '').includes('💬')) return;
+    const n = Number(String(sp.textContent || '').replace(/[^\d]/g, '') || 0) + delta;
+    sp.textContent = '💬 ' + Math.max(0, n);
+  });
+}
+
 function ksocialCardHtml(p, { thread = false } = {}) {
   if (!p) return '';
   const quote = p.quote ? `<div class="ksocial-quote"><b>${esc(p.quote.nick || 'anon')}</b><p>${ksocialRich(p.quote.text)}</p></div>` : '';
@@ -3442,12 +3462,11 @@ async function loadKsocialFeed({ append = false } = {}) {
     if (cached?.posts?.length) {
       box.innerHTML = cached.posts.map(p => ksocialCardHtml(p)).join('');
       if (meta) {
-        meta.textContent = 'Kaposts · kaspatalk'
-          + (cached.count ? ' · ' + cached.count + ' users' : '')
-          + ' · in this wallet';
+        meta.textContent = 'K Social'
+          + (cached.count ? ' · ' + cached.count + ' users' : '');
       }
     } else {
-      box.innerHTML = '<div class="empty">Indexing Kaposts…</div>';
+      box.innerHTML = '<div class="empty">Loading feed…</div>';
     }
   }
   const data = await ksocialFeed({
@@ -3456,14 +3475,13 @@ async function loadKsocialFeed({ append = false } = {}) {
     before: append ? ksocialCursor : ''
   });
   if (meta) {
-    meta.textContent = 'Kaposts · kaspatalk'
-      + (data.count ? ' · ' + data.count + ' users' : '')
-      + ' · in this wallet';
+    meta.textContent = 'K Social'
+      + (data.count ? ' · ' + data.count + ' users' : '');
   }
   ksocialCursor = data.nextCursor || '';
   if (more) more.classList.toggle('hidden', !data.hasMore || !ksocialCursor);
   if (!data.posts.length && !append) {
-    box.innerHTML = '<div class="empty">Indexer returned no posts yet. Pull Refresh, or post from this wallet — it lands on K Social after the next index.</div>';
+    box.innerHTML = '<div class="empty">No posts yet. Write one above.</div>';
     return;
   }
   const html = data.posts.map(p => ksocialCardHtml(p)).join('');
@@ -3484,7 +3502,7 @@ async function openKsocialThread(id, fallback) {
   ksocialThreadPost = post;
   const replies = data.replies || [];
   box.innerHTML = `
-    <p class="ksocial-thread-head">Thread · replies stay in this wallet</p>
+    <p class="ksocial-thread-head">Thread</p>
     ${ksocialCardHtml(post, { thread: true })}
     ${replies.map(r => ksocialCardHtml(r, { thread: true })).join('') || '<div class="empty">No replies yet.</div>'}
     <div class="ksocial-compose">
@@ -3514,7 +3532,7 @@ function syncKsocialCount() {
 
 async function postKsocial() {
   if (ksocialBusy) return;
-  if (isTestnet()) { toast('K Social / Kaposts is mainnet. Switch Network off TN10.'); return; }
+  if (isTestnet()) { toast('K Social is mainnet. Switch Network off TN10.'); return; }
   const text = ($('ksocial-text')?.value || '').trim();
   if (!text) { toast('Type a post first'); return; }
   if (!wallet) { toast('Open a wallet first'); return; }
@@ -3553,11 +3571,10 @@ async function postKsocial() {
         replies: 0
       }));
     }
-    toast('Posted · indexer will pick it up');
-    setTimeout(() => loadKsocialFeed().catch(() => {}), 4000);
+    toast('Posted');
     if (res?.txId) {
-      openSheet('Posted on K Social', `
-        <p class="muted" style="text-align:left;">Self-send with k:1:post payload. ${wallet?.knsDomain ? 'Shown as ' + esc(wallet.knsDomain) + ' in this wallet (KNS). ' : ''}The kaspatalk indexer reads the chain and the post shows on Kaposts / k-social.network.</p>
+      openSheet('Posted', `
+        <p class="muted" style="text-align:left;">On-chain. ${wallet?.knsDomain ? 'Shown as ' + esc(wallet.knsDomain) + '. ' : ''}Fee is the network cost of the self-send.</p>
         ${txidBlock(res.txId)}
         <div class="kv"><span class="k">Fee</span><span class="v">${Number(res.feeKas || 0).toFixed(6)} KAS</span></div>
       `, { confirm: 'Done', cancel: false, onConfirm: () => closeSheet() });
@@ -3593,14 +3610,31 @@ async function replyKsocial() {
     await ksocialSignerGate();
     await requirePin('Reply on K Social');
     toast(kaswareSigning(wallet) ? 'Approve the KAS send in KasWare…' : 'Signing reply…');
-    await ksocialSubmitReply({
+    const res = await ksocialSubmitReply({
       wallet,
       text,
       postId: ksocialThreadId,
       parentPubkey: ksocialThreadPost?.pub || ''
     });
-    toast('Reply broadcast · wait for indexer');
-    await openKsocialThread(ksocialThreadId, ksocialThreadPost);
+    const box = $('ksocial-feed');
+    const compose = box?.querySelector('.ksocial-compose');
+    const empty = box?.querySelector('.empty');
+    if (empty) empty.remove();
+    if ($('ksocial-reply')) $('ksocial-reply').value = '';
+    paintKsocialReplyCount(ksocialThreadId, 1);
+    if (ksocialThreadPost) ksocialThreadPost.replies = Number(ksocialThreadPost.replies || 0) + 1;
+    if (compose) {
+      compose.insertAdjacentHTML('beforebegin', ksocialCardHtml({
+        id: res?.txId || ('local-' + Date.now()),
+        pub: wallet.pubKey || '',
+        nick: wallet.knsDomain || walletPublicName(wallet),
+        text,
+        time: 'now',
+        up: 0,
+        replies: 0
+      }, { thread: true }));
+    }
+    toast('Replied · ' + Number(res?.feeKas || 0).toFixed(4) + ' KAS fee');
   } catch (e) {
     if (errText(e) === 'cancelled') return;
     toast(ksocialPostError(e));
@@ -3631,6 +3665,7 @@ async function voteKsocial(id, pub) {
     await requirePin('Vote on K Social');
     toast(kaswareSigning(wallet) ? 'Approve the KAS send in KasWare…' : 'Signing vote…');
     const res = await ksocialSubmitVote({ wallet, postId: id, authorPubkey: pub, upvote: true });
+    paintKsocialVote(id, 1);
     toast('Upvoted · ' + Number(res?.feeKas || ksocialFeeKas('vote', { postId: id, authorPubkey: pub })).toFixed(4) + ' KAS fee');
   } catch (e) {
     if (errText(e) === 'cancelled') return;

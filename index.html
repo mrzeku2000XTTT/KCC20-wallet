@@ -599,7 +599,7 @@
         </div>
 
         <div id="app-home" class="app-home">
-          <p class="build-lede">Open an app. TTT first. K Social is Kaposts in this wallet — same indexer KaChat uses, no new tab.</p>
+          <p class="build-lede">Open an app. TTT first. K Social is the Kaspa L1 feed — in this wallet, no new tab.</p>
           <div class="app-grid">
             <button type="button" class="app-tile" data-app="ttt">
               <span class="app-ico app-ico-img"><img src="assets/ttt.png" alt=""></span>
@@ -609,7 +609,7 @@
             <button type="button" class="app-tile" data-app="ksocial">
               <span class="app-ico">K</span>
               <b>K Social</b>
-              <span>Kaposts in this wallet — read and post on L1</span>
+              <span>Read and post on Kaspa L1</span>
             </button>
             <button type="button" class="app-tile" data-app="studio">
               <span class="app-ico" aria-hidden="true">▶</span>
@@ -626,19 +626,19 @@
 
         <div id="app-ksocial" class="app-pane hidden">
           <div class="ksocial-bar">
-            <p class="build-lede" id="ksocial-meta">K Social · Kaposts</p>
+            <p class="build-lede" id="ksocial-meta">K Social</p>
             <button type="button" class="ksocial-refresh" id="ksocial-refresh">Refresh</button>
           </div>
           <div class="ksocial-compose" id="ksocial-compose">
             <p class="ksocial-as" id="ksocial-as"></p>
-            <textarea id="ksocial-text" rows="3" maxlength="500" placeholder="Post to K Social. Lands on Kaposts after the indexer sees the tx."></textarea>
+            <textarea id="ksocial-text" rows="3" maxlength="500" placeholder="Write a post"></textarea>
             <div class="ksocial-compose-row">
               <span id="ksocial-count">0 / 500</span>
               <span id="ksocial-fee">~0.030 KAS</span>
               <button type="button" class="btn btn-gold" id="ksocial-post">Post</button>
             </div>
           </div>
-          <div class="ksocial-feed" id="ksocial-feed"><div class="empty">Indexing Kaposts…</div></div>
+          <div class="ksocial-feed" id="ksocial-feed"><div class="empty">Loading feed…</div></div>
           <button type="button" class="ksocial-more hidden" id="ksocial-more">Older posts</button>
         </div>
 
@@ -849,7 +849,7 @@
   <script type="module">
     import('./js/iframeVault.js?v=121').then(function (mod) {
       return (mod.restoreIframeVault ? mod.restoreIframeVault() : Promise.resolve()).then(function () {
-        return import('./js/app.js?v=198');
+        return import('./js/app.js?v=199');
       });
     }).catch(function (err) {
       console.error(err);

@@ -67,7 +67,7 @@ import {
   ksocialFeeKas
 } from './ksocial.js?v=196';
 
-export const BUILD = '199';
+export const BUILD = '200';
 const DESK_ID_KEY = 'kcc20_desk_id_v1';
 const DESK_VAULT_KEY = 'kcc20_desk_vault_v1';
 
@@ -2323,7 +2323,15 @@ function renderHoldings() {
         <em class="pnl up">incoming KKDAG</em>
       </div>
     </button>`);
-  const locked = loadVaults().filter(v => v.address && vaultLockedSompi(v) > 0 && !isVaultHistory(v) && v.status !== 'cancelled' && !isDcaVault(v) && !isDdPayVault(v));
+  const locked = loadVaults().filter(v => {
+    if (!v?.address || vaultLockedSompi(v) <= 0) return false;
+    if (isVaultHistory(v) || v.status === 'cancelled' || v.status === 'swept') return false;
+    if (isDcaVault(v) || isDdPayVault(v) || isLifeVault(v)) return false;
+    const sec = remainingLockSec(v.unlockDaa, v.unlockAt);
+    if (v.unlockAnytime || v.params?.unlockAnytime) return false;
+    if (sec != null && sec <= 0) return false;
+    return true;
+  });
   const lockRows = locked.map(v => {
     const sec = remainingLockSec(v.unlockDaa, v.unlockAt);
     const lockedNow = sec == null || sec > 0;

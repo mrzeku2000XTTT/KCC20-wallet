@@ -11,8 +11,8 @@ import {
   fetchKcc20Portfolio, fetchKrc20Portfolio, fetchKcc20PortfolioMany, fetchKrc20PortfolioMany,
   fetchKronAddrTrades, fetchKronTokenUtxos, fetchKronAddrHoldings, KRON_IDX,
   krc20Logo, toTokenRaw, setVaultOwner, kcc20Identicon, VAULT_GROUPS, LIFE_KINDS, lifeKindMeta
-} from './kcc20.js?v=123';
-import { parseIntent, describeIntent, askFor, parseDurationField, interpretVaultChat, normalizeChat, normalizeVaultType } from './intent.js?v=123';
+} from './kcc20.js?v=124';
+import { parseIntent, describeIntent, askFor, parseDurationField, interpretVaultChat, normalizeChat, normalizeVaultType } from './intent.js?v=124';
 import { parse as parseSilArtifact, redeemHex as silRedeemHex } from './silverscript.js?v=184';
 import { payloadFromAddress } from './script.js?v=90';
 import { explainTransaction, scorpionAnswer } from './scorpion.js?v=114';
@@ -27,7 +27,7 @@ import {
 } from './tx.js?v=204';
 import { bootDappConnect, pingTttDappFrame, TTT_TREASURY } from './dappConnect.js?v=198';
 import { changenowEstimate, changenowCreate, changenowWidgetUrl, cnFrom } from './changenow.js?v=180';
-import { schedulePersistIframeVault, bootIframeVaultWatch } from './iframeVault.js?v=120';
+import { schedulePersistIframeVault, bootIframeVaultWatch } from './iframeVault.js?v=122';
 import { kronMarkets, quoteKronTrade, executeKronTrade, formatKasSompi, lookupKronTick, liveQuote, tradeCostLines, attachKronLogos, kronCandles, kronLogoFor, quoteKcc20Bridge, executeKcc20Bridge, formatTokenRaw } from './kronTrade.js?v=195';
 import {
   BET_AGENT_ADDR, TTT_TICK, WINDOW_MS, windowBounds, fmtRemain,
@@ -67,7 +67,7 @@ import {
   ksocialFeeKas
 } from './ksocial.js?v=204';
 
-export const BUILD = '204';
+export const BUILD = '205';
 const DESK_ID_KEY = 'kcc20_desk_id_v1';
 const DESK_VAULT_KEY = 'kcc20_desk_vault_v1';
 
@@ -143,6 +143,15 @@ function isLifeVault(v) {
   return v?.type === 'life' || !!v?.lifeKind || !!v?.params?.lifeKind;
 }
 
+function isControlGhost(v) {
+  if (!v || v.bot || v.params?.bot) return false;
+  const kind = String(v.lifeKind || v.params?.lifeKind || '').toLowerCase();
+  const name = String(v.name || v.params?.lifeLabel || '').trim();
+  if (kind === 'control') return true;
+  if (/^control$/i.test(name)) return true;
+  return false;
+}
+
 function isDdPayVault(v) {
   if (!v) return false;
   if (v.type === 'ddpay') return true;
@@ -151,6 +160,14 @@ function isDdPayVault(v) {
 
 function purgeDdPayVaults() {
   return purgeVaultsWhere(isDdPayVault);
+}
+
+function purgeControlVaults() {
+  const removed = purgeVaultsWhere(isControlGhost);
+  if (removed.length) {
+    try { schedulePersistIframeVault(); } catch {}
+  }
+  return removed;
 }
 
 function isDcaVault(v) {
@@ -1736,6 +1753,7 @@ async function unlockToHome() {
   if (wallet?.address) setVaultOwner(wallet.address);
   persistSession();
   purgeDdPayVaults();
+  purgeControlVaults();
   $('page-lock').classList.remove('active');
   showPage('home');
   $('tabbar').classList.add('show');
@@ -2323,10 +2341,12 @@ function renderHoldings() {
         <em class="pnl up">incoming KKDAG</em>
       </div>
     </button>`);
+  purgeControlVaults();
   const locked = loadVaults().filter(v => {
     if (!v?.address || vaultLockedSompi(v) <= 0) return false;
     if (isVaultHistory(v) || v.status === 'cancelled' || v.status === 'swept') return false;
-    if (isDcaVault(v) || isDdPayVault(v) || isLifeVault(v)) return false;
+    if (isDcaVault(v) || isDdPayVault(v) || isLifeVault(v) || isControlGhost(v)) return false;
+    if (/^control$/i.test(String(v.name || ''))) return false;
     const sec = remainingLockSec(v.unlockDaa, v.unlockAt);
     if (v.unlockAnytime || v.params?.unlockAnytime) return false;
     if (sec != null && sec <= 0) return false;
@@ -2625,7 +2645,8 @@ function setVaultHistory(on) {
 
 function renderVault() {
   purgeDdPayVaults();
-  const all = loadVaults().filter(v => !isLifeVault(v) && !isDdPayVault(v));
+  purgeControlVaults();
+  const all = loadVaults().filter(v => !isLifeVault(v) && !isDdPayVault(v) && !isControlGhost(v));
   const history = all.filter(isVaultHistory);
   const live = all.filter(v => !isVaultHistory(v));
   const mine = showVaultHistory ? history : live;
@@ -2676,7 +2697,9 @@ function renderLifeVaults() {
     b.classList.toggle('on', (b.dataset.lifehist === 'history') === showLifeHistory);
   });
   if (!box) return;
-  let list = loadVaults().filter(isLifeVault);
+  purgeControlVaults();
+  if (lifeFilter !== 'all' && !LIFE_KINDS.some(k => k.id === lifeFilter)) lifeFilter = 'all';
+  let list = loadVaults().filter(v => isLifeVault(v) && !isControlGhost(v));
   list = showLifeHistory ? list.filter(isVaultHistory) : list.filter(v => !isVaultHistory(v));
   if (lifeFilter !== 'all') list = list.filter(v => (v.lifeKind || v.params?.lifeKind) === lifeFilter);
   if (!list.length) {
@@ -2728,7 +2751,7 @@ function openLifeComposer(prefill = {}) {
       </div>
     </div>
     <label class="row" style="padding:10px 0;gap:10px;">
-      <input type="checkbox" id="life-anytime" ${prefill.unlockAnytime || kind === 'control' ? 'checked' : ''}>
+      <input type="checkbox" id="life-anytime" ${prefill.unlockAnytime ? 'checked' : ''}>
       <span>Unlock anytime with PIN</span>
     </label>
     <div class="field" id="life-due-wrap">
@@ -2745,6 +2768,7 @@ function openLifeComposer(prefill = {}) {
       const local = $('life-due')?.value;
       const dueAt = local ? new Date(local).getTime() : 0;
       if (!(amt > 0)) throw new Error('Enter an amount');
+      if (pick === 'control') throw new Error('Control envelopes are gone.');
       if (!anytime && !(dueAt > Date.now())) throw new Error('Pick a future due date, or check unlock anytime');
       const mins = anytime ? 0 : Math.max(1, Math.round((dueAt - Date.now()) / 60000));
       const dueLabel = anytime ? '' : formatUtc(dueAt);
@@ -2772,7 +2796,7 @@ function openLifeComposer(prefill = {}) {
     const b = e.target.closest('[data-pickkind]');
     if (!b) return;
     $('life-kind-pick').querySelectorAll('button').forEach(x => x.classList.toggle('on', x === b));
-    if (b.dataset.pickkind === 'control' && $('life-anytime')) $('life-anytime').checked = true;
+    if (b.dataset.pickkind === 'save' && $('life-anytime')) $('life-anytime').checked = false;
     syncAnytime();
   });
 }
@@ -8912,8 +8936,10 @@ async function maybeAutoUnlock() {
     const daa = await currentDaa().catch(() => lastDaa || 0);
     lastDaa = daa || lastDaa;
     lastDaaAt = Date.now();
-    const mine = loadVaults().filter(v => v.address && v.type !== 'dca' && v.type !== 'betescrow' && v.type !== 'bet' && (Number(v.unlockDaa) > 0 || Number(v.unlockAt) > 0 || isHopVault(v)));
+    purgeControlVaults();
+    const mine = loadVaults().filter(v => v.address && v.type !== 'dca' && v.type !== 'betescrow' && v.type !== 'bet' && !isControlGhost(v) && (Number(v.unlockDaa) > 0 || Number(v.unlockAt) > 0 || isHopVault(v)));
     for (const v of mine) {
+      if (isControlGhost(v)) continue;
       if (!vaultDue(v, daa)) continue;
       const fail = autoSweepFails.get(v.address) || { n: 0 };
       const backoff = Math.min(180000, 15000 * (2 ** Math.min(fail.n, 3)));
@@ -10278,6 +10304,9 @@ async function buildCovenant(p, explicit, opts = {}) {
       throw new Error('Expected a covenant P2SH (kaspa:p…) got ' + built.address);
     }
     const life = p.type === 'life';
+    if (life && (payload.lifeKind === 'control' || /^control$/i.test(String(payload.lifeLabel || p.name || '')))) {
+      throw new Error('Control envelopes are gone. Use a dated lock or savings.');
+    }
     const vault = {
       type: p.type,
       name: life ? (payload.lifeLabel || p.name) : (p.name || p.type),
@@ -11431,6 +11460,7 @@ async function init() {
   loadSnaps();
   try { wipeTestDcaNow(); } catch {}
   try { purgeDdPayVaults(); } catch {}
+  try { purgeControlVaults(); } catch {}
   try { bind(); } catch (e) {
     console.error(e);
     window.__kccBound = false;

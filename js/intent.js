@@ -13,7 +13,6 @@ const LIFE_LABEL = {
   rent: 'House rent',
   car: 'Car note',
   spend: 'Spending',
-  control: 'Control',
   save: 'Savings'
 };
 
@@ -48,7 +47,6 @@ export function parseLifeKind(text) {
   if (/\b(rent|lease|landlord|apartment|house\s*rent|housing)\b/.test(t)) return 'rent';
   if (/\b(car\s*note|car\s*payment|auto\s*loan|vehicle|car\s+loan)\b/.test(t)) return 'car';
   if (/\b(sav(e|ing|ings)|emergency\s*fund|rainy\s*day)\b/.test(t)) return 'save';
-  if (/\b(control|envelope|earmark|allowance)\b/.test(t)) return 'control';
   if (/\b(spend|spending|grocery|utilities|wifi|electric|bill)\b/.test(t)) return 'spend';
   return null;
 }
@@ -307,12 +305,13 @@ export function parseIntent(text, prev = null) {
     params.durationLabel = duration.label;
   }
   if (type === 'life') {
-    params.lifeKind = lifeKind || (unlockAnytime ? 'control' : (tokenAmt ? 'spend' : null)) || prev?.params?.lifeKind || null;
+    params.lifeKind = lifeKind || (tokenAmt ? 'spend' : null) || prev?.params?.lifeKind || null;
+    if (params.lifeKind === 'control') params.lifeKind = 'spend';
     const rentKind = parseRentKind(raw) || prev?.params?.rentKind || null;
     if (rentKind) params.rentKind = rentKind;
     if (params.lifeKind === 'rent' && rentKind) params.lifeLabel = RENT_LABEL[rentKind] || 'House rent';
     else if (params.lifeKind) params.lifeLabel = LIFE_LABEL[params.lifeKind] || 'Real life';
-    params.unlockAnytime = !!(unlockAnytime || (params.lifeKind === 'control' && !due && !duration));
+    params.unlockAnytime = !!unlockAnytime;
     if (tokenAmt) {
       params.amountToken = tokenAmt.amount;
       params.tick = tokenAmt.tick;
@@ -363,7 +362,7 @@ export function parseIntent(text, prev = null) {
     if (!params.tick) missing.push('KCC20 ticker');
     if (!params.lockMinutes && !params.lockDays) missing.push('how long (e.g. 3 minutes)');
   } else if (type === 'life') {
-    if (!params.lifeKind) missing.push('which real-life case (house rent, car note, spending, savings, or control)');
+    if (!params.lifeKind) missing.push('which real-life case (house rent, car note, spending, or savings)');
     if (params.lifeKind === 'rent' && !params.rentKind) missing.push('what kind of rent (house, apartment, room, office, storage, parking)');
     if (!(params.amountToken && params.tick) && !params.amountKas) {
       missing.push('amount in KAS or a KCC20 amount like 50 KKDAG');
@@ -416,7 +415,7 @@ export function describeIntent(intent) {
   const dur = p.durationLabel || (p.lockMinutes ? `${p.lockMinutes} minutes` : (p.lockDays ? `${p.lockDays} days` : 'a duration'));
   if (intent.type === 'life') {
     const kind = p.lifeLabel || LIFE_LABEL[p.lifeKind] || 'Real life';
-    if (p.unlockAnytime) return `${kind}: lock ${amt} in a control envelope. You can unlock anytime with PIN.`;
+    if (p.unlockAnytime) return `${kind}: lock ${amt}. You can unlock anytime with PIN.`;
     return `${kind}: lock ${amt} until ${p.dueLabel || dur}. Cannot unlock early.`;
   }
   if (intent.type === 'kcc20lock') return `KCC20 freeze: lock ${tokenAmt || ('KCC20' + (p.tick ? ' ' + p.tick : ''))} for ${dur}. Same CLTV as native KAS.`;
@@ -437,7 +436,7 @@ export function askFor(missing) {
   if (!missing?.length) return '';
   const first = missing[0];
   if (first.includes('what kind of rent')) return 'What kind of rent — house, apartment, room, office, storage, or parking?';
-  if (first.includes('which real-life case')) return 'Which case — house rent, car note, spending, savings, or control?';
+  if (first.includes('which real-life case')) return 'Which case — house rent, car note, spending, or savings?';
   if (first.includes('token amount')) return 'How many tokens? Example: “20 KKDAG”.';
   if (first.includes('KCC20 ticker')) return 'Which KCC20 ticker? Example: KKDAG.';
   if (first.includes('KAS or a KCC20')) return 'How much? Example: “1000 kas” or “50 KKDAG”.';

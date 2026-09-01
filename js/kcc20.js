@@ -32,7 +32,6 @@ export const LIFE_KINDS = [
   { id: 'rent', label: 'House rent', tag: '⌂', hint: 'Lock until rent is due. Sweep only after that time.' },
   { id: 'car', label: 'Car note', tag: '🚘', hint: 'Lock until the car payment date.' },
   { id: 'spend', label: 'Spending', tag: '🛒', hint: 'Bills and everyday spend, locked to a date.' },
-  { id: 'control', label: 'Control', tag: '🎛', hint: 'Earmarked KAS. Unlock anytime you say.' },
   { id: 'save', label: 'Savings', tag: '🏦', hint: 'Save until a date, or unlock anytime if you say so.' }
 ];
 

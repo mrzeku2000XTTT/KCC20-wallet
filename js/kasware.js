@@ -83,9 +83,16 @@ export function payWithKaswareLabel() {
 
 function firstAddr(accounts) {
   if (!accounts) return '';
-  if (typeof accounts === 'string') return accounts;
-  if (Array.isArray(accounts)) return String(accounts[0] || '');
-  return String(accounts.address || accounts[0] || '');
+  if (typeof accounts === 'string') {
+    const s = accounts.trim();
+    if (/^\[object /i.test(s) || /^0x[0-9a-f]+$/i.test(s)) return '';
+    return s;
+  }
+  if (Array.isArray(accounts)) return firstAddr(accounts[0]);
+  if (typeof accounts === 'object') {
+    return firstAddr(accounts.address || accounts.addr || accounts.publicAddress || accounts.kaspaAddress || '');
+  }
+  return '';
 }
 
 export function normKasAddr(a) {
@@ -94,10 +101,13 @@ export function normKasAddr(a) {
 
 export function sameKasAddr(a, b) {
   const x = normKasAddr(a), y = normKasAddr(b);
-  if (x && y && x === y) return true;
-  const xp = x.split(':')[1] || '';
-  const yp = y.split(':')[1] || '';
-  return !!(xp && yp && xp === yp);
+  if (!x || !y) return false;
+  if (x === y) return true;
+  const xp = x.includes(':') ? x.slice(x.indexOf(':') + 1) : x;
+  const yp = y.includes(':') ? y.slice(y.indexOf(':') + 1) : y;
+  if (xp && yp && xp === yp) return true;
+  if (/^0x[0-9a-f]+$/i.test(x) || /^0x[0-9a-f]+$/i.test(y)) return false;
+  return !!(xp && yp && xp.replace(/[^a-z0-9]/g, '') === yp.replace(/[^a-z0-9]/g, ''));
 }
 
 export function kaswareConnectedAddress() {
@@ -144,13 +154,13 @@ export async function ensureKaswareSigner(wallet) {
     const linked = await connectKasware();
     addr = linked.address;
   }
-  if (addr) {
+  if (addr && addr.startsWith('kaspa')) {
     const pref = loadKaswarePref();
     pref.enabled = true;
     pref.address = addr;
     saveKaswarePref(pref);
   }
-  if (wallet?.address && addr && !sameKasAddr(wallet.address, addr)) {
+  if (wallet?.address && addr && addr.startsWith('kaspa') && !sameKasAddr(wallet.address, addr)) {
     throw new Error('KasWare is on a different account than this wallet. Switch KasWare to the same ' + (networkId() === 'testnet-10' ? 'TN10' : 'mainnet') + ' account, or reconnect in Settings.');
   }
   return true;

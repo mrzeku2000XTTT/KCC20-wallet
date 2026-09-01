@@ -50,7 +50,7 @@ import {
   connectKasware, disconnectKasware, bindKaswareEvents, loadKaswarePref, compoundWithKasware,
   ensureKaswareSigner, syncKaswareNetwork, walletIsKaswareChip, autoArmKaswareForWallet,
   fetchKaswareUtxos, sameKasAddr
-} from './kasware.js?v=195';
+} from './kasware.js?v=202';
 import {
   cookMarkets, cookQuote, cookWrappers, pickWrappedMarketId, cookOrderbook, cookCandles,
   cookDeploy, cookBuildOrder, cookFillOrder, cookSweep, cookWrap, cookMint,
@@ -67,7 +67,7 @@ import {
   ksocialFeeKas
 } from './ksocial.js?v=201';
 
-export const BUILD = '201';
+export const BUILD = '202';
 const DESK_ID_KEY = 'kcc20_desk_id_v1';
 const DESK_VAULT_KEY = 'kcc20_desk_vault_v1';
 
@@ -3388,36 +3388,18 @@ function remindKasware(kind) {
 async function ksocialSignerGate() {
   if (!wallet) throw new Error('Open a wallet first');
   hydrateNativeKey(wallet);
-  const kwOn = kaswareEnabled();
-  const kwAddr = kaswareConnectedAddress();
-  const nativeNow = !!hexKey(wallet.privKey);
-  if (!nativeNow) {
-    await new Promise((resolve, reject) => {
-      openSheet('Post from a PIN wallet', `
-        <p class="muted" style="text-align:left;">K posts are signed on this device with this wallet’s hex key. Switch Home to the imported PIN wallet that owns your .kas name (KasWare off is fine), then Post. KasWare only approves the tiny KAS send when the toggle matches this address.</p>
-      `, {
-        confirm: 'Got it',
-        gold: true,
-        onConfirm: () => { closeSheet(); reject(new Error('cancelled')); }
-      });
-      $('sheet-cancel')?.addEventListener('click', () => reject(new Error('cancelled')));
+  if (hexKey(wallet.privKey)) return;
+  await new Promise((resolve, reject) => {
+    openSheet('Need this wallet’s key', `
+      <p class="muted" style="text-align:left;">Home is ${esc(shortAddr(wallet.address || '', 12, 8))}. K posts are signed with the hex key on this device (PIN). Import that key for this same kaspa:q address if it is not already here. KasWare being on the same account does not block the post.</p>
+    `, {
+      confirm: 'Got it',
+      gold: true,
+      onConfirm: () => { closeSheet(); reject(new Error('cancelled')); }
     });
-    throw new Error('cancelled');
-  }
-  if (kwOn && kwAddr && !sameKasAddr(wallet.address, kwAddr)) {
-    toast('KasWare is on another account. This post uses this wallet’s PIN key.');
-    return;
-  }
-  if (kwOn && kaswareSigning(wallet)) {
-    try { await ensureKaswareSigner(wallet); } catch (e) {
-      const m = errText(e);
-      if (/different account/i.test(m)) {
-        toast('KasWare mismatch — posting with this wallet’s PIN key.');
-        return;
-      }
-      throw e;
-    }
-  }
+    $('sheet-cancel')?.addEventListener('click', () => reject(new Error('cancelled')));
+  });
+  throw new Error('cancelled');
 }
 
 function paintKsocialVote(id, delta = 1) {

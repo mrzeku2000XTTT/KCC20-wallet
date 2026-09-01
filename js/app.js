@@ -62,7 +62,7 @@ import {
 import { SCORPION_MEMORY } from './scorpionMemory.js?v=152';
 import { DESK_PLAYBOOK, scalpGate, factCheck } from './deskPlaybook.js?v=187';
 
-export const BUILD = '190';
+export const BUILD = '191';
 const DESK_ID_KEY = 'kcc20_desk_id_v1';
 const DESK_VAULT_KEY = 'kcc20_desk_vault_v1';
 
@@ -6266,12 +6266,6 @@ function fundDesk() {
 function fundSources() {
   const desk = deskWallet();
   return loadWalletList().filter(w => w.role !== 'desk' && w.id !== desk?.id);
-}
-
-function walletKasLabel(w) {
-  const active = w.id === wallet?.id || w.address === wallet?.address;
-  const sompi = active ? balanceSompi : walletSnap[w.address]?.sompi;
-  return sompi == null ? '…' : formatAmount(sompi) + ' KAS';
 }
 
 function sourceSompi(w) {

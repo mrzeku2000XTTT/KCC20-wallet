@@ -62,7 +62,7 @@ import {
 import { SCORPION_MEMORY } from './scorpionMemory.js?v=152';
 import { DESK_PLAYBOOK, scalpGate, factCheck } from './deskPlaybook.js?v=187';
 
-export const BUILD = '189';
+export const BUILD = '190';
 const DESK_ID_KEY = 'kcc20_desk_id_v1';
 const DESK_VAULT_KEY = 'kcc20_desk_vault_v1';
 
@@ -6274,65 +6274,87 @@ function walletKasLabel(w) {
   return sompi == null ? '…' : formatAmount(sompi) + ' KAS';
 }
 
+function sourceSompi(w) {
+  if (!w) return 0;
+  if (w.id === wallet?.id || w.address === wallet?.address) return Number(balanceSompi || 0);
+  return Number(walletSnap[w.address]?.sompi || 0);
+}
+
 async function openFundBotSheet() {
   const dw = deskWallet();
   if (!dw) { toast('Create the bot first'); return; }
   const vault = await ensureBotVault();
-  const dest = vault.address || dw.address;
+  const dest = vault.address;
   haptic();
-  refreshAllWalletSnaps().catch(() => {});
+  toast('Reading wallet balances…');
+  const sources = fundSources();
+  await Promise.all(sources.map(async w => {
+    if (w.id === wallet?.id || w.address === wallet?.address) return;
+    try {
+      const sompi = await fetchAddressBalance(w.address);
+      walletSnap[w.address] = { ...(walletSnap[w.address] || {}), sompi: Number(sompi), at: Date.now() };
+    } catch {}
+  }));
+  persistSnaps();
+  sources.sort((a, b) => sourceSompi(b) - sourceSompi(a));
   const amt0 = $('desk-max')?.value || '1';
-  const rows = fundSources().map(w => {
+  const rows = sources.map(w => {
+    const sompi = sourceSompi(w);
+    const empty = !(sompi > 800000);
     const active = w.id === wallet?.id;
-    const kasTxt = walletKasLabel(w);
     return `
-      <button class="row token-row" type="button" data-fund-from="${esc(w.id)}">
+      <button class="row token-row" type="button" data-fund-from="${esc(w.id)}" ${empty ? 'disabled style="opacity:.45"' : ''}>
         <div class="you-wava ${active ? 'on' : ''}">${youInitial(w.name)}</div>
         <div style="flex:1;min-width:0">
           <div class="title">${esc(w.name || 'Wallet')}</div>
-          <div class="sub">${esc(walletKns(w) || shortAddr(w.address, 10, 6))}${active ? ' · this wallet' : ''}</div>
+          <div class="sub">${esc(walletKns(w) || shortAddr(w.address, 10, 6))}${active ? ' · open now' : ''}</div>
         </div>
-        <div class="amt"><b>${esc(kasTxt)}</b><em>Send from here</em></div>
+        <div class="amt"><b>${esc(formatAmount(sompi))} KAS</b><em>${empty ? 'empty' : 'Send from here'}</em></div>
       </button>`;
-  }).join('') || '<div class="empty">No other wallets. New one on You, then fund.</div>';
+  }).join('') || '<div class="empty">No wallets to fund from.</div>';
+  const funded = sources.filter(w => sourceSompi(w) > 800000).length;
   openSheet('Fund bot', `
-    <p class="muted" style="text-align:left;padding:0 0 10px;">KAS leaves the wallet you tap and lands in the <b>covenant++ treasury</b> (${esc(shortAddr(dest, 12, 8))}). The till key only spends after you Sign and deploy. Pick a wallet that actually has KAS.</p>
+    <p class="muted" style="text-align:left;padding:0 0 10px;">Tap a wallet that has KAS. It pays the <b>covenant++ treasury</b> (${esc(shortAddr(dest, 12, 8))}). Empty wallets are greyed out — that 0.00 send sheet was not a network error.</p>
     <div class="field"><label>Amount KAS</label>
       <input id="desk-fund-amt" type="number" min="0.05" step="0.05" value="${esc(amt0)}">
     </div>
     <div class="glass list" id="desk-fund-list">${rows}</div>
+    ${funded ? '' : '<p class="muted" style="text-align:left;padding-top:8px;">None of these wallets have KAS on this network. Switch Network if the coins are on the other chain, or receive KAS first.</p>'}
   `, { confirm: 'Close', cancel: false });
   $('desk-fund-list')?.addEventListener('click', e => {
     const btn = e.target.closest('[data-fund-from]');
-    if (!btn?.dataset.fundFrom) return;
+    if (!btn?.dataset.fundFrom || btn.disabled) return;
     fundBotFrom(btn.dataset.fundFrom).catch(err => toast(errText(err)));
   });
 }
 
 async function fundBotFrom(id) {
   const src = loadWalletList().find(w => w.id === id);
-  const vault = botVault();
-  const dw = deskWallet();
-  const dest = vault?.address || dw?.address;
+  const vault = await ensureBotVault();
+  const dest = vault.address;
   const amt = Number($('desk-fund-amt')?.value || 1);
   if (!src) throw new Error('Pick a wallet');
   if (!dest) throw new Error('Create the bot first');
   if (!(amt > 0)) throw new Error('Set an amount');
   hydrateNativeKey(src);
-  if (src.id === wallet?.id || src.address === wallet?.address) {
-    closeSheet();
-    openSend({ destination: dest, amountKas: String(amt) });
-    return;
+  const sompi = sourceSompi(src);
+  const need = Math.round((amt + 0.02) * 1e8);
+  if (!(sompi >= need)) {
+    throw new Error((src.name || 'Wallet') + ' has ' + formatAmount(sompi) + ' KAS. Need ' + amt + ' + fee. Pick a funded wallet.');
   }
-  if (!hexKey(src.privKey)) {
-    toast('Switch to ' + (src.name || 'that wallet') + ' on You first (it has no local key here), then Bot → Send it KAS');
-    return;
+  if (!hexKey(src.privKey) && !kaswareSigning(src)) {
+    throw new Error('No local key for ' + (src.name || 'that wallet') + '. Open it on You, then fund.');
   }
   await requirePin('Send ' + amt + ' KAS from ' + (src.name || 'wallet') + ' to bot treasury');
   toast('Sending from ' + (src.name || 'wallet') + '…');
   const utxos = await fetchAddressUtxos(src.address);
-  if (!utxos.length) throw new Error((src.name || 'Wallet') + ' has 0 KAS');
-  const result = await sendKas({ wallet: src, dest, amountKas: String(amt), utxos });
+  if (!utxos.length) throw new Error((src.name || 'Wallet') + ' has 0 UTXOs');
+  const result = await sendKas({
+    wallet: src,
+    dest,
+    amountKas: String(amt),
+    utxos
+  });
   toast('Treasury funded · ' + String(result.txId || '').slice(0, 10) + '…');
   closeSheet();
   openBotSheet();
@@ -8651,6 +8673,10 @@ async function prepareSend(prefill) {
     if (sompi <= 0n) { toast('Enter an amount'); return; }
     const amount = sompiToKasString(sompi);
     const feeEst = 0.0045;
+    if (Number(balanceSompi || 0) < Number(sompi) + Math.round(feeEst * 1e8)) {
+      toast('This wallet has ' + formatAmount(balanceSompi) + ' KAS. Open Bot → Send it KAS and pick a funded wallet.');
+      return;
+    }
     openSheet('Review send', `
       <div class="kv"><span class="k">Asset</span><span class="v">KAS</span></div>
       ${destDomain ? `<div class="kv"><span class="k">KNS</span><span class="v">${esc(destDomain)}</span></div>` : ''}

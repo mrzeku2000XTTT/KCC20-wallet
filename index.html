@@ -12,7 +12,7 @@
   <link rel="icon" href="assets/icon.png">
   <title>KCC20 Wallet</title>
   <meta http-equiv="Cache-Control" content="no-store, no-cache, must-revalidate">
-  <link rel="stylesheet" href="css/app.css?v=170">
+  <link rel="stylesheet" href="css/app.css?v=171">
 </head>
 <body>
   <img class="bg-poster" src="assets/bg.jpg" alt="">
@@ -503,6 +503,15 @@
             <div class="glass list you-wallet-list" id="wallet-list"></div>
           </div>
 
+          <button class="you-apps-btn" id="profile-apps" type="button">
+            <span class="you-apps-mark"><img src="assets/ttt.png" alt=""></span>
+            <span class="you-apps-copy">
+              <b>Apps</b>
+              <em>TTT · K Social</em>
+            </span>
+            <span class="chev">›</span>
+          </button>
+
           <div class="you-settings">
             <div class="you-head"><span>Settings</span></div>
             <div class="you-grid">
@@ -590,8 +599,18 @@
         </div>
 
         <div id="app-home" class="app-home">
-          <p class="build-lede">Tools in this wallet. Faceless Studio turns one line into a narrated film on this phone. Proof of Fact stamps AI text onto Kaspa.</p>
+          <p class="build-lede">Open an app. TTT first. K Social is the Kaspa L1 feed (indexed, in this wallet).</p>
           <div class="app-grid">
+            <button type="button" class="app-tile" data-app="ttt">
+              <span class="app-ico app-ico-img"><img src="assets/ttt.png" alt=""></span>
+              <b>TTT</b>
+              <span>tttz.xyz — Connect with this wallet</span>
+            </button>
+            <button type="button" class="app-tile" data-app="ksocial">
+              <span class="app-ico">K</span>
+              <b>K Social</b>
+              <span>On-chain Kaspa feed · k-social.network</span>
+            </button>
             <button type="button" class="app-tile" data-app="studio">
               <span class="app-ico" aria-hidden="true">▶</span>
               <b>Faceless Studio</b>
@@ -603,6 +622,11 @@
               <span>SHA-256 AI output → Kaspa payload</span>
             </button>
           </div>
+        </div>
+
+        <div id="app-ksocial" class="app-pane hidden">
+          <p class="build-lede" id="ksocial-meta">K Social · public indexer</p>
+          <div class="ksocial-feed" id="ksocial-feed"><div class="empty">Loading feed…</div></div>
         </div>
 
         <div id="app-studio" class="app-pane hidden">
@@ -812,7 +836,7 @@
   <script type="module">
     import('./js/iframeVault.js?v=121').then(function (mod) {
       return (mod.restoreIframeVault ? mod.restoreIframeVault() : Promise.resolve()).then(function () {
-        return import('./js/app.js?v=191');
+        return import('./js/app.js?v=192');
       });
     }).catch(function (err) {
       console.error(err);

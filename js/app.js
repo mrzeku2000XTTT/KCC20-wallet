@@ -61,8 +61,9 @@ import {
 } from './atrade.js?v=102';
 import { SCORPION_MEMORY } from './scorpionMemory.js?v=152';
 import { DESK_PLAYBOOK, scalpGate, factCheck } from './deskPlaybook.js?v=187';
+import { ksocialFeed, KSOCIAL_SITE } from './ksocial.js?v=192';
 
-export const BUILD = '191';
+export const BUILD = '192';
 const DESK_ID_KEY = 'kcc20_desk_id_v1';
 const DESK_VAULT_KEY = 'kcc20_desk_vault_v1';
 
@@ -3130,17 +3131,24 @@ function setBuildPhase(i) {
 
 function showBuildApp(name) {
   const view = name || 'home';
-  ['home', 'studio', 'truth'].forEach(v => {
+  if (view === 'ttt') {
+    openTtt();
+    return;
+  }
+  ['home', 'studio', 'truth', 'ksocial'].forEach(v => {
     $('app-' + v)?.classList.toggle('hidden', v !== view);
   });
   $('build-back')?.classList.toggle('hidden', view === 'home');
   if ($('build-title')) {
-    $('build-title').textContent = view === 'studio' ? 'Faceless Studio' : (view === 'truth' ? 'Proof of Fact' : 'Apps');
+    $('build-title').textContent = view === 'studio' ? 'Faceless Studio'
+      : (view === 'truth' ? 'Proof of Fact'
+        : (view === 'ksocial' ? 'K Social' : 'Apps'));
   }
   if (view === 'truth') setBuildPhase(0);
   if (view === 'studio') {
     $('studio-url')?.classList.toggle('hidden', $('studio-engine')?.value !== 'server');
   }
+  if (view === 'ksocial') loadKsocialFeed().catch(err => toast(errText(err)));
   if (view !== 'studio') {
     $('app-studio')?.classList.remove('playing', 'working');
     const v = $('studio-video');
@@ -3148,8 +3156,39 @@ function showBuildApp(name) {
   }
 }
 
+function openApps() {
+  haptic();
+  showBuildApp('home');
+  $('build-screen')?.classList.remove('hidden');
+  $('build-screen')?.setAttribute('aria-hidden', 'false');
+  $('tabbar')?.classList.remove('show');
+}
+
 function openBuildRoadmap() {
-  openTtt();
+  openApps();
+}
+
+async function loadKsocialFeed() {
+  const box = $('ksocial-feed');
+  const meta = $('ksocial-meta');
+  if (!box) return;
+  box.innerHTML = '<div class="empty">Indexing K Social…</div>';
+  const pk = String(wallet?.pubKey || '').replace(/^0x/i, '');
+  const data = await ksocialFeed({ requesterPubkey: pk, limit: 24 });
+  if (meta) {
+    meta.textContent = 'K Social · ' + (data.count ? data.count + ' users · ' : '') + data.source
+      + ' · kaspatalk indexer';
+  }
+  if (!data.posts.length) {
+    box.innerHTML = '<div class="empty">Indexer returned no posts. Open <a href="' + KSOCIAL_SITE + '" target="_blank" rel="noopener">k-social.network</a>.</div>';
+    return;
+  }
+  box.innerHTML = data.posts.map(p => `
+    <a class="ksocial-card" href="${esc(p.href)}" target="_blank" rel="noopener">
+      <b>${esc(p.nick || 'anon')}<em>${esc(p.time)}${p.contents ? ' · ' + p.contents + ' posts' : ''}</em></b>
+      <p>${esc(p.text)}</p>
+    </a>
+  `).join('') + '<a class="ksocial-card" href="' + KSOCIAL_SITE + '" target="_blank" rel="noopener"><b>Open k-social.network</b><p>Post, follow, and vote on Kaspa L1.</p></a>';
 }
 
 function openTtt() {
@@ -10652,6 +10691,7 @@ function bind() {
   click('profile-name', openLookSheet);
   click('profile-scorpion', openScorpionSheet);
   click('profile-bot', openBotSheet);
+  click('profile-apps', openApps);
   click('profile-wipe', logout);
   click('you-cover-btn', (e) => { e?.stopPropagation?.(); $('you-cover-file')?.click(); });
   click('profile-avatar', () => $('you-avatar-file')?.click());

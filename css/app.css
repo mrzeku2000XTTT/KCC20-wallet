@@ -1361,7 +1361,36 @@ img { display: block; max-width: 100%; }
   background: rgba(255,255,255,0.08); color: var(--label-2); font-size: 11px; font-weight: 700;
 }
 .you-wava.on { background: rgba(48,209,88,0.16); color: var(--green); }
+.you-apps-btn {
+  flex-shrink: 0;
+  display: flex; align-items: center; gap: 12px;
+  width: 100%; text-align: left;
+  padding: 10px 12px; border-radius: 16px;
+  background: var(--glass-2); border: 0.5px solid var(--hairline);
+  color: var(--label);
+}
+.you-apps-mark {
+  width: 36px; height: 36px; border-radius: 10px; overflow: hidden;
+  background: #fff; flex-shrink: 0;
+}
+.you-apps-mark img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.you-apps-copy { flex: 1; min-width: 0; }
+.you-apps-copy b { display: block; font-size: 15px; font-weight: 750; }
+.you-apps-copy em { display: block; font-style: normal; font-size: 11px; color: var(--label-2); }
 .you-settings { flex-shrink: 0; display: flex; flex-direction: column; gap: 4px; }
+.app-ico-img { padding: 0; overflow: hidden; background: #fff; }
+.app-ico-img img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.ksocial-feed {
+  flex: 1; min-height: 0; overflow-y: auto; -webkit-overflow-scrolling: touch;
+  margin: 0 -4px 8px;
+}
+.ksocial-card {
+  display: block; width: 100%; text-align: left; color: inherit; text-decoration: none;
+  padding: 12px 10px; border-bottom: 0.5px solid var(--hairline);
+}
+.ksocial-card b { display: block; font-size: 13px; color: var(--gold-2); }
+.ksocial-card em { font-style: normal; font-size: 11px; color: var(--label-3); margin-left: 6px; }
+.ksocial-card p { margin: 6px 0 0; font-size: 14px; line-height: 1.4; color: var(--label); white-space: pre-wrap; word-break: break-word; }
 .you-grid {
   display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px;
 }

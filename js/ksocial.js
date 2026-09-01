@@ -3,8 +3,8 @@
    Writes: Kaspa self-send whose payload is k:1:… (indexer picks it up; it lands on
    k-social.network). Do not iframe the website. Do not prepend U+2060 (KaChat-only filter). */
 
-import { loadKaspaSdk, sendPayloadSelf, fetchAddressUtxos, fetchOwnedUtxos } from './tx.js?v=194';
-import { kaswareSigning, signMessageWithKasware, kaswarePublicKey } from './kasware.js?v=194';
+import { loadKaspaSdk, sendPayloadSelf, fetchAddressUtxos, fetchOwnedUtxos } from './tx.js?v=195';
+import { kaswareSigning, kaswarePublicKey } from './kasware.js?v=195';
 
 export const KSOCIAL_SITE = 'https://k-social.network';
 export const KSOCIAL_INDEXER = 'https://mainnet.kaspatalk.net';
@@ -263,15 +263,15 @@ function asCompressed(p) {
 }
 
 async function compressedPubkey(wallet) {
-  if (kaswareSigning(wallet)) {
-    const fromKw = asCompressed(await kaswarePublicKey());
-    if (fromKw) return fromKw;
-  }
   const hex = String(wallet?.privKey || '').replace(/^0x/i, '');
   if (/^[0-9a-fA-F]{64}$/.test(hex)) {
     const k = await loadKaspaSdk();
     const pub = new k.PrivateKey(hex.toLowerCase()).toPublicKey().toString();
     return String(pub).replace(/^0x/i, '').toLowerCase();
+  }
+  if (kaswareSigning(wallet)) {
+    const fromKw = asCompressed(await kaswarePublicKey());
+    if (fromKw) return fromKw;
   }
   const fromWallet = asCompressed(wallet?.pubKey);
   if (fromWallet) return fromWallet;
@@ -280,21 +280,12 @@ async function compressedPubkey(wallet) {
 
 async function signK(wallet, message) {
   const hex = String(wallet?.privKey || '').replace(/^0x/i, '');
-  if (/^[0-9a-fA-F]{64}$/.test(hex) && !kaswareSigning(wallet)) {
-    const k = await loadKaspaSdk();
-    const sig = k.signMessage({ message, privateKey: hex.toLowerCase() });
-    return String(sig).replace(/^0x/i, '').toLowerCase();
-  }
-  if (kaswareSigning(wallet)) {
-    const sig = await signMessageWithKasware(message);
-    return String(sig).replace(/^0x/i, '').toLowerCase();
-  }
   if (/^[0-9a-fA-F]{64}$/.test(hex)) {
     const k = await loadKaspaSdk();
     const sig = k.signMessage({ message, privateKey: hex.toLowerCase() });
     return String(sig).replace(/^0x/i, '').toLowerCase();
   }
-  throw new Error('Turn on KasWare in You → Settings, or import this wallet’s hex key, to sign a K post.');
+  throw new Error('K posts need this wallet’s hex key on the device (PIN wallet). KasWare only approves the small KAS send — it cannot sign the K protocol message.');
 }
 
 async function utxosFor(wallet) {

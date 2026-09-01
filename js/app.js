@@ -24,11 +24,11 @@ import {
   fetchOwnedUtxos, collectSpendableUtxos, buildSentinelChain, buildRecurringChain, buildHashlockCovenant,
   newHashlockSecret, checkinHop, currentHop, parseXmssKit, p2shFromRedeemHex, spendXmssVault,
   disconnectRpc, buildDcaDrips, sendKasMany, releaseDcaDrip, cancelDcaDrip, isMassError
-} from './tx.js?v=194';
-import { bootDappConnect, pingTttDappFrame, TTT_TREASURY } from './dappConnect.js?v=194';
+} from './tx.js?v=195';
+import { bootDappConnect, pingTttDappFrame, TTT_TREASURY } from './dappConnect.js?v=195';
 import { changenowEstimate, changenowCreate, changenowWidgetUrl, cnFrom } from './changenow.js?v=180';
 import { schedulePersistIframeVault, bootIframeVaultWatch } from './iframeVault.js?v=120';
-import { kronMarkets, quoteKronTrade, executeKronTrade, formatKasSompi, lookupKronTick, liveQuote, tradeCostLines, attachKronLogos, kronCandles, kronLogoFor, quoteKcc20Bridge, executeKcc20Bridge, formatTokenRaw } from './kronTrade.js?v=194';
+import { kronMarkets, quoteKronTrade, executeKronTrade, formatKasSompi, lookupKronTick, liveQuote, tradeCostLines, attachKronLogos, kronCandles, kronLogoFor, quoteKcc20Bridge, executeKcc20Bridge, formatTokenRaw } from './kronTrade.js?v=195';
 import {
   BET_AGENT_ADDR, TTT_TICK, WINDOW_MS, windowBounds, fmtRemain,
   kkdagsHeld, isKcc20Pass, hireCost, maxHireHours,
@@ -50,7 +50,7 @@ import {
   connectKasware, disconnectKasware, bindKaswareEvents, loadKaswarePref, compoundWithKasware,
   ensureKaswareSigner, syncKaswareNetwork, walletIsKaswareChip, autoArmKaswareForWallet,
   fetchKaswareUtxos, sameKasAddr
-} from './kasware.js?v=194';
+} from './kasware.js?v=195';
 import {
   cookMarkets, cookQuote, cookWrappers, pickWrappedMarketId, cookOrderbook, cookCandles,
   cookDeploy, cookBuildOrder, cookFillOrder, cookSweep, cookWrap, cookMint,
@@ -58,15 +58,15 @@ import {
   loadAgentJob, saveAgentJob, sompiToKas, kasToSompiNum,
   rememberLaunch, loadLaunched, cookOwnerBalances, cookDeployed,
   cookTickOf, cookBookLevels
-} from './atrade.js?v=194';
+} from './atrade.js?v=195';
 import { SCORPION_MEMORY } from './scorpionMemory.js?v=152';
 import { DESK_PLAYBOOK, scalpGate, factCheck } from './deskPlaybook.js?v=187';
 import {
   ksocialFeed, ksocialReplies, ksocialSubmitPost, ksocialSubmitReply, ksocialSubmitVote,
   ksocialRich, KSOCIAL_MAX, ksocialCachedFeed
-} from './ksocial.js?v=194';
+} from './ksocial.js?v=195';
 
-export const BUILD = '194';
+export const BUILD = '195';
 const DESK_ID_KEY = 'kcc20_desk_id_v1';
 const DESK_VAULT_KEY = 'kcc20_desk_vault_v1';
 
@@ -3257,33 +3257,34 @@ async function ksocialSignerGate() {
   if (!wallet) throw new Error('Open a wallet first');
   const native = !!hexKey(wallet.privKey);
   const kwOn = kaswareEnabled();
-  const kwInst = isKaswareInstalled();
   const kwAddr = kaswareConnectedAddress();
-  const chip = walletIsKaswareChip(wallet);
-  if (chip || (!native && (kwInst || kwOn))) {
-    if (!kwInst) {
-      throw new Error('This wallet signs with KasWare. Open Chrome or Edge with the KasWare extension.');
-    }
-    if (!kwOn) {
-      await remindKasware('off');
-      return;
-    }
-    if (kwAddr && !sameKasAddr(wallet.address, kwAddr)) {
-      await remindKasware('mismatch');
-      return;
-    }
-    await ensureKaswareSigner(wallet);
+  if (!native) {
+    await new Promise((resolve, reject) => {
+      openSheet('Post from a PIN wallet', `
+        <p class="muted" style="text-align:left;">That KasWare window was a raw message blob — not the send. K posts are signed on this device with the wallet’s hex key (same as KaChat). KasWare only approves the tiny KAS self-send.</p>
+        <p class="muted" style="text-align:left;padding-top:8px;">Switch Home to a PIN wallet that has the key, or import the 64-character hex for this address. Then Post. If KasWare is on and matches, you get one Send approval.</p>
+      `, {
+        confirm: 'Got it',
+        gold: true,
+        onConfirm: () => { closeSheet(); reject(new Error('cancelled')); }
+      });
+      $('sheet-cancel')?.addEventListener('click', () => reject(new Error('cancelled')));
+    });
     return;
   }
-  if (!native) {
-    if (kwInst && !kwOn) {
-      await remindKasware('off');
-      return;
-    }
-    throw new Error('This wallet has no signing key. Import the hex key, or turn on KasWare in You → Settings.');
-  }
   if (kwOn && kwAddr && !sameKasAddr(wallet.address, kwAddr)) {
-    toast('KasWare is on another account. This post will use this wallet’s PIN key, not KasWare.');
+    await remindKasware('mismatch');
+    return;
+  }
+  if (kwOn) {
+    try { await ensureKaswareSigner(wallet); } catch (e) {
+      const m = errText(e);
+      if (/different account/i.test(m)) {
+        await remindKasware('mismatch');
+        return;
+      }
+      throw e;
+    }
   }
 }
 
@@ -3395,7 +3396,7 @@ async function postKsocial() {
   try {
     await ksocialSignerGate();
     await requirePin('Post on K Social');
-    toast(kaswareSigning(wallet) ? 'Approve the post in KasWare…' : 'Signing k:1:post…');
+    toast(kaswareSigning(wallet) ? 'Approve the KAS send in KasWare…' : 'Signing post…');
     const res = await ksocialSubmitPost({ wallet, text });
     if ($('ksocial-text')) $('ksocial-text').value = '';
     syncKsocialCount();
@@ -3439,7 +3440,7 @@ async function replyKsocial() {
   try {
     await ksocialSignerGate();
     await requirePin('Reply on K Social');
-    toast(kaswareSigning(wallet) ? 'Approve the reply in KasWare…' : 'Signing k:1:reply…');
+    toast(kaswareSigning(wallet) ? 'Approve the KAS send in KasWare…' : 'Signing reply…');
     await ksocialSubmitReply({
       wallet,
       text,
@@ -3463,7 +3464,7 @@ async function voteKsocial(id, pub) {
   try {
     await ksocialSignerGate();
     await requirePin('Vote on K Social');
-    toast(kaswareSigning(wallet) ? 'Approve the vote in KasWare…' : 'Signing k:1:vote…');
+    toast(kaswareSigning(wallet) ? 'Approve the KAS send in KasWare…' : 'Signing vote…');
     await ksocialSubmitVote({ wallet, postId: id, authorPubkey: pub, upvote: true });
     toast('Upvote broadcast');
   } catch (e) {

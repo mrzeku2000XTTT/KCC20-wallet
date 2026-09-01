@@ -1,7 +1,7 @@
 /* KCC20 A-Trade — Cook public API (order book / launch) + local Scorpion agent.
    Never holds keys. Wallet or KasWare signs PSKT; we only broadcast. */
 import { loadKaspaSdk, connectPublicNode, signPsktJson } from './tx.js?v=168';
-import { kaswareEnabled, kaswareSigning, ensureKaswareSigner, signPsktWithKasware } from './kasware.js?v=194';
+import { kaswareEnabled, kaswareSigning, ensureKaswareSigner, signPsktWithKasware } from './kasware.js?v=195';
 
 const COOK_DIRECT = 'https://dev-api-kcc20.kaspa.com';
 const COOK_HOSTED = 'https://kcc-20-wallet.vercel.app';

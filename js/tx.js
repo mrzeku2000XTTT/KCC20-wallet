@@ -4,7 +4,7 @@ import {
   validateAndCleanUtxo, deepCloneAndFreeze, kasToSompi,
   kaspaRestBase, networkId
 } from './crypto.js?v=90';
-import { kaswareSigning, sendKaspaWithKasware, sendKrc20WithKasware, signPsktWithKasware, fetchKaswareUtxos } from './kasware.js?v=202';
+import { kaswareSigning, sendKaspaWithKasware, sendKrc20WithKasware, signPsktWithKasware, fetchKaswareUtxos, repairSafeJson, kaswareEnabled, isKaswareInstalled } from './kasware.js?v=203';
 import * as kron from '../vendor/kron-sdk/index.js';
 
 function API() { return kaspaRestBase(); }
@@ -610,34 +610,37 @@ export function estimateKsocialFeeKas(payloadLen) {
 export async function sendPayloadSelf({ wallet, payload, utxos }) {
   const k = await loadKaspaSdk();
   const nativeHex = cleanPrivHex(wallet?.privKey);
-  const useKasware = !!kaswareSigning(wallet) && !nativeHex;
+  const useKasware = !!(kaswareEnabled() && isKaswareInstalled());
   const payBytes = payload instanceof Uint8Array
     ? payload
     : new TextEncoder().encode(String(payload || ''));
   if (!payBytes.length) throw new Error('Empty K payload');
   if (payBytes.length > 20000) throw new Error('Post is too large for a Kaspa payload');
-  let bag = utxos;
+  const addr = wallet.address;
+  const { rpc, url } = await connectPublicNode();
+  const net = networkId();
+  let bag = utxos || [];
   if (useKasware) {
+    let kw = [];
+    try { kw = await fetchKaswareUtxos(addr); } catch { kw = []; }
+    const kwEntries = restUtxosToEntries(kw, addr).filter(e => isNativeP2pkScript(e.scriptPublicKey?.script));
+    let node = [];
     try {
-      const kw = await collectSpendableUtxos(wallet);
-      if (kw?.length) bag = kw;
+      const res = await rpc.getUtxosByAddresses({ addresses: [addr] });
+      node = restUtxosToEntries(res?.entries || [], addr);
     } catch {}
+    if (!node.length) node = restUtxosToEntries(bag, addr);
+    const kwKeys = new Set(kwEntries.map(utxoKey).filter(Boolean));
+    const both = node.filter(e => kwKeys.has(utxoKey(e)));
+    bag = both.length ? both : (kwEntries.length ? kwEntries : node);
   }
-  let entries = restUtxosToEntries(bag || [], wallet.address)
-    .map(e => ({ ...e, privKey: e.privKey || wallet.privKey || '', redeemHex: e.redeemHex || '' }))
-    .filter(e => !e.redeemHex && isP2pkAddr(e.address, wallet.address));
-  if (!entries.length && Array.isArray(bag)) {
-    entries = bag.filter(e => e?.outpoint && e.amount > 0n).map(e => ({
-      ...e,
-      address: e.address || wallet.address,
-      privKey: e.privKey || wallet.privKey || '',
-      redeemHex: e.redeemHex || ''
-    })).filter(e => !e.redeemHex && isP2pkAddr(e.address, wallet.address));
-  }
-  if (!entries.length) throw new Error('Need KAS in this wallet to post on K Social (self-send + fee).');
+  let entries = restUtxosToEntries(bag || [], addr)
+    .map(e => ({ ...e, address: e.address || addr, redeemHex: '' }))
+    .filter(e => !e.redeemHex && isP2pkAddr(e.address, addr) && isNativeP2pkScript(e.scriptPublicKey?.script));
+  if (!entries.length) throw new Error('Need KAS in this wallet to post (self-send + fee).');
   entries = [...entries].sort((a, b) => (a.amount < b.amount ? 1 : -1));
   const dust = 200_000n;
-  const feeGuess = 2_000_000n + BigInt(payBytes.length) * 3_000n;
+  const feeGuess = 1_500_000n + BigInt(payBytes.length) * 2_000n;
   let chosen = [];
   let sum = 0n;
   for (const e of entries) {
@@ -647,15 +650,12 @@ export async function sendPayloadSelf({ wallet, payload, utxos }) {
     if (chosen.length >= 2) break;
   }
   if (sum < dust + feeGuess) {
-    throw new Error('Need about ' + (Number(dust + feeGuess) / 1e8).toFixed(3) + ' KAS here to post (self-send + network fee).');
+    throw new Error('Need about ' + (Number(dust + feeGuess) / 1e8).toFixed(3) + ' KAS here to post.');
   }
   entries = chosen;
-  const fee = feeGuess;
-  const sendAmt = sum - fee;
+  const sendAmt = sum - feeGuess;
   if (sendAmt < dust) throw new Error('Not enough KAS left after the network fee to post.');
-  const { rpc, url } = await connectPublicNode();
-  const net = networkId();
-  let tx = k.createTransaction(entries, [{ address: wallet.address, amount: sendAmt }], 0n, payBytes, 1);
+  let tx = k.createTransaction(entries, [{ address: addr, amount: sendAmt }], 0n, payBytes, 1);
   tx.version = 1;
   try { tx.payload = payBytes; } catch {}
   prepInputs(tx, { sigOpCount: 0, computeBudget: 10 });
@@ -663,16 +663,16 @@ export async function sendPayloadSelf({ wallet, payload, utxos }) {
   let txId = null;
   let paidFee = 0n;
   if (useKasware) {
-    let json = tx.serializeToSafeJSON();
-    json = attachUtxosToSafeJson(json, entries, wallet.address);
+    let json = repairSafeJson(tx.serializeToSafeJSON());
+    json = attachUtxosToSafeJson(json, entries, addr);
     const signInputs = [...tx.inputs].map((_, i) => ({ index: i, sighashType: 1 }));
-    const signedJson = await signPsktWithKasware(json, signInputs);
+    const signedJson = repairSafeJson(await signPsktWithKasware(json, signInputs));
     const signed = k.Transaction.deserializeFromSafeJSON(signedJson);
     assertKaswareP2pkSigs(signed);
     txId = await submitSignedRpc(k, rpc, url, signed, { sigOpCount: 0, computeBudget: 10, lockTime: 0 });
     paidFee = txInputSum(signed, entries) - txOutputSum(signed);
   } else {
-    if (!nativeHex) throw new Error('Need a native PIN wallet or KasWare to post on K Social.');
+    if (!nativeHex) throw new Error('Turn on KasWare in Settings, or import this address’s hex key.');
     const priv = new k.PrivateKey(nativeHex);
     const scripts = meetToccataFee(k, tx, priv, entries, 0n, 0);
     txId = await submitSignedRpc(k, rpc, url, tx, { sigOpCount: 0, computeBudget: 10, lockTime: 0, scripts });

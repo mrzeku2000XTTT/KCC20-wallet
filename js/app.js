@@ -24,7 +24,7 @@ import {
   fetchOwnedUtxos, collectSpendableUtxos, buildSentinelChain, buildRecurringChain, buildHashlockCovenant,
   newHashlockSecret, checkinHop, currentHop, parseXmssKit, p2shFromRedeemHex, spendXmssVault,
   disconnectRpc, buildDcaDrips, sendKasMany, releaseDcaDrip, cancelDcaDrip, isMassError
-} from './tx.js?v=201';
+} from './tx.js?v=203';
 import { bootDappConnect, pingTttDappFrame, TTT_TREASURY } from './dappConnect.js?v=198';
 import { changenowEstimate, changenowCreate, changenowWidgetUrl, cnFrom } from './changenow.js?v=180';
 import { schedulePersistIframeVault, bootIframeVaultWatch } from './iframeVault.js?v=120';
@@ -50,7 +50,7 @@ import {
   connectKasware, disconnectKasware, bindKaswareEvents, loadKaswarePref, compoundWithKasware,
   ensureKaswareSigner, syncKaswareNetwork, walletIsKaswareChip, autoArmKaswareForWallet,
   fetchKaswareUtxos, sameKasAddr
-} from './kasware.js?v=202';
+} from './kasware.js?v=203';
 import {
   cookMarkets, cookQuote, cookWrappers, pickWrappedMarketId, cookOrderbook, cookCandles,
   cookDeploy, cookBuildOrder, cookFillOrder, cookSweep, cookWrap, cookMint,
@@ -65,9 +65,9 @@ import {
   ksocialFeed, ksocialReplies, ksocialSubmitPost, ksocialSubmitReply, ksocialSubmitVote,
   ksocialRich, KSOCIAL_MAX, ksocialCachedFeed, detectWalletKns, knsNameForPubkey,
   ksocialFeeKas
-} from './ksocial.js?v=201';
+} from './ksocial.js?v=203';
 
-export const BUILD = '202';
+export const BUILD = '203';
 const DESK_ID_KEY = 'kcc20_desk_id_v1';
 const DESK_VAULT_KEY = 'kcc20_desk_vault_v1';
 
@@ -3340,17 +3340,10 @@ function ksocialPostError(e) {
   const m = errText(e);
   if (/cancelled/i.test(m)) return m;
   if (/missing coin data|missing UTXO/i.test(m)) {
-    return 'KasWare could not see this wallet’s coins on the post. Turn KasWare off in You → Settings and Post with the PIN key on tttz.xyz.kas (same address), or Post again.';
+    return 'Could not attach this address’s KAS coin to the KasWare sign. Post again and approve the self-send popup.';
   }
   if (/false stack|failed to verify the signature/i.test(m)) {
-    const kwAddr = kaswareConnectedAddress();
-    if (!kaswareEnabled()) {
-      return 'KasWare is off in You → Settings. Turn it on so the extension can sign this post.';
-    }
-    if (kwAddr && wallet?.address && !sameKasAddr(wallet.address, kwAddr)) {
-      return 'KasWare is connected to a different account than this wallet. Switch the extension to this same address, or switch Home to the KasWare chip.';
-    }
-    return 'KasWare signed a different coin set than this wallet. Confirm the extension is on this same address, then Post again.';
+    return 'The node rejected the signature. Reject leftover KasWare popups, then Post again and Approve the self-send (same as a KKDAG buy).';
   }
   return m;
 }
@@ -3545,8 +3538,8 @@ async function postKsocial() {
   ksocialBusy = true;
   try {
     await ksocialSignerGate();
-    await requirePin('Post on K Social');
-    toast(kaswareSigning(wallet) ? 'Approve the KAS send in KasWare…' : 'Signing post…');
+    if (!kaswareEnabled()) await requirePin('Post on K Social');
+    toast(kaswareEnabled() ? 'Approve the self-send in KasWare…' : 'Signing post…');
     const res = await ksocialSubmitPost({ wallet, text });
     if ($('ksocial-text')) $('ksocial-text').value = '';
     syncKsocialCount();
@@ -3601,8 +3594,8 @@ async function replyKsocial() {
   ksocialBusy = true;
   try {
     await ksocialSignerGate();
-    await requirePin('Reply on K Social');
-    toast(kaswareSigning(wallet) ? 'Approve the KAS send in KasWare…' : 'Signing reply…');
+    if (!kaswareEnabled()) await requirePin('Reply on K Social');
+    toast(kaswareEnabled() ? 'Approve the self-send in KasWare…' : 'Signing reply…');
     const res = await ksocialSubmitReply({
       wallet,
       text,
@@ -3655,8 +3648,8 @@ async function voteKsocial(id, pub) {
   ksocialBusy = true;
   try {
     await ksocialSignerGate();
-    await requirePin('Vote on K Social');
-    toast(kaswareSigning(wallet) ? 'Approve the KAS send in KasWare…' : 'Signing vote…');
+    if (!kaswareEnabled()) await requirePin('Vote on K Social');
+    toast(kaswareEnabled() ? 'Approve the self-send in KasWare…' : 'Signing vote…');
     const res = await ksocialSubmitVote({ wallet, postId: id, authorPubkey: pub, upvote: true });
     paintKsocialVote(id, 1);
     toast('Upvoted · ' + Number(res?.feeKas || ksocialFeeKas('vote', { postId: id, authorPubkey: pub })).toFixed(4) + ' KAS fee');

@@ -376,9 +376,9 @@ export async function fetchKaswareUtxos(address) {
   if (!p?.getUtxoEntries) return [];
   let rows = [];
   try {
-    rows = await withMs(address ? p.getUtxoEntries(address) : p.getUtxoEntries(), 2500);
+    rows = await withMs(address ? p.getUtxoEntries(address) : p.getUtxoEntries(), 8000);
   } catch {
-    try { rows = await withMs(p.getUtxoEntries(), 2500); } catch { return []; }
+    try { rows = await withMs(p.getUtxoEntries(), 8000); } catch { return []; }
   }
   return (Array.isArray(rows) ? rows : []).map(u => {
     const e = u.entry || u;
@@ -394,10 +394,14 @@ export async function fetchKaswareUtxos(address) {
     if (txid && typeof txid !== 'string') txid = txid.toString ? txid.toString() : String(txid);
     txid = String(txid).replace(/^0x/i, '').toLowerCase();
     if (!/^[0-9a-f]{64}$/.test(txid) || !script) return null;
+    const amount = e.amount ?? u.amount;
     return {
+      address: address || u.address || '',
       outpoint: { transactionId: txid, index: Number(out.index || 0) },
+      amount,
+      scriptPublicKey: { version: Number(spk.version || 0), script },
       utxoEntry: {
-        amount: e.amount ?? u.amount,
+        amount,
         scriptPublicKey: { version: Number(spk.version || 0), script },
         blockDaaScore: e.blockDaaScore ?? u.blockDaaScore ?? 0,
         isCoinbase: !!(e.isCoinbase ?? u.isCoinbase)

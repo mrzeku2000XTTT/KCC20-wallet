@@ -67,7 +67,7 @@ import {
   ksocialFeeKas
 } from './ksocial.js?v=206';
 
-export const BUILD = '206';
+export const BUILD = '207';
 const DESK_ID_KEY = 'kcc20_desk_id_v1';
 const DESK_VAULT_KEY = 'kcc20_desk_vault_v1';
 
@@ -1946,15 +1946,31 @@ function walletKasLabel(w, active) {
   return formatAmount(sompi);
 }
 
+const HOME_WALLET_PAGE = 3;
+let homeWalletStart = 0;
+let homeWalletSnapId = '';
+
 function renderHomeWallets() {
   const box = $('home-wallets');
   if (!box || !wallet) return;
-  const list = [...loadWalletList()].sort((a, b) => {
-    const aa = (a.id === wallet.id || a.address === wallet.address) ? 0 : 1;
-    const bb = (b.id === wallet.id || b.address === wallet.address) ? 0 : 1;
-    return aa - bb;
-  });
-  paintIfChanged(box, dedupeWalletList(list).map(w => {
+  const list = dedupeWalletList(loadWalletList());
+  const n = list.length;
+  const maxStart = Math.max(0, n - HOME_WALLET_PAGE);
+  const activeI = list.findIndex(w => w.id === wallet.id);
+  if (wallet.id !== homeWalletSnapId) {
+    homeWalletSnapId = wallet.id;
+    if (activeI >= 0) {
+      if (activeI < homeWalletStart) homeWalletStart = activeI;
+      if (activeI >= homeWalletStart + HOME_WALLET_PAGE) {
+        homeWalletStart = Math.max(0, activeI - HOME_WALLET_PAGE + 1);
+      }
+    }
+  }
+  homeWalletStart = Math.max(0, Math.min(homeWalletStart, maxStart));
+  const slice = list.slice(homeWalletStart, homeWalletStart + HOME_WALLET_PAGE);
+  const canPrev = homeWalletStart > 0;
+  const canNext = homeWalletStart < maxStart;
+  const chips = slice.map(w => {
     const active = w.id === wallet.id;
     const kasTxt = walletKasLabel(w, active);
     const sendBtn = !active
@@ -1971,8 +1987,12 @@ function renderHomeWallets() {
         </button>
         ${sendBtn}
       </div>`;
-  }).join('') + `<button class="w-chip add" type="button" data-add-wallet="1" aria-label="Add wallet">＋</button>`);
-  box.scrollLeft = 0;
+  }).join('');
+  paintIfChanged(box, `
+    <button class="w-arrow" type="button" data-wdir="-1" ${canPrev ? '' : 'disabled'} aria-label="Previous wallets">‹</button>
+    <div class="w-track">${chips}</div>
+    <button class="w-arrow" type="button" data-wdir="1" ${canNext ? '' : 'disabled'} aria-label="Next wallets">›</button>
+    <button class="w-chip add" type="button" data-add-wallet="1" aria-label="Add wallet">＋</button>`);
 }
 
 function otherWallets() {
@@ -11081,6 +11101,13 @@ function bind() {
   click('btn-move-wallet', () => openMoveToOwned());
   click('card-wallet', openWalletSwitcher);
   $('home-wallets')?.addEventListener('click', e => {
+    const dirBtn = e.target.closest('[data-wdir]');
+    if (dirBtn && !dirBtn.disabled) {
+      e.preventDefault();
+      homeWalletStart += Number(dirBtn.dataset.wdir) || 0;
+      renderHomeWallets();
+      return;
+    }
     if (e.target.closest('[data-add-wallet]')) { openWalletSwitcher(); return; }
     const sendTo = e.target.closest('[data-send-to]');
     if (sendTo?.dataset.sendTo) {

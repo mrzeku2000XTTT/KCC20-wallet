@@ -3,8 +3,8 @@
    Writes: Kaspa self-send whose payload is k:1:… (indexer picks it up; it lands on
    k-social.network). Do not iframe the website. Do not prepend U+2060 (KaChat-only filter). */
 
-import { loadKaspaSdk, sendPayloadSelf, fetchAddressUtxos, fetchOwnedUtxos, estimateKsocialFeeKas } from './tx.js?v=204';
-import { kaswareSigning, kaswarePublicKey, kaswareEnabled, isKaswareInstalled, liveKaswareAccount, signMessageWithKasware } from './kasware.js?v=204';
+import { loadKaspaSdk, sendPayloadSelf, fetchAddressUtxos, fetchOwnedUtxos, estimateKsocialFeeKas } from './tx.js?v=206';
+import { kaswareSigning, kaswarePublicKey, kaswareEnabled, isKaswareInstalled, liveKaswareAccount, signMessageWithKasware } from './kasware.js?v=206';
 import { knsPrimary, knsDomainsFor } from './kns.js?v=89';
 import { pubkeyToAddress } from './crypto.js?v=100';
 

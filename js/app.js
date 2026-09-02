@@ -24,7 +24,7 @@ import {
   fetchOwnedUtxos, collectSpendableUtxos, buildSentinelChain, buildRecurringChain, buildHashlockCovenant,
   newHashlockSecret, checkinHop, currentHop, parseXmssKit, p2shFromRedeemHex, spendXmssVault,
   disconnectRpc, buildDcaDrips, sendKasMany, releaseDcaDrip, cancelDcaDrip, isMassError
-} from './tx.js?v=204';
+} from './tx.js?v=206';
 import { bootDappConnect, pingTttDappFrame, TTT_TREASURY } from './dappConnect.js?v=198';
 import { changenowEstimate, changenowCreate, changenowWidgetUrl, cnFrom } from './changenow.js?v=180';
 import { schedulePersistIframeVault, bootIframeVaultWatch } from './iframeVault.js?v=122';
@@ -50,7 +50,7 @@ import {
   connectKasware, disconnectKasware, bindKaswareEvents, loadKaswarePref, compoundWithKasware,
   ensureKaswareSigner, syncKaswareNetwork, walletIsKaswareChip, autoArmKaswareForWallet,
   fetchKaswareUtxos, sameKasAddr, liveKaswareAccount
-} from './kasware.js?v=204';
+} from './kasware.js?v=206';
 import {
   cookMarkets, cookQuote, cookWrappers, pickWrappedMarketId, cookOrderbook, cookCandles,
   cookDeploy, cookBuildOrder, cookFillOrder, cookSweep, cookWrap, cookMint,
@@ -65,9 +65,9 @@ import {
   ksocialFeed, ksocialReplies, ksocialSubmitPost, ksocialSubmitReply, ksocialSubmitVote,
   ksocialRich, KSOCIAL_MAX, ksocialCachedFeed, detectWalletKns, knsNameForPubkey,
   ksocialFeeKas
-} from './ksocial.js?v=204';
+} from './ksocial.js?v=206';
 
-export const BUILD = '205';
+export const BUILD = '206';
 const DESK_ID_KEY = 'kcc20_desk_id_v1';
 const DESK_VAULT_KEY = 'kcc20_desk_vault_v1';
 
@@ -8857,6 +8857,9 @@ async function runCompound() {
     `, { confirm: 'Done', cancel: false, onConfirm: () => { closeSheet(); refreshAll(); } });
   } catch (e) {
     let msg = errText(e);
+    if (/missing field.?isCoinbase|missing field `isCoinbase`/i.test(msg)) {
+      msg = 'KasWare needs isCoinbase on the merge JSON. Reject that popup, hard-refresh, then Compound again.';
+    }
     if (/false stack/i.test(msg)) {
       msg = 'KasWare signature did not match these UTXOs (false stack). Reject any leftover popup, hard-refresh, then Compound again. Only native kaspa:q coins merge — not vaults or token cells.';
     }

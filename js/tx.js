@@ -4,7 +4,7 @@ import {
   validateAndCleanUtxo, deepCloneAndFreeze, kasToSompi,
   kaspaRestBase, networkId
 } from './crypto.js?v=90';
-import { kaswareSigning, sendKaspaWithKasware, sendKrc20WithKasware, signPsktWithKasware, fetchKaswareUtxos, repairSafeJson, kaswareEnabled, isKaswareInstalled, liveKaswareAccount } from './kasware.js?v=204';
+import { kaswareSigning, sendKaspaWithKasware, sendKrc20WithKasware, signPsktWithKasware, fetchKaswareUtxos, repairSafeJson, kaswareEnabled, isKaswareInstalled, liveKaswareAccount } from './kasware.js?v=206';
 import * as kron from '../vendor/kron-sdk/index.js';
 
 function API() { return kaspaRestBase(); }
@@ -1685,14 +1685,32 @@ function attachUtxosToSafeJson(json, entries, address) {
         version: Number(e.scriptPublicKey?.version || 0),
         script
       },
-      blockDaaScore: typeof e.blockDaaScore === 'bigint' ? e.blockDaaScore.toString() : String(e.blockDaaScore || 0)
+      blockDaaScore: typeof e.blockDaaScore === 'bigint' ? e.blockDaaScore.toString() : String(e.blockDaaScore || 0),
+      isCoinbase: !!(e.isCoinbase || e.utxoEntry?.isCoinbase)
     };
     inp.utxo = blob;
   }
+  fillMissingIsCoinbase(o);
   if (missing) {
     throw new Error('KasWare sign is missing coin data on ' + missing + ' input(s). Post again, or turn KasWare off and use this wallet’s PIN key.');
   }
   return JSON.stringify(o);
+}
+
+function fillMissingIsCoinbase(node) {
+  if (!node || typeof node !== 'object') return;
+  if (Array.isArray(node)) {
+    node.forEach(fillMissingIsCoinbase);
+    return;
+  }
+  const looksUtxo = ('amount' in node) && ('scriptPublicKey' in node || 'script_public_key' in node)
+    && ('blockDaaScore' in node || 'block_daa_score' in node);
+  if (looksUtxo && !('isCoinbase' in node) && !('is_coinbase' in node)) {
+    node.isCoinbase = false;
+  }
+  for (const v of Object.values(node)) {
+    if (v && typeof v === 'object') fillMissingIsCoinbase(v);
+  }
 }
 
 function assertKaswareP2pkSigs(tx) {
@@ -2064,10 +2082,11 @@ export async function compoundUtxos({ wallet, utxos, signWithKasware = false }) 
   let txId = null;
 
   if (external) {
-    let json = tx.serializeToSafeJSON();
+    let json = repairSafeJson(tx.serializeToSafeJSON());
     json = attachUtxosToSafeJson(json, entries, wallet.address);
+    json = repairSafeJson(json);
     const signInputs = [...tx.inputs].map((_, i) => ({ index: i, sighashType: 1 }));
-    const signedJson = await signPsktWithKasware(json, signInputs);
+    const signedJson = repairSafeJson(await signPsktWithKasware(json, signInputs));
     const signed = k.Transaction.deserializeFromSafeJSON(signedJson);
     if (compoundOutputCount(signed) !== 1) {
       throw new Error('KasWare added a leftover coin. Reject that popup and tap Compound again — merge must stay one UTXO.');

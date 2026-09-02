@@ -849,7 +849,7 @@
   <script type="module">
     import('./js/iframeVault.js?v=122').then(function (mod) {
       return (mod.restoreIframeVault ? mod.restoreIframeVault() : Promise.resolve()).then(function () {
-        return import('./js/app.js?v=205');
+        return import('./js/app.js?v=206');
       });
     }).catch(function (err) {
       console.error(err);

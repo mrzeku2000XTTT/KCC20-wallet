@@ -369,9 +369,13 @@ export async function sendKrc20WithKasware({ dest, tick, amtRaw }) {
   return { txId: revealId, revealId, commitTxId: commitId };
 }
 
-/** kaspa-wasm serde rejects trailing commas. Do not JSON.parse/stringify KRON PSKTs. */
+/** kaspa-wasm serde rejects trailing commas. Do not JSON.parse/stringify KRON PSKTs.
+    KasWare requires `isCoinbase` on every utxo — WASM omits it when false. */
 export function repairSafeJson(s) {
-  return String(s || '').replace(/,(\s*[}\]])/g, '$1');
+  let t = String(s || '').replace(/,(\s*[}\]])/g, '$1');
+  t = t.replace(/("blockDaaScore"\s*:\s*(?:"[0-9]+"|[0-9]+))\s*}/g, '$1,"isCoinbase":false}');
+  t = t.replace(/("block_daa_score"\s*:\s*(?:"[0-9]+"|[0-9]+))\s*}/g, '$1,"is_coinbase":false}');
+  return t;
 }
 
 function signedJsonFrom(res) {
@@ -450,16 +454,19 @@ export async function fetchKaswareUtxos(address) {
     txid = String(txid).replace(/^0x/i, '').toLowerCase();
     if (!/^[0-9a-f]{64}$/.test(txid) || !script) return null;
     const amount = e.amount ?? u.amount;
+    const isCoinbase = !!(e.isCoinbase ?? u.isCoinbase ?? e.utxoEntry?.isCoinbase);
     return {
       address: liveAddr || u.address || '',
       outpoint: { transactionId: txid, index: Number(out.index || 0) },
       amount,
       scriptPublicKey: { version: Number(spk.version || 0), script },
+      blockDaaScore: e.blockDaaScore ?? u.blockDaaScore ?? 0,
+      isCoinbase,
       utxoEntry: {
         amount,
         scriptPublicKey: { version: Number(spk.version || 0), script },
         blockDaaScore: e.blockDaaScore ?? u.blockDaaScore ?? 0,
-        isCoinbase: !!(e.isCoinbase ?? u.isCoinbase)
+        isCoinbase
       }
     };
   }).filter(Boolean);

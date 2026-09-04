@@ -351,8 +351,8 @@ img { display: block; max-width: 100%; }
 .w-arrow:disabled { opacity: 0.28; color: var(--label-2); }
 .w-chip {
   min-width: 0; width: 100%;
-  display: flex; align-items: center; gap: 4px;
-  padding: 8px 8px 8px 10px;
+  display: flex; align-items: stretch; gap: 2px;
+  padding: 6px 6px 6px 8px;
   border-radius: 14px;
   background: var(--glass-2);
   border: 0.5px solid var(--hairline);
@@ -363,15 +363,24 @@ img { display: block; max-width: 100%; }
   background: rgba(212,176,122,0.16);
 }
 .w-chip-main {
-  display: flex; align-items: center; gap: 6px;
+  display: flex; flex-direction: column; align-items: flex-start; justify-content: center;
+  gap: 2px;
   background: none; border: 0; padding: 0; color: inherit; text-align: left; min-width: 0; flex: 1;
 }
 .w-kas {
   width: 18px; height: 18px; border-radius: 50%; flex-shrink: 0;
   background: #0b2a26 url("../assets/kas.svg") center / 78% no-repeat;
 }
-.w-chip b { display: flex; align-items: center; gap: 4px; font-size: 13px; font-weight: 650; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.w-chip-main > span:last-child { min-width: 0; overflow: hidden; }
+.w-chip b {
+  display: flex; flex-wrap: wrap; align-items: center; gap: 3px;
+  font-size: 11px; font-weight: 650; line-height: 1.2;
+  max-width: 100%;
+  white-space: normal;
+  overflow: visible;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+.w-chip b .kns-check { flex-shrink: 0; }
 .kns-check {
   display: inline-flex; align-items: center; justify-content: center;
   width: 14px; height: 14px; border-radius: 50%; flex-shrink: 0;
@@ -791,15 +800,17 @@ img { display: block; max-width: 100%; }
 #page-home.home-fit .card-usd { font-size: 12px; }
 #page-home.home-fit .card-foot { margin-top: 8px; font-size: 11px; }
 #page-home.home-fit .card-chip { width: 28px; height: 20px; }
-#page-home.home-fit .wallet-switch { margin: 0 0 8px; padding: 0; gap: 5px; }
-#page-home.home-fit .w-track { gap: 5px; }
-#page-home.home-fit .w-arrow { width: 24px; border-radius: 10px; font-size: 20px; }
-#page-home.home-fit .w-chip { padding: 6px 6px 6px 8px; min-width: 0; border-radius: 12px; }
-#page-home.home-fit .w-chip b { font-size: 12px; }
-#page-home.home-fit .w-chip em { font-size: 10px; }
-#page-home.home-fit .w-kas { width: 16px; height: 16px; }
-#page-home.home-fit .w-send { width: 22px; height: 22px; font-size: 11px; }
-#page-home.home-fit .w-chip.add { flex-basis: 32px; width: 32px; min-width: 32px; font-size: 18px; }
+#page-home.home-fit .wallet-switch { margin: 0 0 8px; padding: 0; gap: 4px; }
+#page-home.home-fit .w-track { gap: 4px; }
+#page-home.home-fit .w-arrow { width: 22px; border-radius: 10px; font-size: 18px; }
+#page-home.home-fit .w-chip { padding: 6px 5px 6px 6px; min-width: 0; border-radius: 12px; }
+#page-home.home-fit .w-chip b { font-size: 10px; line-height: 1.2; }
+#page-home.home-fit .w-chip em { font-size: 9px; }
+#page-home.home-fit .w-kas { display: none; }
+#page-home.home-fit .w-send { width: 18px; height: 18px; font-size: 10px; border-radius: 6px; align-self: center; }
+#page-home.home-fit .w-chip.add { flex-basis: 28px; width: 28px; min-width: 28px; font-size: 16px; }
+#page-home.home-fit .w-chip .kns-check { width: 11px; height: 11px; }
+#page-home.home-fit .w-chip .kns-check svg { width: 7px; height: 7px; }
 #page-home.home-fit .actions { margin-bottom: 6px; gap: 4px; }
 #page-home.home-fit .action { padding: 2px 2px 4px; gap: 4px; }
 #page-home.home-fit .action .orb { width: 40px; height: 40px; }

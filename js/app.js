@@ -67,7 +67,7 @@ import {
   ksocialFeeKas
 } from './ksocial.js?v=206';
 
-export const BUILD = '207';
+export const BUILD = '208';
 const DESK_ID_KEY = 'kcc20_desk_id_v1';
 const DESK_VAULT_KEY = 'kcc20_desk_vault_v1';
 
@@ -1973,19 +1973,12 @@ function renderHomeWallets() {
   const chips = slice.map(w => {
     const active = w.id === wallet.id;
     const kasTxt = walletKasLabel(w, active);
-    const sendBtn = !active
-      ? `<button class="w-send" type="button" data-send-to="${esc(w.id)}" aria-label="Send to ${esc(w.name || 'wallet')}">↗</button>`
-      : '';
     return `
       <div class="w-chip${active ? ' on' : ''}">
-        <button class="w-chip-main" type="button" data-switch-wallet="${esc(w.id)}">
-          <span class="w-kas" aria-hidden="true"></span>
-          <span>
-            <b>${walletTitleHtml(w)}</b>
-            <em>${esc(kasTxt)} KAS</em>
-          </span>
+        <button class="w-chip-main" type="button" data-switch-wallet="${esc(w.id)}" title="${esc(walletPublicName(w))}">
+          <b>${walletTitleHtml(w)}</b>
+          <em>${esc(kasTxt)} KAS</em>
         </button>
-        ${sendBtn}
       </div>`;
   }).join('');
   paintIfChanged(box, `

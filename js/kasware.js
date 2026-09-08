@@ -428,17 +428,23 @@ function withMs(p, ms) {
 
 export async function fetchKaswareUtxos(address) {
   const p = kaswareProvider();
-  if (!p?.getUtxoEntries) return [];
+  if (!p?.getUtxoEntries) throw new Error('KasWare has no UTXO list in this browser');
   const liveAddr = address || kaswareConnectedAddress();
   let rows = [];
+  let ok = false;
   try {
     rows = await withMs(p.getUtxoEntries(), 8000);
+    ok = Array.isArray(rows);
   } catch {}
-  if (!Array.isArray(rows) || !rows.length) {
+  if (!ok || !Array.isArray(rows) || !rows.length) {
     try {
       rows = await withMs(liveAddr ? p.getUtxoEntries(liveAddr) : p.getUtxoEntries(), 8000);
-    } catch { return []; }
+      ok = Array.isArray(rows);
+    } catch (e) {
+      if (!ok) throw e;
+    }
   }
+  if (!ok) throw new Error('KasWare did not return UTXOs');
   return (Array.isArray(rows) ? rows : []).map(u => {
     const e = u.entry || u;
     const out = u.outpoint || e.outpoint || {};

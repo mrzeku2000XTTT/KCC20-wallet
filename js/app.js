@@ -24,7 +24,7 @@ import {
   fetchOwnedUtxos, collectSpendableUtxos, buildSentinelChain, buildRecurringChain, buildHashlockCovenant,
   newHashlockSecret, checkinHop, currentHop, parseXmssKit, p2shFromRedeemHex, spendXmssVault,
   disconnectRpc, buildDcaDrips, sendKasMany, releaseDcaDrip, cancelDcaDrip, isMassError
-} from './tx.js?v=212';
+} from './tx.js?v=214';
 import { bootDappConnect, pingTttDappFrame, TTT_TREASURY } from './dappConnect.js?v=198';
 import { changenowEstimate, changenowCreate, changenowWidgetUrl, cnFrom } from './changenow.js?v=180';
 import { schedulePersistIframeVault, bootIframeVaultWatch } from './iframeVault.js?v=122';
@@ -50,7 +50,7 @@ import {
   connectKasware, disconnectKasware, bindKaswareEvents, loadKaswarePref, compoundWithKasware,
   ensureKaswareSigner, syncKaswareNetwork, walletIsKaswareChip, autoArmKaswareForWallet,
   fetchKaswareUtxos, sameKasAddr, liveKaswareAccount
-} from './kasware.js?v=206';
+} from './kasware.js?v=214';
 import {
   cookMarkets, cookQuote, cookWrappers, pickWrappedMarketId, cookOrderbook, cookCandles,
   cookDeploy, cookBuildOrder, cookFillOrder, cookSweep, cookWrap, cookMint,
@@ -67,7 +67,7 @@ import {
   ksocialFeeKas
 } from './ksocial.js?v=206';
 
-export const BUILD = '213';
+export const BUILD = '214';
 const DESK_ID_KEY = 'kcc20_desk_id_v1';
 const DESK_VAULT_KEY = 'kcc20_desk_vault_v1';
 
@@ -4872,17 +4872,22 @@ async function tickLive(full) {
       if (o.role !== 'home' && Number(bals[i] || 0) > 0) markAddressUsed(wallet, o.address, true);
     });
     let ownedBag = ownedRaw;
-    if (kaswareSigning(wallet) || walletIsKaswareChip(wallet)) {
+    if (kaswareEnabled() && isKaswareInstalled()) {
       try {
         const kw = await fetchKaswareUtxos(wallet.address);
         const cleaned = (kw || []).map(u => validateAndCleanUtxo(u)).filter(Boolean);
-        if (cleaned.length) ownedBag = cleaned;
+        ownedBag = cleaned;
+        const kwSum = cleaned.reduce((a, e) => {
+          try { return a + Number(e.amount || 0n); } catch { return a; }
+        }, 0);
+        if (kwSum > 0) nextBal = kwSum;
       } catch {}
     }
     if (Array.isArray(ownedBag)) {
       const keepOptimistic = Date.now() < hushUtxosUntil
         && Array.isArray(utxos) && utxos.length === 1
-        && ownedBag.length > 1;
+        && ownedBag.length > 1
+        && !(kaswareEnabled() && isKaswareInstalled());
       if (!keepOptimistic) utxos = ownedBag;
       const uSum = (keepOptimistic ? utxos : ownedBag).reduce((a, e) => {
         try { return a + Number(e.amount || 0n); } catch { return a; }
@@ -8804,20 +8809,35 @@ async function runTrade({ tick, side, amount, quote, forceKasware = false }) {
   }
 }
 
-function openCompound() {
+async function openCompound() {
   haptic();
-  const n = Array.isArray(utxos) ? utxos.length : 0;
-  if (n < 2) { toast('Already one UTXO'); return; }
+  const kw = kaswareEnabled() && isKaswareInstalled();
+  let bag = Array.isArray(utxos) ? utxos : [];
+  if (kw) {
+    try {
+      const live = await fetchKaswareUtxos(wallet.address);
+      bag = (live || []).map(u => validateAndCleanUtxo(u)).filter(Boolean);
+      utxos = bag;
+      paintUtxoCount();
+    } catch (e) {
+      toast(errText(e) || 'KasWare did not return coins');
+      return;
+    }
+  }
+  const n = bag.length;
+  if (n < 2) {
+    toast(kw ? 'KasWare has 1 UTXO — nothing to compound' : 'Already one UTXO');
+    return;
+  }
   const feeEst = 0.0045 + n * 0.00015;
   if (walletIsKaswareChip(wallet)) autoArmKaswareForWallet(wallet).catch(() => {});
-  const kw = kaswareSigning(wallet) || walletIsKaswareChip(wallet);
   openSheet('Compound UTXOs', `
     <div class="kv"><span class="k">Wallet</span><span class="v">${esc(wallet?.name || 'This wallet')}</span></div>
     <div class="kv"><span class="k">Network</span><span class="v">${isTestnet() ? 'TN10' : 'mainnet'}</span></div>
     <div class="kv"><span class="k">UTXOs now</span><span class="v">${n}</span></div>
-    <div class="kv"><span class="k">Balance</span><span class="v">${formatAmount(balanceSompi)} KAS</span></div>
+    <div class="kv"><span class="k">Balance</span><span class="v">${formatAmount(bag.reduce((a, e) => a + Number(e.amount || 0n), 0))} KAS</span></div>
     <div class="kv"><span class="k">Network fee</span><span class="v">~${feeEst.toFixed(4)} KAS</span></div>
-    <p class="muted" style="text-align:left;">Merges <b>every spendable KAS coin</b> into <b>one</b> UTXO. No leftover change coin (that is what left you on 2 UTXOs). ${kw ? 'Approve the PSKT in KasWare — it must show one output.' : 'Native PIN signs.'}</p>
+    <p class="muted" style="text-align:left;">Merges <b>every spendable KAS coin KasWare can sign</b> into <b>one</b> UTXO. ${kw ? 'Same list as the KasWare UTXO tab. Approve the PSKT — it must show one output.' : 'Native PIN signs.'}</p>
   `, { confirm: kw ? 'Pay with KasWare' : 'Compound now', gold: true, onConfirm: () => runCompound() });
 }
 

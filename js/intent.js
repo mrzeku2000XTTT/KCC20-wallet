@@ -215,7 +215,8 @@ export function normalizeVaultType(raw) {
     recurring: 'recurring', subscription: 'recurring', x402: 'recurring', 'pay on a timer': 'recurring',
     hashlock: 'hashlock', 'hash lock': 'hashlock', htlc: 'hashlock', 'secret lock': 'hashlock',
     onramp: 'onramp', 'on ramp': 'onramp', 'card sale': 'onramp', cardsale: 'onramp', 'debit card': 'onramp',
-    xmss: 'xmss', 'xmss vault': 'xmss',
+    xmss: 'xmss', 'xmss vault': 'xmss', pqs: 'xmss', pq: 'xmss',
+    'post quantum': 'xmss', 'quantum safe': 'xmss', 'quantum vault': 'xmss',
     silverscript: 'silverscript', silverc: 'silverscript', 'silver script': 'silverscript'
   };
   if (exact[s]) return exact[s];
@@ -225,7 +226,7 @@ export function normalizeVaultType(raw) {
   if (/escrow/.test(s)) return 'escrow';
   if (/on\s*ramp|card\s*sale|debit\s*card/.test(s)) return 'onramp';
   if (/hash\s*lock|htlc/.test(s)) return 'hashlock';
-  if (/xmss|post\s*quantum/.test(s)) return 'xmss';
+  if (/xmss|\bpqs\b|\bpq\b|post\s*quantum|quantum\s*safe/.test(s)) return 'xmss';
   if (/silver\s*script|silverc|\.sil\b/.test(s)) return 'silverscript';
   if (/recurring|x402/.test(s)) return 'recurring';
   if (/kcc20\s*freeze|freeze tokens/.test(s)) return 'kcc20lock';
@@ -244,7 +245,8 @@ function detectType(text, prev) {
   if (isSentinelTalk(t)) return 'sentinel';
   if (/\b(changenow|change\s*now)\b/.test(t) || (/\b(usdc|usdt)\b/.test(t) && /\b(kas|kaspa|swap|buy)\b/.test(t))) return 'changenow';
   if (/\b(on-?ramp|card\s*sale|buy\s+kas(pa)?\s+with\s+(a\s+)?(card|debit|dollar)|debit\s*card)\b/.test(t)) return 'onramp';
-  if (/\b(xmss|post-?quantum|public kit)\b/.test(t)) return 'xmss';
+  if (/\b(xmss|pqs|pq|post-?quantum|quantum[-\s]?safe|quantum\s+vault|public kit)\b/.test(t)
+    || /"redeem_script_hex"|master_root_hex/i.test(t)) return 'xmss';
   if (/\b(silverscript|silverc|sil\s*abi|\.sil\b|kcc-?01)\b/.test(t) || /"schema_version"\s*:\s*1/.test(t)) return 'silverscript';
   if (/\b(recurring|subscription|x402)\b/.test(t)) return 'recurring';
   if (/\b(hash\s*lock|htlc|hash vault)\b/.test(t)) return 'hashlock';
@@ -354,9 +356,15 @@ export function parseIntent(text, prev = null) {
       }
     }
   }
+  if (type === 'xmss') {
+    const kit = parseXmssKitChat(raw, prev);
+    if (kit.error === 'private') params.kitPrivate = true;
+    else if (kit.kit) params.kit = kit.kit;
+    else if (prev?.params?.kit) params.kit = prev.params.kit;
+  }
 
   const missing = [];
-  if (!type) missing.push('what to do (lock, escrow, send, freeze, rent, savings)');
+  if (!type) missing.push('what to do (lock, escrow, send, freeze, rent, savings, or pqs)');
   if (type === 'kcc20lock') {
     if (!params.amountToken) missing.push('token amount (e.g. 20 KKDAG)');
     if (!params.tick) missing.push('KCC20 ticker');
@@ -375,6 +383,10 @@ export function parseIntent(text, prev = null) {
     if (params.dueAt && params.dueAt < Date.now() - 60000 && !params.unlockAnytime) {
       missing.push('a future due date');
     }
+  } else if (type === 'xmss') {
+    if (!params.amountKas) missing.push('amount in KAS');
+    if (params.kitPrivate) missing.push('the PUBLIC XMSS kit (.public.json), not a private key file');
+    else if (!params.kit) missing.push('XMSS public kit JSON from xmss_keygen.py');
   } else if (type === 'silverscript') {
     if (!params.amountKas) missing.push('amount in KAS');
     if (!params.artifact) missing.push('silverc JSON artifact (schema_version 1). Compile .sil with silverc — Argent does not compile .sil');
@@ -427,6 +439,9 @@ export function describeIntent(intent) {
   if (intent.type === 'escrow') return `Escrow ${amt} for buyer ${p.buyerAddress || '…'}.`;
   if (intent.type === 'multisig') return `2-of-2 vault of ${amt} with ${p.counterparty || 'a counterparty'}.`;
   if (intent.type === 'send') return `Send ${amt} to ${p.destination || '…'}.`;
+  if (intent.type === 'xmss') {
+    return `PQS XMSS vault: lock ${amt} in the post-quantum script from this repo. Keys stay offline. Spend later with xmss_sign.py witness.`;
+  }
   if (intent.type === 'silverscript') return `SilverScript: lock ${amt} into silverc bytecode (P2SH). Spend with a KCC-01 entry. Argent does not compile .sil.`;
   if (intent.type === 'changenow') return `ChangeNOW floating swap: send ${p.amountToken || p.amountKas || 'an amount'} ${p.from || p.tick || 'USDC'} — KAS pays out to this wallet.`;
   return `${intent.type}: ${amt}`;
@@ -449,8 +464,41 @@ export function askFor(missing) {
   if (first.includes('destination')) return 'Paste the destination kaspa: address.';
   if (first.includes('heir') || first.includes('beneficiary')) return 'Paste the heir’s kaspa:q address (grandson, etc). Timeout pays that address.';
   if (first.includes('payee')) return 'Paste the payee’s kaspa: address.';
+  if (first.includes('not a private key file') || first.includes('PUBLIC XMSS kit')) {
+    return 'That is a PRIVATE XMSS file. Never paste it here. Paste only the .public.json from xmss_keygen.py.';
+  }
+  if (first.includes('XMSS public kit') || first.includes('xmss_keygen')) {
+    return 'Paste the XMSS public kit JSON from `python3 keygen/xmss_keygen.py` (.public.json). I fund the kaspa:p — the private key never leaves your PC.';
+  }
   if (first.includes('silverc') || first.includes('.sil')) return 'Paste the silverc JSON (schema_version 1). Compile with silverc; Argent does not compile .sil.';
   return `I still need ${first}.`;
+}
+
+function parseXmssKitChat(raw, prev) {
+  if (prev?.params?.kit && !/"sec_seed_hex"/i.test(String(raw || ''))) {
+    const look = tryXmssKitText(raw);
+    if (look.kit) return look;
+    return { kit: prev.params.kit };
+  }
+  return tryXmssKitText(raw);
+}
+
+function tryXmssKitText(raw) {
+  const t = String(raw || '').trim();
+  if (!t) return {};
+  const blob = t.match(/\{[\s\S]*\}/);
+  if (blob) {
+    try {
+      const obj = JSON.parse(blob[0]);
+      if (obj?.sec_seed_hex || obj?.secSeedHex) return { error: 'private' };
+      if (obj.redeem_script_hex || obj.redeemScriptHex || obj.scriptHex || obj.script_hex) {
+        return { kit: blob[0] };
+      }
+    } catch {}
+  }
+  const hex = t.replace(/\s+/g, '').replace(/^0x/i, '');
+  if (/^[0-9a-fA-F]+$/.test(hex) && hex.length >= 200 && hex.length % 2 === 0) return { kit: hex };
+  return {};
 }
 
 export function parseDurationField(raw) {
@@ -498,7 +546,7 @@ function editDist(a, b) {
   return dp[a.length][b.length];
 }
 
-const KNOWN = ['lock', 'freeze', 'send', 'pay', 'escrow', 'multisig', 'sentinel', 'capsule', 'minutes', 'hours', 'days', 'kas', 'kkdag', 'kron', 'kpulse', 'vault', 'hold', 'rent', 'until', 'due', 'save', 'sale', 'onramp', 'deadman', 'card', 'silverscript', 'silverc'];
+const KNOWN = ['lock', 'freeze', 'send', 'pay', 'escrow', 'multisig', 'sentinel', 'capsule', 'minutes', 'hours', 'days', 'kas', 'kkdag', 'kron', 'kpulse', 'vault', 'hold', 'rent', 'until', 'due', 'save', 'sale', 'onramp', 'deadman', 'card', 'silverscript', 'silverc', 'xmss', 'pqs'];
 
 export function normalizeChat(text) {
   let t = String(text || '').trim();
@@ -530,13 +578,13 @@ export function interpretVaultChat(text, prev = null) {
   if (/\b(dag.?knight|argent|covenant\+\+|getting ready|michael sutton|kip-?2)\b/i.test(low)) {
     return {
       kind: 'talk',
-      text: 'Argent — vault agent for this wallet, getting ready for DAGKnight. I turn messy English into covenant actions this app can actually fund on mainnet: Time Capsule (KAS CLTV), KCC20 Freeze (SCRIPT_HASH + CLTV), escrow, 2-of-2. XMSS / Sentinel tiles use the same CLTV path today. Say what to lock.'
+      text: 'Argent — vault agent for this wallet. Rent and time capsules are Schnorr CLTV. Say “lock 200 kas pqs” then paste an XMSS public kit for the real post-quantum vault from kaspa-xmss-covenants. Private XMSS keys never enter this phone.'
     };
   }
   if (/^(hi|hey|hello|yo|sup|help|what can you do|\?)\b/i.test(low) || low.length < 3) {
     return {
       kind: 'talk',
-      text: 'Tell me in plain words. Examples: “lock 1000 kas for rent until September 1 2026 9:00 UTC”, “save 200 kas, unlock anytime”, “lock 0.15 kas for 3 minutes”.'
+      text: 'Tell me in plain words. Examples: “lock 1000 kas for rent until September 1 2026 9:00 UTC”, “lock 200 kas pqs” then paste the XMSS public kit, “lock 0.15 kas for 3 minutes”.'
     };
   }
   const intent = parseIntent(norm, prev);

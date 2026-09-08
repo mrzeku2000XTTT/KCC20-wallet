@@ -1216,7 +1216,14 @@ img { display: block; max-width: 100%; }
 .bubble.ai { align-self: flex-start; background: rgba(255,255,255,0.08); border-bottom-left-radius: 5px; }
 .bubble .btn { width: 100%; max-width: 100%; }
 .chatbar { display: flex; gap: 8px; align-items: flex-end; }
-.chatbar input { flex: 1; border-radius: 22px; padding: 12px 16px; background: rgba(0,0,0,0.35); border: 0.5px solid var(--hairline); font-size: 16px; outline: none; min-width: 0; }
+.chatbar input,
+.chatbar textarea {
+  flex: 1; border-radius: 16px; padding: 12px 16px;
+  background: rgba(0,0,0,0.35); border: 0.5px solid var(--hairline);
+  font-size: 15px; outline: none; min-width: 0;
+  font-family: inherit; color: inherit; resize: none;
+  min-height: 44px; max-height: 140px; line-height: 1.35;
+}
 .send-orb {
   width: 44px; height: 44px; border-radius: 50%; background: var(--blue);
   display: grid; place-items: center; flex-shrink: 0; color: #fff; font-size: 18px;

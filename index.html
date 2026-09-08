@@ -12,7 +12,7 @@
   <link rel="icon" href="assets/icon.png">
   <title>KCC20 Wallet</title>
   <meta http-equiv="Cache-Control" content="no-store, no-cache, must-revalidate">
-  <link rel="stylesheet" href="css/app.css?v=208">
+  <link rel="stylesheet" href="css/app.css?v=209">
 </head>
 <body>
   <img class="bg-poster" src="assets/bg.jpg" alt="">
@@ -436,10 +436,10 @@
                 <button type="button" class="argent-x" id="argent-close" aria-label="Close Argent">Close</button>
               </div>
               <div class="chat" id="chat-log">
-                <div class="bubble ai">I’m <strong>Argent</strong>. Try <em>lock 1000 kas for rent until September 1 2026 9:00 UTC</em> or <em>save 200 kas, unlock anytime</em>.</div>
+                <div class="bubble ai">I’m <strong>Argent</strong>. Try <em>lock 1000 kas for rent until September 1 2026 9:00 UTC</em> or <em>lock 200 kas pqs</em> then paste the XMSS public kit.</div>
               </div>
               <div class="chatbar">
-                <input id="chat-input" placeholder="Lock 1000 KAS for rent until Sep 1…" autocomplete="off" enterkeyhint="send">
+                <textarea id="chat-input" rows="1" placeholder="lock 200 kas pqs  or  rent until Sep 1…" autocomplete="off" enterkeyhint="send"></textarea>
                 <button class="send-orb" id="chat-send" type="button" aria-label="Send">↑</button>
               </div>
             </div>
@@ -849,7 +849,7 @@
   <script type="module">
     import('./js/iframeVault.js?v=122').then(function (mod) {
       return (mod.restoreIframeVault ? mod.restoreIframeVault() : Promise.resolve()).then(function () {
-        return import('./js/app.js?v=208');
+        return import('./js/app.js?v=209');
       });
     }).catch(function (err) {
       console.error(err);

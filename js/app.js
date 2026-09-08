@@ -12,7 +12,7 @@ import {
   fetchKronAddrTrades, fetchKronTokenUtxos, fetchKronAddrHoldings, KRON_IDX,
   krc20Logo, toTokenRaw, setVaultOwner, kcc20Identicon, VAULT_GROUPS, LIFE_KINDS, lifeKindMeta
 } from './kcc20.js?v=124';
-import { parseIntent, describeIntent, askFor, parseDurationField, interpretVaultChat, normalizeChat, normalizeVaultType } from './intent.js?v=124';
+import { parseIntent, describeIntent, askFor, parseDurationField, interpretVaultChat, normalizeChat, normalizeVaultType } from './intent.js?v=125';
 import { parse as parseSilArtifact, redeemHex as silRedeemHex } from './silverscript.js?v=184';
 import { payloadFromAddress } from './script.js?v=90';
 import { explainTransaction, scorpionAnswer } from './scorpion.js?v=114';
@@ -67,7 +67,7 @@ import {
   ksocialFeeKas
 } from './ksocial.js?v=206';
 
-export const BUILD = '208';
+export const BUILD = '209';
 const DESK_ID_KEY = 'kcc20_desk_id_v1';
 const DESK_VAULT_KEY = 'kcc20_desk_vault_v1';
 
@@ -10827,6 +10827,7 @@ async function sendChat() {
   const text = input.value.trim();
   if (!text) return;
   input.value = '';
+  if (input.tagName === 'TEXTAREA') input.style.height = '44px';
   appendChat('me', esc(text));
   chatTurns.push({ role: 'user', content: text });
   const typing = appendChat('ai', '<span style="opacity:0.55">Argent is reading that…</span>');
@@ -10875,7 +10876,7 @@ async function sendChat() {
     if (!(remote?.reply || remote?.text)) {
       const fallback = localView.kind === 'talk'
         ? localView.text
-        : 'Argent here. I lock rent, car notes, savings, and time capsules. Example: <em>lock 1000 kas for rent until September 1 2026 9:00 UTC</em>';
+        : 'Argent here. Schnorr locks: <em>lock 1000 kas for rent until September 1 2026 9:00 UTC</em>. PQS: <em>lock 200 kas pqs</em> then paste the XMSS public kit from xmss_keygen.py.';
       appendChat('ai', fallback);
       chatTurns.push({ role: 'assistant', content: fallback.replace(/<[^>]+>/g, '') });
     }
@@ -11186,7 +11187,15 @@ function bind() {
   click('argent-orb', toggleArgent);
   click('argent-close', () => setArgentOpen(false));
   click('chat-send', sendChat);
-  $('chat-input')?.addEventListener('keydown', e => { if (e.key === 'Enter') sendChat(); });
+  $('chat-input')?.addEventListener('keydown', e => {
+    if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendChat(); }
+  });
+  $('chat-input')?.addEventListener('input', () => {
+    const el = $('chat-input');
+    if (!el || el.tagName !== 'TEXTAREA') return;
+    el.style.height = '44px';
+    el.style.height = Math.min(140, el.scrollHeight) + 'px';
+  });
   $('chat-input')?.addEventListener('focus', () => {
     setTimeout(() => { const log = $('chat-log'); if (log) log.scrollTop = log.scrollHeight; }, 350);
   });

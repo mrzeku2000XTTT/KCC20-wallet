@@ -1,7 +1,7 @@
 /* KRON DEX trades via @kronsdk/kron-sdk (v0.17.2). Quotes + builders from the SDK;
    templates from the CORS-open token descriptor; live heads from idx.kron.technology. */
 import * as kron from '../vendor/kron-sdk/index.js';
-import { loadKaspaSdk, connectPublicNode, fetchAddressUtxos, toRpcTransaction } from './tx.js?v=185';
+import { loadKaspaSdk, connectPublicNode, fetchAddressUtxos, toRpcTransaction } from './tx.js?v=212';
 import { kaswareSigning, signPsktWithKasware, fetchKaswareUtxos, repairSafeJson } from './kasware.js?v=195';
 
 const IDX = 'https://idx.kron.technology/v1/kcc20';
@@ -965,6 +965,11 @@ export async function executeKronTrade({ wallet, tick, side, amount, utxos, onSt
       throw new Error('KasWare returned a tx this app could not read: ' + msg);
     }
     mergeFundingSignatures(asm.transaction, signedTx, asm.fundingInputIndexes);
+    const fundIdx = asm.fundingInputIndexes[0];
+    const fundSig = hexish(asm.transaction.inputs[fundIdx]?.signatureScript);
+    if (!fundSig || fundSig.length < 20) {
+      throw new Error('KasWare did not sign the KAS funding input. Reject leftover popups, tap Buy again.');
+    }
   } else {
     const hex = String(wallet.privKey || '').replace(/^0x/i, '').trim();
     if (!/^[0-9a-fA-F]{64}$/.test(hex)) {
@@ -974,7 +979,7 @@ export async function executeKronTrade({ wallet, tick, side, amount, utxos, onSt
     const priv = new k.PrivateKey(wallet.privKey);
     signFundingP2pk(k, asm.transaction, priv, asm.fundingInputIndexes);
   }
-  onStatus?.('Broadcasting KRON trade…');
+  onStatus?.('Signed. Broadcasting…');
   const txId = await submitKronSigned(rpc, asm.transaction, onStatus, nodeUrl);
   return { txId, fee, quote: quoted, signer: external ? 'kasware' : 'local' };
 }
@@ -1014,14 +1019,46 @@ async function trySubmit(rpc, tx, allowOrphan) {
 }
 
 function orphanHint() {
-  return 'KRON curve/pool is not on this Kaspa node yet (orphan — not a bad KasWare signature). Wait ~10 seconds, reject leftover KasWare popups, then tap Buy again.';
+  return 'Signed in KasWare, but public Kaspa nodes do not have this KRON pool UTXO yet. Wait ~8 seconds, reject leftover popups, tap Buy again. Not a bad signature.';
+}
+
+const KRON_WRPC = [
+  'wss://node.kron.technology/kaspa/mainnet/wrpc/borsh',
+  'wss://node.kron.technology'
+];
+
+async function connectKronSubmitNode(avoid) {
+  const k = await loadKaspaSdk();
+  const encoding = k.Encoding.Borsh;
+  for (const url of KRON_WRPC) {
+    if (avoid && url === avoid) continue;
+    let rpc = null;
+    try {
+      rpc = new k.RpcClient({ url, encoding, networkId: 'mainnet' });
+      await Promise.race([
+        rpc.connect(),
+        new Promise((_, rej) => setTimeout(() => rej(new Error('timeout')), 8000))
+      ]);
+      await rpc.getServerInfo();
+      return { rpc, url };
+    } catch {
+      try { if (rpc) await rpc.disconnect(); } catch {}
+    }
+  }
+  return connectPublicNode({ force: true, avoid });
 }
 
 async function submitKronSigned(rpc0, tx, onStatus, startUrl) {
   let rpc = rpc0;
   let lastUrl = startUrl || '';
   let last = null;
-  for (let n = 0; n < 8; n++) {
+  onStatus?.('Broadcasting signed swap…');
+  try {
+    const kron = await connectKronSubmitNode('');
+    rpc = kron.rpc;
+    lastUrl = kron.url || lastUrl;
+  } catch {}
+  for (let n = 0; n < 10; n++) {
     try {
       const txId = await trySubmit(rpc, tx, true);
       if (txId) return txId;
@@ -1034,12 +1071,17 @@ async function submitKronSigned(rpc0, tx, onStatus, startUrl) {
       if (isFalseStack(e)) {
         throw new Error('KasWare signature did not verify. Reject leftover popups, hard-refresh this wallet, tap Buy again.');
       }
-      if (!isOrphanReject(e) && n > 0) throw e;
-      onStatus?.(isOrphanReject(e)
-        ? 'Landing the swap on another Kaspa node…'
-        : 'Broadcasting on another Kaspa node…');
+      if (!isOrphanReject(e) && n > 1) throw e;
+      if (n < 2) {
+        onStatus?.('Signed. Waiting for the KRON node to accept…');
+        await sleep(1200);
+        continue;
+      }
+      onStatus?.('This node is behind the KRON pool — trying another…');
       try {
-        const next = await connectPublicNode({ force: true, avoid: lastUrl });
+        const next = n < 5
+          ? await connectKronSubmitNode(lastUrl)
+          : await connectPublicNode({ force: true, avoid: lastUrl });
         rpc = next.rpc;
         lastUrl = next.url || '';
       } catch (e2) {

@@ -12,7 +12,7 @@
   <link rel="icon" href="assets/icon.png">
   <title>KCC20 Wallet</title>
   <meta http-equiv="Cache-Control" content="no-store, no-cache, must-revalidate">
-  <link rel="stylesheet" href="css/app.css?v=209">
+  <link rel="stylesheet" href="css/app.css?v=210">
 </head>
 <body>
   <img class="bg-poster" src="assets/bg.jpg" alt="">
@@ -110,7 +110,10 @@
             <span id="dd-treasury-lab">DD treasury</span>
             <span class="utxo-go">Sweep</span>
           </button>
-          <div class="section-label">Holdings · live P&amp;L</div>
+          <div class="section-label hold-lab">
+            <span>Holdings · live P&amp;L</span>
+            <button type="button" class="kron-24h-btn" id="btn-kron-board">KRON 24h</button>
+          </div>
           <div class="holdings-pills" id="holdings"></div>
         </section>
 
@@ -785,6 +788,19 @@
         <button class="btn btn-gold" id="trade-go" type="button" style="margin-top:auto;">Review buy</button>
       </div>
 
+      <div class="trade-screen hidden" id="kron-board" aria-hidden="true">
+        <div class="trade-head">
+          <button type="button" class="trade-x" id="kron-board-close">Close</button>
+          <h2>KRON 24h</h2>
+          <span class="trade-head-space"></span>
+        </div>
+        <div class="field"><label>Search</label>
+          <input id="kron-board-q" placeholder="KKDAG, KRON, KDIST…" maxlength="16" spellcheck="false" autocomplete="off">
+        </div>
+        <p class="avail-line">Last 24 hours by volume. Tap a ticker to buy.</p>
+        <div class="kron-board-list" id="kron-board-list"></div>
+      </div>
+
       <div class="pin-lock hidden" id="pin-lock" aria-hidden="true">
         <div class="pin-inner">
           <img class="pin-app-icon" src="assets/icon.png" alt="">
@@ -854,7 +870,7 @@
   <script type="module">
     import('./js/iframeVault.js?v=122').then(function (mod) {
       return (mod.restoreIframeVault ? mod.restoreIframeVault() : Promise.resolve()).then(function () {
-        return import('./js/app.js?v=225');
+        return import('./js/app.js?v=226');
       });
     }).catch(function (err) {
       console.error(err);

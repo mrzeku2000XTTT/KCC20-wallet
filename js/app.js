@@ -28,7 +28,7 @@ import {
 import { bootDappConnect, pingTttDappFrame, TTT_TREASURY } from './dappConnect.js?v=198';
 import { changenowEstimate, changenowCreate, changenowWidgetUrl, cnFrom } from './changenow.js?v=180';
 import { schedulePersistIframeVault, bootIframeVaultWatch } from './iframeVault.js?v=122';
-import { kronMarkets, quoteKronTrade, executeKronTrade, formatKasSompi, lookupKronTick, liveQuote, tradeCostLines, attachKronLogos, kronCandles, kronLogoFor, quoteKcc20Bridge, executeKcc20Bridge, formatTokenRaw } from './kronTrade.js?v=225';
+import { kronMarkets, quoteKronTrade, executeKronTrade, formatKasSompi, lookupKronTick, liveQuote, tradeCostLines, attachKronLogos, kronCandles, kronLogoFor, quoteKcc20Bridge, executeKcc20Bridge, formatTokenRaw } from './kronTrade.js?v=226';
 import {
   BET_AGENT_ADDR, TTT_TICK, WINDOW_MS, windowBounds, fmtRemain,
   kkdagsHeld, isKcc20Pass, hireCost, maxHireHours,
@@ -67,7 +67,7 @@ import {
   ksocialFeeKas
 } from './ksocial.js?v=206';
 
-export const BUILD = '225';
+export const BUILD = '226';
 const DESK_ID_KEY = 'kcc20_desk_id_v1';
 const DESK_VAULT_KEY = 'kcc20_desk_vault_v1';
 
@@ -8503,6 +8503,73 @@ function hideTradeScreen() {
   $('trade-screen')?.setAttribute('aria-hidden', 'true');
 }
 
+let kronBoardCache = [];
+
+function fmtVol(n) {
+  const x = Number(n || 0);
+  if (!(x > 0)) return '—';
+  if (x >= 1e6) return (x / 1e6).toFixed(2) + 'M';
+  if (x >= 1e3) return (x / 1e3).toFixed(1) + 'k';
+  return x.toFixed(2);
+}
+
+function hideKronBoard() {
+  $('kron-board')?.classList.add('hidden');
+  $('kron-board')?.setAttribute('aria-hidden', 'true');
+}
+
+function paintKronBoard(err) {
+  const box = $('kron-board-list');
+  if (!box) return;
+  if (err) { box.innerHTML = `<div class="empty">${esc(err)}</div>`; return; }
+  const q = String($('kron-board-q')?.value || '').trim().toUpperCase();
+  let rows = kronBoardCache.slice();
+  if (q) {
+    rows = rows.filter(m =>
+      String(m.tick || '').toUpperCase().includes(q)
+      || String(m.name || '').toUpperCase().includes(q)
+    );
+  }
+  rows = rows.slice(0, 80);
+  box.innerHTML = rows.map(m => {
+    const chg = Number(m.change24h || 0);
+    const chgCls = chg > 0 ? 'up' : (chg < 0 ? 'down' : '');
+    const px = m.price ? fmtPx(m.price) + ' KAS' : (m.graduated ? 'Pool' : 'Curve');
+    return `
+      <button class="row token-row" type="button" data-kron-buy="${esc(m.tick)}">
+        ${tokenDot({ ticker: m.tick, protocol: 'kcc20', image: m.logo })}
+        <div>
+          <div class="title">${esc(m.tick)}</div>
+          <div class="sub">${esc(m.graduated ? 'Pool' : 'Curve')} · 24h vol ${esc(fmtVol(m.volume24h))} KAS</div>
+        </div>
+        <div class="amt">
+          <b>${esc(px)}</b>
+          <em class="mkt-chg ${chgCls}">${esc(fmtChg(chg))}</em>
+        </div>
+      </button>`;
+  }).join('') || `<div class="empty">${q ? 'No KRON ticker matches that search.' : 'No KRON markets.'}</div>`;
+}
+
+async function openKronBoard() {
+  if (isTestnet()) {
+    toast('KRON 24h is mainnet. Switch Network off TN10.');
+    return;
+  }
+  haptic();
+  const el = $('kron-board');
+  if (!el) return;
+  el.classList.remove('hidden');
+  el.setAttribute('aria-hidden', 'false');
+  if ($('kron-board-q')) $('kron-board-q').value = '';
+  paintKronBoard('Loading KRON 24h…');
+  try {
+    kronBoardCache = (await kronMarkets()).filter(m => validTick(m.tick) && !String(m.tick).includes('?'));
+    paintKronBoard();
+  } catch (e) {
+    paintKronBoard(errText(e));
+  }
+}
+
 function openTrade(prefill = {}) {
   if (isTestnet()) {
     toast('Home Trade is mainnet KRON. Use COOK on TN10.');
@@ -10938,6 +11005,18 @@ function bind() {
   click('btn-buy-kas', () => openBuyKas());
   click('btn-trade', () => openTrade({ tick: 'KKDAG', side: 'buy' }));
   click('btn-trade-tokens', () => openTrade({ tick: 'KKDAG', side: 'buy' }));
+  click('btn-kron-board', () => openKronBoard());
+  click('kron-board-close', hideKronBoard);
+  $('kron-board-q')?.addEventListener('input', () => {
+    clearTimeout(openKronBoard._t);
+    openKronBoard._t = setTimeout(() => paintKronBoard(), 160);
+  });
+  $('kron-board-list')?.addEventListener('click', e => {
+    const row = e.target.closest('[data-kron-buy]');
+    if (!row?.dataset.kronBuy) return;
+    hideKronBoard();
+    openTrade({ tick: row.dataset.kronBuy, side: 'buy' });
+  });
   click('trade-close', hideTradeScreen);
   click('trade-lookup', lookupTradeTicker);
   click('trade-go', () => reviewTrade());

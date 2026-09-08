@@ -330,6 +330,20 @@ function curveQuoteState(token, entry) {
   };
 }
 
+function curveStateFromHead(head, entry) {
+  const p = entry.extensions?.curveParams;
+  if (!p) throw new Error('No KRON curve params for this token');
+  return {
+    realKas: BigInt(head.utxo.realKas || 0),
+    tokenReserve: BigInt(head.inventory.amount || 0),
+    vKas: BigInt(p.vKas),
+    graduationKas: BigInt(p.graduationKas),
+    creatorFeeBps: BigInt(p.creatorFeeBps),
+    platformFeeBps: BigInt(p.platformFeeBps),
+    devFundBps: p.devFundBps != null ? BigInt(p.devFundBps) : 0n
+  };
+}
+
 async function kaspaTx(id) {
   let last = null;
   for (let i = 0; i < 3; i++) {
@@ -905,8 +919,15 @@ export async function executeKronTrade({ wallet, tick, side, amount, utxos, onSt
   } else if (quoted.side === 'buy') {
     onStatus?.('Loading curve…');
     const head = await curveHead(tick, token, entry);
+    const qLive = kron.curve.quoteCpBuy(curveStateFromHead(head, entry), quoted.kasIn);
+    if (!qLive) throw new Error('Amount too small for this curve');
+    quoted.tokenOut = qLive.tokenOut;
+    quoted.fee = qLive.fee;
+    quoted.total = qLive.total;
+    quoted.raw = qLive;
+    withCost(quoted);
     spend = kron.curveCp.buildCpBuy(
-      k, head.tpl, tokenTpl, head.utxo, head.inventory, head.curveCovid, buyer, quoted.kasIn, quoted.tokenOut, merge, presence
+      k, head.tpl, tokenTpl, head.utxo, head.inventory, head.curveCovid, buyer, qLive.kasIn, qLive.tokenOut, merge, presence
     );
   } else {
     onStatus?.('Loading curve…');
@@ -914,10 +935,16 @@ export async function executeKronTrade({ wallet, tick, side, amount, utxos, onSt
       curveHead(tick, token, entry),
       loadUserTokens(tick, wallet.address, { limit: 4, withKas: true })
     ]);
-    const picked = pickTokens(held, quoted.tokenIn, 3);
+    const qLive = kron.curve.quoteCpSell(curveStateFromHead(head, entry), quoted.tokenIn);
+    if (!qLive) throw new Error('Amount too small to sell — fees would exceed proceeds');
+    quoted.kasOut = qLive.kasOut;
+    quoted.net = qLive.net;
+    quoted.fee = qLive.fee;
+    quoted.raw = qLive;
+    const picked = pickTokens(held, qLive.tokenIn, 3);
     const presence = 2 + picked.length;
     spend = kron.curveCp.buildCpSell(
-      k, head.tpl, tokenTpl, head.utxo, picked, head.inventory, head.curveCovid, buyer, quoted.tokenIn, quoted.kasOut, presence
+      k, head.tpl, tokenTpl, head.utxo, picked, head.inventory, head.curveCovid, buyer, qLive.tokenIn, qLive.kasOut, presence
     );
   }
 

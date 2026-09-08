@@ -146,16 +146,12 @@ export async function liveKaswareAccount() {
 }
 
 export function kaswareSigning(wallet) {
-  if (!isKaswareInstalled()) return false;
-  if (!kaswareEnabled() && !walletIsKaswareChip(wallet)) return false;
-  const mine = wallet?.address || '';
-  const theirs = kaswareConnectedAddress();
-  if (walletIsKaswareChip(wallet) && mine && theirs && sameKasAddr(mine, theirs)) return true;
-  if (walletIsKaswareChip(wallet) && mine && !theirs) return true;
+  if (!wallet || !isKaswareInstalled()) return false;
+  if (walletIsKaswareChip(wallet)) return true;
   if (!kaswareEnabled()) return false;
-  if (mine && theirs && sameKasAddr(mine, theirs)) return true;
-  if (mine && !theirs) return true;
-  return false;
+  const mine = wallet.address || '';
+  const theirs = kaswareConnectedAddress();
+  return !!(mine && theirs && sameKasAddr(mine, theirs));
 }
 
 /** When Home is the KasWare-named chip, arm the Settings toggle so Compound/Send pop the extension. */

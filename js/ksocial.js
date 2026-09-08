@@ -4,7 +4,7 @@
    k-social.network). Do not iframe the website. Do not prepend U+2060 (KaChat-only filter). */
 
 import { loadKaspaSdk, sendPayloadSelf, fetchAddressUtxos, fetchOwnedUtxos, estimateKsocialFeeKas } from './tx.js?v=206';
-import { kaswareSigning, kaswarePublicKey, kaswareEnabled, isKaswareInstalled, liveKaswareAccount, signMessageWithKasware } from './kasware.js?v=206';
+import { kaswareSigning, kaswarePublicKey, kaswareEnabled, isKaswareInstalled, liveKaswareAccount, signMessageWithKasware } from './kasware.js?v=215';
 import { knsPrimary, knsDomainsFor } from './kns.js?v=89';
 import { pubkeyToAddress } from './crypto.js?v=100';
 

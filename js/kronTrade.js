@@ -1,8 +1,8 @@
 /* KRON DEX trades via @kronsdk/kron-sdk (v0.18.2). Quotes + builders from the SDK;
    templates via fetchCpTemplates (recipient-bound ABI); live heads from idx + last trade UTXO. */
 import * as kron from '../vendor/kron-sdk/index.js';
-import { loadKaspaSdk, connectPublicNode, disconnectRpc, fetchAddressUtxos, toRpcTransaction } from './tx.js?v=220';
-import { kaswareSigning, signPsktWithKasware, fetchKaswareUtxos, repairSafeJson } from './kasware.js?v=214';
+import { loadKaspaSdk, connectPublicNode, disconnectRpc, fetchAddressUtxos, toRpcTransaction } from './tx.js?v=221';
+import { kaswareSigning, signPsktWithKasware, fetchKaswareUtxos, repairSafeJson } from './kasware.js?v=215';
 
 const IDX = 'https://idx.kron.technology/v1/kcc20';
 const REG = 'https://api.kron.technology';
@@ -1013,7 +1013,7 @@ export async function executeKronTrade({ wallet, tick, side, amount, utxos, onSt
   onStatus?.('Selecting KAS UTXOs…');
   const nativeHex = String(wallet.privKey || '').replace(/^0x/i, '').trim();
   const canPin = /^[0-9a-fA-F]{64}$/.test(nativeHex);
-  const useKw = !canPin && !!(forceKasware || kaswareSigning(wallet));
+  const useKw = !!(forceKasware || kaswareSigning(wallet));
   const needGuess = (quoted.total || quoted.fee || 0n) + (merge.length ? 0n : DUST) + 80_000_000n;
   const fundingAll = await liveFunding(rpc, wallet.address, needGuess, useKw);
   const funding = [];

@@ -24,11 +24,11 @@ import {
   fetchOwnedUtxos, collectSpendableUtxos, buildSentinelChain, buildRecurringChain, buildHashlockCovenant,
   newHashlockSecret, checkinHop, currentHop, parseXmssKit, p2shFromRedeemHex, spendXmssVault,
   disconnectRpc, buildDcaDrips, sendKasMany, releaseDcaDrip, cancelDcaDrip, isMassError
-} from './tx.js?v=220';
-import { bootDappConnect, pingTttDappFrame, pingKasdistroDappFrame, TTT_TREASURY } from './dappConnect.js?v=199';
+} from './tx.js?v=221';
+import { bootDappConnect, pingTttDappFrame, pingKasdistroDappFrame, TTT_TREASURY } from './dappConnect.js?v=200';
 import { changenowEstimate, changenowCreate, changenowWidgetUrl, cnFrom } from './changenow.js?v=180';
 import { schedulePersistIframeVault, bootIframeVaultWatch } from './iframeVault.js?v=122';
-import { kronMarkets, quoteKronTrade, executeKronTrade, formatKasSompi, lookupKronTick, liveQuote, tradeCostLines, attachKronLogos, kronCandles, kronLogoFor, quoteKcc20Bridge, executeKcc20Bridge, formatTokenRaw } from './kronTrade.js?v=229';
+import { kronMarkets, quoteKronTrade, executeKronTrade, formatKasSompi, lookupKronTick, liveQuote, tradeCostLines, attachKronLogos, kronCandles, kronLogoFor, quoteKcc20Bridge, executeKcc20Bridge, formatTokenRaw } from './kronTrade.js?v=230';
 import {
   BET_AGENT_ADDR, TTT_TICK, WINDOW_MS, windowBounds, fmtRemain,
   kkdagsHeld, isKcc20Pass, hireCost, maxHireHours,
@@ -50,7 +50,7 @@ import {
   connectKasware, disconnectKasware, bindKaswareEvents, loadKaswarePref, compoundWithKasware,
   ensureKaswareSigner, syncKaswareNetwork, walletIsKaswareChip, autoArmKaswareForWallet,
   fetchKaswareUtxos, sameKasAddr, liveKaswareAccount
-} from './kasware.js?v=214';
+} from './kasware.js?v=215';
 import {
   cookMarkets, cookQuote, cookWrappers, pickWrappedMarketId, cookOrderbook, cookCandles,
   cookDeploy, cookBuildOrder, cookFillOrder, cookSweep, cookWrap, cookMint,
@@ -58,16 +58,16 @@ import {
   loadAgentJob, saveAgentJob, sompiToKas, kasToSompiNum,
   rememberLaunch, loadLaunched, cookOwnerBalances, cookDeployed,
   cookTickOf, cookBookLevels
-} from './atrade.js?v=195';
+} from './atrade.js?v=196';
 import { SCORPION_MEMORY } from './scorpionMemory.js?v=152';
 import { DESK_PLAYBOOK, scalpGate, factCheck } from './deskPlaybook.js?v=187';
 import {
   ksocialFeed, ksocialReplies, ksocialSubmitPost, ksocialSubmitReply, ksocialSubmitVote,
   ksocialRich, KSOCIAL_MAX, ksocialCachedFeed, detectWalletKns, knsNameForPubkey,
   ksocialFeeKas
-} from './ksocial.js?v=206';
+} from './ksocial.js?v=207';
 
-export const BUILD = '229';
+export const BUILD = '230';
 const DESK_ID_KEY = 'kcc20_desk_id_v1';
 const DESK_VAULT_KEY = 'kcc20_desk_vault_v1';
 
@@ -8772,8 +8772,7 @@ async function reviewTrade() {
        <div class="kv"><span class="k">You receive</span><span class="v">${esc(formatKasSompi(q.net))} KAS</span></div>
        <div class="kv"><span class="k">Protocol fees</span><span class="v">${esc(formatKasSompi(q.fee))} KAS</span></div>`;
   hydrateNativeKey(wallet);
-  const canPin = !!hexKey(wallet?.privKey);
-  const kw = !canPin && (kaswareEnabled() || walletIsKaswareChip(wallet));
+  const kw = kaswareSigning(wallet);
   openSheet('Review ' + q.tick + ' ' + q.side, buyBits, {
     confirm: kw ? 'Pay with KasWare' : 'Pay with PIN',
     gold: true,
@@ -8803,7 +8802,7 @@ let tradeBusy = false;
 async function runTrade({ tick, side, amount, quote, forceKasware = false }) {
   if (tradeBusy) { toast('Swap already running'); return; }
   tradeBusy = true;
-  const kw = !!(forceKasware && kaswareEnabled());
+  const kw = !!(forceKasware || kaswareSigning(wallet));
   toast(kw ? 'Building KCC20 swap for KasWare…' : 'Building KRON swap…');
   try {
     if (!kw) hydrateNativeKey(wallet);
@@ -8917,7 +8916,8 @@ async function runTrade({ tick, side, amount, quote, forceKasware = false }) {
 
 async function openCompound() {
   haptic();
-  const kw = kaswareEnabled() && isKaswareInstalled();
+  hydrateNativeKey(wallet);
+  const kw = kaswareSigning(wallet);
   let bag = Array.isArray(utxos) ? utxos : [];
   if (kw) {
     try {
@@ -9813,8 +9813,13 @@ function openKaswareSheet() {
         toast('KasWare signing on');
       } else {
         await disconnectKasware();
-        if (wallet) wallet.kasware = false;
         hydrateNativeKey(wallet);
+        const listOff = loadWalletList();
+        for (const w of listOff) {
+          if (w.kasware && hexKey(w.privKey)) w.kasware = false;
+        }
+        saveWalletList(listOff);
+        if (wallet && hexKey(wallet.privKey)) wallet.kasware = false;
         if (wallet && !hexKey(wallet.privKey)) {
           const native = loadWalletList().find(x =>
             hexKey(x.privKey) && sameAddrPayload(x.address, wallet.address)

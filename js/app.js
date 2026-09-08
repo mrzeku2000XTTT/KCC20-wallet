@@ -24,11 +24,11 @@ import {
   fetchOwnedUtxos, collectSpendableUtxos, buildSentinelChain, buildRecurringChain, buildHashlockCovenant,
   newHashlockSecret, checkinHop, currentHop, parseXmssKit, p2shFromRedeemHex, spendXmssVault,
   disconnectRpc, buildDcaDrips, sendKasMany, releaseDcaDrip, cancelDcaDrip, isMassError
-} from './tx.js?v=221';
+} from './tx.js?v=222';
 import { bootDappConnect, pingTttDappFrame, pingKasdistroDappFrame, TTT_TREASURY } from './dappConnect.js?v=200';
 import { changenowEstimate, changenowCreate, changenowWidgetUrl, cnFrom } from './changenow.js?v=180';
 import { schedulePersistIframeVault, bootIframeVaultWatch } from './iframeVault.js?v=122';
-import { kronMarkets, quoteKronTrade, executeKronTrade, formatKasSompi, lookupKronTick, liveQuote, tradeCostLines, attachKronLogos, kronCandles, kronLogoFor, quoteKcc20Bridge, executeKcc20Bridge, formatTokenRaw } from './kronTrade.js?v=230';
+import { kronMarkets, quoteKronTrade, executeKronTrade, formatKasSompi, lookupKronTick, liveQuote, tradeCostLines, attachKronLogos, kronCandles, kronLogoFor, quoteKcc20Bridge, executeKcc20Bridge, formatTokenRaw } from './kronTrade.js?v=231';
 import {
   BET_AGENT_ADDR, TTT_TICK, WINDOW_MS, windowBounds, fmtRemain,
   kkdagsHeld, isKcc20Pass, hireCost, maxHireHours,
@@ -50,7 +50,7 @@ import {
   connectKasware, disconnectKasware, bindKaswareEvents, loadKaswarePref, compoundWithKasware,
   ensureKaswareSigner, syncKaswareNetwork, walletIsKaswareChip, autoArmKaswareForWallet,
   fetchKaswareUtxos, sameKasAddr, liveKaswareAccount
-} from './kasware.js?v=215';
+} from './kasware.js?v=216';
 import {
   cookMarkets, cookQuote, cookWrappers, pickWrappedMarketId, cookOrderbook, cookCandles,
   cookDeploy, cookBuildOrder, cookFillOrder, cookSweep, cookWrap, cookMint,
@@ -67,7 +67,7 @@ import {
   ksocialFeeKas
 } from './ksocial.js?v=207';
 
-export const BUILD = '230';
+export const BUILD = '231';
 const DESK_ID_KEY = 'kcc20_desk_id_v1';
 const DESK_VAULT_KEY = 'kcc20_desk_vault_v1';
 
@@ -1254,7 +1254,7 @@ function syncKsocialAfterWalletChange() {
   try { paintKsocialAs(); } catch {}
   try { syncKsocialCount(); } catch {}
   if ($('live-pill')) {
-    $('live-pill').textContent = (isTestnet() ? 'TN10 · ' : (kaswareEnabled() ? 'KasWare · ' : 'Live · ')) + BUILD;
+    $('live-pill').textContent = (isTestnet() ? 'TN10 · ' : (kaswareSigning(wallet) ? 'KasWare · ' : 'Live · ')) + BUILD;
   }
   if (!ksocialOpen()) return;
   refreshKsocialKns().catch(() => {});
@@ -1883,7 +1883,7 @@ function paintIfChanged(el, html) {
 function renderHome() {
   if (!wallet) return;
   if ($('live-pill')) {
-    $('live-pill').textContent = (isTestnet() ? 'TN10 · ' : (kaswareEnabled() ? 'KasWare · ' : 'Live · ')) + BUILD;
+    $('live-pill').textContent = (isTestnet() ? 'TN10 · ' : (kaswareSigning(wallet) ? 'KasWare · ' : 'Live · ')) + BUILD;
   }
   const balHtml = `${formatAmount(balanceSompi)}<small>KAS</small>`;
   if ($('card-bal') && $('card-bal').innerHTML !== balHtml) $('card-bal').innerHTML = balHtml;
@@ -4898,7 +4898,7 @@ async function tickLive(full) {
       if (o.role !== 'home' && Number(bals[i] || 0) > 0) markAddressUsed(wallet, o.address, true);
     });
     let ownedBag = ownedRaw;
-    if (kaswareEnabled() && isKaswareInstalled()) {
+    if (kaswareSigning(wallet)) {
       try {
         const kw = await fetchKaswareUtxos(wallet.address);
         const cleaned = (kw || []).map(u => validateAndCleanUtxo(u)).filter(Boolean);
@@ -4913,7 +4913,7 @@ async function tickLive(full) {
       const keepOptimistic = Date.now() < hushUtxosUntil
         && Array.isArray(utxos) && utxos.length === 1
         && ownedBag.length > 1
-        && !(kaswareEnabled() && isKaswareInstalled());
+        && !kaswareSigning(wallet);
       if (!keepOptimistic) utxos = ownedBag;
       const uSum = (keepOptimistic ? utxos : ownedBag).reduce((a, e) => {
         try { return a + Number(e.amount || 0n); } catch { return a; }
@@ -9784,8 +9784,6 @@ async function openReceive(prefill) {
 function openKaswareSheet() {
   haptic();
   const installed = isKaswareInstalled();
-  const pref = loadKaswarePref();
-  const on = !!pref.enabled && installed;
   const connected = kaswareConnectedAddress();
   const match = kaswareSigning(wallet);
   const desktop = isDesktopBrowser();
@@ -9796,12 +9794,12 @@ function openKaswareSheet() {
     <div class="kv"><span class="k">KasWare</span><span class="v">${connected ? esc(shortAddr(connected, 10, 6)) : 'Not connected'}</span></div>
     <div class="kv"><span class="k">Signing</span><span class="v">${match ? 'KasWare' : 'In-app key'}</span></div>
     <label class="kw-toggle">
-      <input type="checkbox" id="kw-on" ${on ? 'checked' : ''} ${installed ? '' : 'disabled'}>
+      <input type="checkbox" id="kw-on" ${match ? 'checked' : ''} ${installed ? '' : 'disabled'}>
       <span>Sign with KasWare</span>
     </label>
     ${!installed ? `<p class="muted" style="text-align:left;padding:8px 0 0;">Install <a href="https://chromewebstore.google.com/detail/kasware-wallet/hklhheigdmpoolooomdihmhlpjjdbklf" target="_blank" rel="noopener" style="color:var(--gold-2)">KasWare Wallet</a> in this browser, then come back here.</p>` : ''}
-    ${on && connected && wallet?.address && connected !== wallet.address ? `<p class="muted" style="text-align:left;padding:8px 0 0;">KasWare is a different account. Turn the toggle on and we will switch this profile to that address (watch / sign-only — no key stored here).</p>` : ''}
-    <p class="muted" style="text-align:left;padding:8px 0 0;">When this is on, KAS sends, vault locks, compound, KRC-20, KRON buys/sells, and Cook PSKTs pop KasWare. Vault sweeps still use the in-app key when this wallet has one.</p>
+    ${connected && wallet?.address && !sameKasAddr(connected, wallet.address) ? `<p class="muted" style="text-align:left;padding:8px 0 0;">This chip is not the KasWare account. Switch to the KasWare wallet in the switcher, then turn Sign with KasWare on.</p>` : ''}
+    <p class="muted" style="text-align:left;padding:8px 0 0;">When this is on for the KasWare chip, KAS sends, vault locks, compound, KRC-20, KRON buys/sells, and Cook PSKTs pop KasWare. Other wallets keep their own PIN key and their own balance.</p>
   `, { confirm: 'Done', cancel: false });
   $('kw-on')?.addEventListener('change', async (e) => {
     const want = !!e.target.checked;
@@ -9809,6 +9807,13 @@ function openKaswareSheet() {
       if (want) {
         setSheetStatus('Approve in KasWare…');
         const linked = await connectKasware();
+        hydrateNativeKey(wallet);
+        const same = sameKasAddr(wallet?.address, linked.address);
+        if (!same && !walletIsKaswareChip(wallet)) {
+          await disconnectKasware();
+          e.target.checked = false;
+          throw new Error("This isn't a KasWare wallet. Switch to the KasWare chip, then turn Sign with KasWare on.");
+        }
         await adoptKaswareAccount(linked);
         toast('KasWare signing on');
       } else {

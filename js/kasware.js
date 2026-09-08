@@ -423,9 +423,11 @@ function withMs(p, ms) {
 }
 
 export async function fetchKaswareUtxos(address) {
+  const theirs = kaswareConnectedAddress();
+  if (address && theirs && !sameKasAddr(address, theirs)) return [];
   const p = kaswareProvider();
   if (!p?.getUtxoEntries) throw new Error('KasWare has no UTXO list in this browser');
-  const liveAddr = address || kaswareConnectedAddress();
+  const liveAddr = address || theirs;
   let rows = [];
   let ok = false;
   try {

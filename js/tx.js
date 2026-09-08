@@ -4,7 +4,7 @@ import {
   validateAndCleanUtxo, deepCloneAndFreeze, kasToSompi,
   kaspaRestBase, networkId
 } from './crypto.js?v=90';
-import { kaswareSigning, sendKaspaWithKasware, sendKrc20WithKasware, signPsktWithKasware, fetchKaswareUtxos, repairSafeJson, kaswareEnabled, isKaswareInstalled, liveKaswareAccount } from './kasware.js?v=215';
+import { kaswareSigning, sendKaspaWithKasware, sendKrc20WithKasware, signPsktWithKasware, fetchKaswareUtxos, repairSafeJson, kaswareEnabled, isKaswareInstalled, liveKaswareAccount } from './kasware.js?v=216';
 import * as kron from '../vendor/kron-sdk/index.js';
 
 function API() { return kaspaRestBase(); }
@@ -1746,8 +1746,8 @@ export async function collectSpendableUtxos(wallet) {
       });
     }
   };
-  // KasWare: extension UTXO set only. Never union REST / receive-book ghosts.
-  if (kaswareEnabled() && isKaswareInstalled()) {
+  // KasWare: extension UTXO set only, and only for the matching KasWare chip.
+  if (kaswareSigning(wallet)) {
     const kw = await fetchKaswareUtxos(wallet.address);
     add(kw, { address: wallet.address });
     return [...map.values()];

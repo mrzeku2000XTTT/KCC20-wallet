@@ -15,7 +15,103 @@ const PARTNER_REF = 'kcc20wallet';
 let listCache = null;
 let listAt = 0;
 const descCache = new Map();
-let lastKronSubmitAt = 0;
+const LAST_POOL_TTL = 120_000;
+const lastPoolByTick = new Map();
+let lastFund = null;
+
+function normTxId(v) {
+  if (v == null) return '';
+  if (typeof v === 'string' || typeof v === 'number') return String(v).replace(/^0x/i, '').toLowerCase();
+  if (typeof v === 'object') {
+    const inner = v.transactionId || v.txId || v.id;
+    if (inner != null && inner !== v) return normTxId(inner);
+    if (typeof v.toHex === 'function') {
+      try { return String(v.toHex()).replace(/^0x/i, '').toLowerCase(); } catch {}
+    }
+    const s = String(v);
+    if (s && s !== '[object Object]') return s.replace(/^0x/i, '').toLowerCase();
+  }
+  return '';
+}
+
+function tradeKey(tick, side, amount) {
+  return String(tick || '').toUpperCase() + ':' + String(side || '') + ':' + String(amount || '').trim();
+}
+
+let pendingSigned = null;
+
+function fundKey(e) {
+  return normTxId(e?.outpoint?.transactionId) + ':' + Number(e?.outpoint?.index || 0);
+}
+
+function chainedPool(tick) {
+  const row = lastPoolByTick.get(String(tick || '').toUpperCase());
+  if (!row || Date.now() - row.at > LAST_POOL_TTL) return null;
+  return row;
+}
+
+function rememberLastPool({ tick, txId, live, quoted }) {
+  if (!quoted?.graduated || !quoted.raw || !live?.utxo) return;
+  const q = quoted.raw;
+  if (q.newKas == null || q.newToken == null) return;
+  const st = live.utxo.state || {};
+  const id = normTxId(txId);
+  if (!id) return;
+  lastPoolByTick.set(String(tick).toUpperCase(), {
+    at: Date.now(),
+    txId: id,
+    poolCovid: live.poolCovid,
+    spentPool: {
+      transactionId: live.utxo.transactionId,
+      index: Number(live.utxo.index)
+    },
+    utxo: {
+      transactionId: id,
+      index: 0,
+      state: {
+        kasReserve: q.newKas,
+        tokenReserve: q.newToken,
+        tokenCovid: st.tokenCovid,
+        totalShares: st.totalShares,
+        lpCovid: st.lpCovid
+      },
+      tokenUtxo: {
+        transactionId: id,
+        index: 1,
+        value: live.utxo.tokenUtxo?.value
+      }
+    }
+  });
+}
+
+function rememberLastFund({ address, txId, funding, change, changeIndex }) {
+  const id = normTxId(txId);
+  if (!id || !address || change == null || change < 0n) return;
+  const spk = funding?.[0]?.scriptPublicKey;
+  if (!spk) return;
+  lastFund = {
+    at: Date.now(),
+    address,
+    spent: new Set((funding || []).map(fundKey)),
+    change: {
+      address,
+      outpoint: { transactionId: id, index: Number(changeIndex) },
+      amount: BigInt(change),
+      scriptPublicKey: spk,
+      blockDaaScore: 0n,
+      isCoinbase: false
+    }
+  };
+}
+
+function applyLastFund(address, fundingAll) {
+  let list = Array.isArray(fundingAll) ? fundingAll.slice() : [];
+  if (!lastFund || lastFund.address !== address || Date.now() - lastFund.at > LAST_POOL_TTL) return list;
+  list = list.filter(e => !lastFund.spent.has(fundKey(e)));
+  const ck = fundKey(lastFund.change);
+  if (lastFund.change && !list.some(e => fundKey(e) === ck)) list = [lastFund.change, ...list];
+  return list;
+}
 
 function errText(e) {
   if (e == null) return 'Unknown error';
@@ -352,33 +448,58 @@ function decodeCurveRedeem(redeem) {
   return { script: redeem.slice(), stateStart: hits[0] };
 }
 
+function fromChainedPool(chained) {
+  return { poolCovid: chained.poolCovid, utxo: chained.utxo };
+}
+
 async function poolHead(tick, tokenCovidHex, poolCovidHex) {
-  const head = await idx('/token/' + encodeURIComponent(tick) + '/poolhead');
-  if (!head?.pool) throw new Error('No KRON pool head for ' + tick);
-  const tx = await kaspaTx(head.pool.transactionId);
-  const res = head.reserves;
-  const state = {
-    kasReserve: BigInt(res.kasReserve),
-    tokenReserve: BigInt(res.tokenReserve),
-    tokenCovid: hexBytes(tokenCovidHex),
-    totalShares: BigInt(res.totalShares),
-    lpCovid: hexBytes(res.lpCovid)
-  };
-  const poolVal = txOutValue(tx, head.pool.index);
-  if (poolVal && poolVal % SCALE === 0n) state.kasReserve = poolVal / SCALE;
-  return {
-    poolCovid: hexBytes(poolCovidHex),
-    utxo: {
-      transactionId: head.pool.transactionId,
-      index: Number(head.pool.index),
-      state,
-      tokenUtxo: {
-        transactionId: head.poolToken.transactionId,
-        index: Number(head.poolToken.index),
-        value: txOutValue(tx, head.poolToken.index)
+  const chained = chainedPool(tick);
+  let head = null;
+  try {
+    head = await idx('/token/' + encodeURIComponent(tick) + '/poolhead');
+  } catch (e) {
+    if (chained) return fromChainedPool(chained);
+    throw e;
+  }
+  if (!head?.pool) {
+    if (chained) return fromChainedPool(chained);
+    throw new Error('No KRON pool head for ' + tick);
+  }
+  const idxTx = normTxId(head.pool.transactionId);
+  if (chained) {
+    const nextTx = normTxId(chained.txId);
+    const spentTx = normTxId(chained.spentPool?.transactionId);
+    if (idxTx === spentTx || idxTx === nextTx) return fromChainedPool(chained);
+  }
+  try {
+    const tx = await kaspaTx(head.pool.transactionId);
+    const res = head.reserves;
+    const state = {
+      kasReserve: BigInt(res.kasReserve),
+      tokenReserve: BigInt(res.tokenReserve),
+      tokenCovid: hexBytes(tokenCovidHex),
+      totalShares: BigInt(res.totalShares),
+      lpCovid: hexBytes(res.lpCovid)
+    };
+    const poolVal = txOutValue(tx, head.pool.index);
+    if (poolVal && poolVal % SCALE === 0n) state.kasReserve = poolVal / SCALE;
+    return {
+      poolCovid: hexBytes(poolCovidHex),
+      utxo: {
+        transactionId: head.pool.transactionId,
+        index: Number(head.pool.index),
+        state,
+        tokenUtxo: {
+          transactionId: head.poolToken.transactionId,
+          index: Number(head.poolToken.index),
+          value: txOutValue(tx, head.poolToken.index)
+        }
       }
-    }
-  };
+    };
+  } catch (e) {
+    if (chained) return fromChainedPool(chained);
+    throw e;
+  }
 }
 
 async function curveHead(tick, token, entry) {
@@ -507,16 +628,22 @@ export async function quoteKronTrade({ tick, side, amount }) {
     const kasIn = sompiFromKas(amount);
     let q;
     if (graduated) {
-      const cp = token.cpState || {};
-      const pstate = {
-        kasReserve: BigInt(cp.poolKas || 0),
-        tokenReserve: BigInt(cp.poolTokenReserve || 0),
-        tokenCovid: hexBytes(token.covenantId || entry.covenantId),
-        totalShares: BigInt(cp.poolTotalShares || 1),
-        lpCovid: hexBytes(cp.poolLpCovid || '00'.repeat(32))
-      };
+      const chained = chainedPool(tick);
+      let pstate;
+      if (chained) {
+        pstate = chained.utxo.state;
+      } else {
+        const cp = token.cpState || {};
+        pstate = {
+          kasReserve: BigInt(cp.poolKas || 0),
+          tokenReserve: BigInt(cp.poolTokenReserve || 0),
+          tokenCovid: hexBytes(token.covenantId || entry.covenantId),
+          totalShares: BigInt(cp.poolTotalShares || 1),
+          lpCovid: hexBytes(cp.poolLpCovid || '00'.repeat(32))
+        };
+      }
       q = kron.poolCpV3.quotePoolV3Buy(pstate, poolParams(entry), kasIn);
-      if (!q && (pstate.kasReserve <= 0n || pstate.tokenReserve <= 0n)) {
+      if (!q && !chained && (pstate.kasReserve <= 0n || pstate.tokenReserve <= 0n)) {
         const live = await poolHead(tick, entry.covenantId, entry.extensions.poolCovenantId);
         q = kron.poolCpV3.quotePoolV3Buy(live.utxo.state, poolParams(entry), kasIn);
       }
@@ -551,7 +678,8 @@ export async function quoteKronTrade({ tick, side, amount }) {
   }
   const tokenIn = tokenRawFromHuman(amount, decimals);
   if (graduated) {
-    const live = await poolHead(tick, entry.covenantId, entry.extensions.poolCovenantId);
+    const chained = chainedPool(tick);
+    const live = chained ? fromChainedPool(chained) : await poolHead(tick, entry.covenantId, entry.extensions.poolCovenantId);
     const q = kron.poolCpV3.quotePoolV3Sell(live.utxo.state, poolParams(entry), tokenIn);
     if (!q) throw new Error('Amount too small to sell — fees would exceed proceeds');
     return {
@@ -797,8 +925,28 @@ function pickTokens(pieces, need, maxN) {
 
 export async function executeKronTrade({ wallet, tick, side, amount, utxos, onStatus, forceKasware = false }) {
   const k = await loadKaspaSdk();
-  const wait = lastKronSubmitAt ? 5000 - (Date.now() - lastKronSubmitAt) : 0;
-  if (wait > 0) await sleep(wait);
+  const key = tradeKey(tick, side, amount);
+  if (pendingSigned && pendingSigned.key === key && Date.now() - pendingSigned.at < 90_000) {
+    onStatus?.('Broadcasting KRON trade…');
+    const { rpc, url: nodeUrl } = await connectTradeNode(k);
+    try {
+      const txId = await submitKronSigned(rpc, pendingSigned.tx, onStatus, nodeUrl);
+      const kept = pendingSigned;
+      pendingSigned = null;
+      if (kept.live) rememberLastPool({ tick: kept.quoted.tick, txId, live: kept.live, quoted: kept.quoted });
+      rememberLastFund({
+        address: wallet.address,
+        txId,
+        funding: kept.funding,
+        change: kept.change,
+        changeIndex: kept.changeIndex
+      });
+      return { txId, fee: kept.fee, quote: kept.quoted, signer: kept.signer };
+    } catch (e) {
+      if (isSpentHead(e) || /already moved/i.test(errText(e))) pendingSigned = null;
+      else throw e;
+    }
+  }
   const resolved = await resolveKronTick(tick);
   const token = resolved.token;
   const entry = kronEntryFromIdx(tick, token);
@@ -811,6 +959,7 @@ export async function executeKronTrade({ wallet, tick, side, amount, utxos, onSt
   const quoted = await quoteKronTrade({ tick, side, amount });
 
   let spend;
+  let liveHead = null;
   let merge = [];
   if (quoted.side === 'buy') {
     try { merge = (await loadUserTokens(tick, wallet.address, { limit: 2, withKas: true })).slice(0, 2); } catch { merge = []; }
@@ -818,10 +967,10 @@ export async function executeKronTrade({ wallet, tick, side, amount, utxos, onSt
   const presence = merge.length ? 2 + merge.length : 0;
   if (quoted.side === 'buy' && quoted.graduated) {
     onStatus?.('Loading pool…');
-    const live = await poolHead(tick, entry.covenantId, entry.extensions.poolCovenantId);
+    liveHead = await poolHead(tick, entry.covenantId, entry.extensions.poolCovenantId);
     const poolTpl = templateFromPart(desc.pool);
     spend = kron.poolCpV3.buildPoolV3SwapKasForToken(
-      k, poolTpl, tokenTpl, poolParams(entry), live.utxo, live.poolCovid, buyer, quoted.raw, merge, presence
+      k, poolTpl, tokenTpl, poolParams(entry), liveHead.utxo, liveHead.poolCovid, buyer, quoted.raw, merge, presence
     );
   } else if (quoted.side === 'sell' && quoted.graduated) {
     onStatus?.('Loading pool…');
@@ -829,11 +978,12 @@ export async function executeKronTrade({ wallet, tick, side, amount, utxos, onSt
       poolHead(tick, entry.covenantId, entry.extensions.poolCovenantId),
       loadUserTokens(tick, wallet.address, { limit: 4, withKas: true })
     ]);
+    liveHead = live;
     const poolTpl = templateFromPart(desc.pool);
     const picked = pickTokens(held, quoted.tokenIn, 3);
     const presence = 2 + picked.length;
     spend = kron.poolCpV3.buildPoolV3SwapTokenForKas(
-      k, poolTpl, tokenTpl, poolParams(entry), live.utxo, live.poolCovid, buyer, picked, quoted.raw, presence
+      k, poolTpl, tokenTpl, poolParams(entry), liveHead.utxo, liveHead.poolCovid, buyer, picked, quoted.raw, presence
     );
   } else if (quoted.side === 'buy') {
     onStatus?.('Loading curve…');
@@ -879,6 +1029,7 @@ export async function executeKronTrade({ wallet, tick, side, amount, utxos, onSt
     }
     fundingAll = restFunding(rest, wallet.address);
   }
+  fundingAll = applyLastFund(wallet.address, fundingAll);
   const needGuess = (quoted.total || quoted.fee || 0n) + (merge.length ? 0n : DUST) + 80_000_000n;
   const funding = [];
   let sum = 0n;
@@ -936,9 +1087,30 @@ export async function executeKronTrade({ wallet, tick, side, amount, utxos, onSt
     signFundingP2pk(k, asm.transaction, priv, asm.fundingInputIndexes);
   }
   onStatus?.('Broadcasting KRON trade…');
+  const signer = external ? 'kasware' : 'local';
+  pendingSigned = {
+    key,
+    at: Date.now(),
+    tx: asm.transaction,
+    live: liveHead,
+    quoted,
+    funding,
+    change: asm.change,
+    changeIndex: asm.transaction.outputs.length - 1,
+    fee,
+    signer
+  };
   const txId = await submitKronSigned(rpc, asm.transaction, onStatus, nodeUrl);
-  lastKronSubmitAt = Date.now();
-  return { txId, fee, quote: quoted, signer: external ? 'kasware' : 'local' };
+  pendingSigned = null;
+  if (liveHead) rememberLastPool({ tick: quoted.tick, txId, live: liveHead, quoted });
+  rememberLastFund({
+    address: wallet.address,
+    txId,
+    funding,
+    change: asm.change,
+    changeIndex: asm.transaction.outputs.length - 1
+  });
+  return { txId, fee, quote: quoted, signer };
 }
 
 function sleep(ms) {
@@ -975,36 +1147,33 @@ async function trySubmit(rpc, tx, allowOrphan) {
   }
 }
 
-function orphanHint() {
-  return 'Tap Buy again in a few seconds. Reject leftover KasWare popups.';
-}
-
 async function submitKronSigned(rpc0, tx, onStatus, startUrl) {
   const rpc = rpc0;
   let last = null;
-  for (let n = 0; n < 5; n++) {
+  for (let n = 0; n < 24; n++) {
     try {
       const txId = await trySubmit(rpc, tx, true);
-      if (txId && typeof txId === 'object') {
-        const id = txId.transactionId || txId.txId || txId.id;
-        if (id) return id;
-      }
-      if (txId) return txId;
+      const id = normTxId(txId);
+      if (id) return id;
       last = new Error('Node did not return a transaction id');
     } catch (e) {
       last = e;
       if (isSpentHead(e)) {
-        throw new Error('Tap Buy again — the last swap already moved the pool.');
+        pendingSigned = null;
+        throw new Error('That signed swap used a pool that already moved. Tap Buy for the next fill.');
       }
       if (isFalseStack(e)) {
-        throw new Error('KasWare signature did not verify. Reject leftover popups, tap Buy again.');
+        pendingSigned = null;
+        throw new Error('KasWare signature did not verify. Tap Buy once more.');
       }
       if (!isOrphanReject(e) && n > 0) throw e;
-      await sleep(1200);
+      await sleep(1500);
     }
   }
-  if (last && isOrphanReject(last)) throw new Error(orphanHint());
-  throw last || new Error('Broadcast failed. Tap Buy again.');
+  if (last && isOrphanReject(last)) {
+    throw new Error('Still sending the swap you already signed. Tap Buy — no new KasWare popup.');
+  }
+  throw last || new Error('Broadcast failed. Tap Buy once more.');
 }
 
 export function formatKasSompi(n) {

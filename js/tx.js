@@ -854,7 +854,6 @@ export async function spendXmssVault({ wallet, vault, utxos, feeUtxos, witness, 
 /* Same public nodes this repo uses in covenants/* deploy/spend scripts. */
 const PUBLIC_WRPC = {
   mainnet: [
-    'wss://node.kron.technology/kaspa/mainnet/wrpc/borsh',
     'wss://ivy.kaspa.green/kaspa/mainnet/wrpc/borsh',
     'wss://dina.kaspa.green/kaspa/mainnet/wrpc/borsh',
     'wss://kaspa.aspectron.org:443/kaspa/mainnet/wrpc/borsh',

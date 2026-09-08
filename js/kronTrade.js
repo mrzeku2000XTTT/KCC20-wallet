@@ -923,6 +923,7 @@ export async function executeKronTrade({ wallet, tick, side, amount, utxos, onSt
 
   onStatus?.('Connecting to Kaspa…');
   let rpc = null;
+  let landed = false;
   try {
   const conn = await connectTradeNode(k);
   rpc = conn.rpc;
@@ -988,14 +989,24 @@ export async function executeKronTrade({ wallet, tick, side, amount, utxos, onSt
   }
   onStatus?.('Broadcasting KRON trade…');
   const txId = await submitKronSigned(rpc, asm.transaction);
+  landed = true;
   return { txId, fee, quote: quoted, signer: external ? 'kasware' : 'local' };
   } finally {
-    try { await disconnectRpc(); } catch {}
+    if (!landed) {
+      try { await disconnectRpc(); } catch {}
+    }
   }
 }
 
 function isOrphanReject(e) {
   return /orphan/i.test(errText(e));
+}
+
+function friendlyBroadcastErr(e) {
+  const m = errText(e);
+  if (/orphan/i.test(m)) return 'Kaspa has not accepted the last pool trade yet. Tap Pay again.';
+  if (/RPC Server|remote error|rejected transaction/i.test(m)) return 'Kaspa node rejected this swap. Tap Pay again.';
+  return m;
 }
 
 function isSpentHead(e) {
@@ -1010,54 +1021,45 @@ function isSubmitTimeout(e) {
   return /timeout|timed out/i.test(errText(e));
 }
 
-async function trySubmit(rpc, tx, allowOrphan) {
-  const allow = !!allowOrphan;
+async function trySubmit(rpc, tx) {
   const plain = toRpcTransaction(tx, { version: 1, sigOpCount: 0 });
   try {
     const submitted = await withTimeout(
-      rpc.submitTransaction({ transaction: tx, allowOrphan: allow }),
+      rpc.submitTransaction({ transaction: plain, allowOrphan: true }),
       8000,
       'submit timeout'
     );
     return submitted?.transactionId || submitted || tx.id || null;
   } catch (e) {
     if (isSubmitTimeout(e)) throw e;
-    try {
-      const submitted = await withTimeout(
-        rpc.submitTransaction({ transaction: plain, allowOrphan: allow }),
-        8000,
-        'submit timeout'
-      );
-      return submitted?.transactionId || submitted || tx.id || null;
-    } catch (e2) {
-      if (isSubmitTimeout(e2)) throw e2;
-      if (allow) throw e;
-      const submitted = await withTimeout(
-        rpc.submitTransaction({ transaction: tx, allowOrphan: true }),
-        8000,
-        'submit timeout'
-      );
-      return submitted?.transactionId || submitted || tx.id || null;
-    }
+    const submitted = await withTimeout(
+      rpc.submitTransaction({ transaction: tx, allowOrphan: true }),
+      8000,
+      'submit timeout'
+    );
+    return submitted?.transactionId || submitted || tx.id || null;
   }
 }
 
 async function submitKronSigned(rpc, tx) {
   let last = null;
-  for (let n = 0; n < 2; n++) {
+  for (let n = 0; n < 6; n++) {
     try {
-      const id = normTxId(await trySubmit(rpc, tx, true));
+      const id = normTxId(await trySubmit(rpc, tx));
       if (id) return id;
       last = new Error('Node did not return a transaction id');
     } catch (e) {
       last = e;
       if (isSpentHead(e)) throw new Error('Pool moved. Tap Review buy for a new quote.');
       if (isFalseStack(e)) throw new Error('Signature did not verify. Tap Review buy again.');
-      if (n === 0) { await sleep(400); continue; }
-      throw e;
+      if (isOrphanReject(e) && n < 5) {
+        await sleep(800);
+        continue;
+      }
+      throw new Error(friendlyBroadcastErr(e));
     }
   }
-  throw last || new Error('Broadcast failed.');
+  throw new Error(friendlyBroadcastErr(last) || 'Broadcast failed.');
 }
 
 export function formatKasSompi(n) {

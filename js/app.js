@@ -28,7 +28,7 @@ import {
 import { bootDappConnect, pingTttDappFrame, TTT_TREASURY } from './dappConnect.js?v=198';
 import { changenowEstimate, changenowCreate, changenowWidgetUrl, cnFrom } from './changenow.js?v=180';
 import { schedulePersistIframeVault, bootIframeVaultWatch } from './iframeVault.js?v=122';
-import { kronMarkets, quoteKronTrade, executeKronTrade, formatKasSompi, lookupKronTick, liveQuote, tradeCostLines, attachKronLogos, kronCandles, kronLogoFor, quoteKcc20Bridge, executeKcc20Bridge, formatTokenRaw } from './kronTrade.js?v=224';
+import { kronMarkets, quoteKronTrade, executeKronTrade, formatKasSompi, lookupKronTick, liveQuote, tradeCostLines, attachKronLogos, kronCandles, kronLogoFor, quoteKcc20Bridge, executeKcc20Bridge, formatTokenRaw } from './kronTrade.js?v=225';
 import {
   BET_AGENT_ADDR, TTT_TICK, WINDOW_MS, windowBounds, fmtRemain,
   kkdagsHeld, isKcc20Pass, hireCost, maxHireHours,
@@ -67,7 +67,7 @@ import {
   ksocialFeeKas
 } from './ksocial.js?v=206';
 
-export const BUILD = '224';
+export const BUILD = '225';
 const DESK_ID_KEY = 'kcc20_desk_id_v1';
 const DESK_VAULT_KEY = 'kcc20_desk_vault_v1';
 
@@ -8810,6 +8810,8 @@ async function runTrade({ tick, side, amount, quote, forceKasware = false }) {
     if (/failed to fetch|networkerror|load failed/i.test(msg)) {
       msg = 'Could not reach Kaspa/KRON (network). Turn VPN off if it is on, tap Review buy again.';
     }
+    if (/orphan/i.test(msg)) msg = 'Kaspa has not accepted the last pool trade yet. Tap Pay again.';
+    if (/RPC Server|remote error|rejected transaction/i.test(msg)) msg = 'Kaspa node rejected this swap. Tap Pay again.';
     toast(msg);
     setSheetStatus(msg, true);
     if ($('trade-go')) $('trade-go').disabled = false;

@@ -1,7 +1,7 @@
 /* KRON DEX trades via @kronsdk/kron-sdk (v0.17.2). Quotes + builders from the SDK;
    templates from the CORS-open token descriptor; live heads from idx.kron.technology. */
 import * as kron from '../vendor/kron-sdk/index.js';
-import { loadKaspaSdk, connectPublicNode, fetchAddressUtxos, toRpcTransaction } from './tx.js?v=220';
+import { loadKaspaSdk, connectPublicNode, disconnectRpc, fetchAddressUtxos, toRpcTransaction } from './tx.js?v=220';
 import { kaswareSigning, signPsktWithKasware, fetchKaswareUtxos, repairSafeJson } from './kasware.js?v=214';
 
 const IDX = 'https://idx.kron.technology/v1/kcc20';
@@ -45,6 +45,14 @@ async function withTimeout(promise, ms, msg) {
       new Promise((_, rej) => { t = setTimeout(() => rej(new Error(msg)), ms); })
     ]);
   } finally { clearTimeout(t); }
+}
+
+function sleep(ms) {
+  return new Promise(r => setTimeout(r, ms));
+}
+
+function fundKey(e) {
+  return String(e?.outpoint?.transactionId || '').replace(/^0x/i, '').toLowerCase() + ':' + Number(e?.outpoint?.index || 0);
 }
 
 function hexBytes(h) {
@@ -667,6 +675,36 @@ function restFunding(utxos, address) {
   }).filter(Boolean).sort((a, b) => (a.amount < b.amount ? 1 : -1));
 }
 
+async function liveFunding(rpc, address, need, useKw) {
+  let last = [];
+  for (let i = 0; i < 6; i++) {
+    const nodeRows = await utxosOnNode(rpc, address);
+    let list = restFunding(nodeRows, address);
+    if (useKw) {
+      let kwRows = [];
+      try { kwRows = await fetchKaswareUtxos(address); } catch {}
+      const kwFund = restFunding(kwRows, address);
+      if (kwFund.length) {
+        const keys = new Set(kwFund.map(fundKey));
+        const both = list.filter(e => keys.has(fundKey(e)));
+        list = both.length ? both : (list.length ? list : kwFund);
+      }
+    }
+    last = list;
+    const sum = list.reduce((s, e) => s + e.amount, 0n);
+    if (sum >= need) return list;
+    await sleep(400);
+  }
+  try {
+    const rest = await fetchAddressUtxos(address);
+    const extra = restFunding(rest, address);
+    const extraSum = extra.reduce((s, e) => s + e.amount, 0n);
+    const lastSum = last.reduce((s, e) => s + e.amount, 0n);
+    if (extraSum > lastSum) return extra;
+  } catch {}
+  return last;
+}
+
 function hexish(v) {
   if (v == null) return '';
   if (typeof v === 'string') return v.replace(/^0x/i, '');
@@ -841,9 +879,16 @@ export async function executeKronTrade({ wallet, tick, side, amount, utxos, onSt
   if (quoted.side === 'buy' && quoted.graduated) {
     onStatus?.('Loading pool…');
     const live = await poolHead(tick, entry.covenantId, entry.extensions.poolCovenantId);
+    const qLive = kron.poolCpV3.quotePoolV3Buy(live.utxo.state, poolParams(entry), quoted.kasIn);
+    if (!qLive) throw new Error('Amount too small for this pool');
+    quoted.raw = qLive;
+    quoted.tokenOut = qLive.tokenOut;
+    quoted.fee = qLive.creatorOut + qLive.platformOut;
+    quoted.total = qLive.total;
+    withCost(quoted);
     const poolTpl = templateFromPart(desc.pool);
     spend = kron.poolCpV3.buildPoolV3SwapKasForToken(
-      k, poolTpl, tokenTpl, poolParams(entry), live.utxo, live.poolCovid, buyer, quoted.raw, merge, presence
+      k, poolTpl, tokenTpl, poolParams(entry), live.utxo, live.poolCovid, buyer, qLive, merge, presence
     );
   } else if (quoted.side === 'sell' && quoted.graduated) {
     onStatus?.('Loading pool…');
@@ -877,31 +922,15 @@ export async function executeKronTrade({ wallet, tick, side, amount, utxos, onSt
   }
 
   onStatus?.('Connecting to Kaspa…');
-  const { rpc, url: nodeUrl } = await connectTradeNode(k);
+  let rpc = null;
+  try {
+  const conn = await connectTradeNode(k);
+  rpc = conn.rpc;
 
   onStatus?.('Selecting KAS UTXOs…');
   const useKw = !!(forceKasware || kaswareSigning(wallet));
-  const nodeRows = await utxosOnNode(rpc, wallet.address);
-  let fundingAll = [];
-  if (useKw) {
-    let kwRows = [];
-    try { kwRows = await fetchKaswareUtxos(wallet.address); } catch { kwRows = []; }
-    const kwFund = restFunding(kwRows, wallet.address);
-    if (kwFund.length) {
-      const kwKeys = new Set(kwFund.map(e => String(e.outpoint.transactionId).replace(/^0x/i, '').toLowerCase() + ':' + Number(e.outpoint.index)));
-      const nodeFund = restFunding(nodeRows, wallet.address);
-      const both = nodeFund.filter(e => kwKeys.has(String(e.outpoint.transactionId).replace(/^0x/i, '').toLowerCase() + ':' + Number(e.outpoint.index)));
-      fundingAll = both.length ? both : kwFund;
-    }
-  }
-  if (!fundingAll.length) {
-    let rest = nodeRows.length ? nodeRows : (utxos?.length ? utxos : []);
-    if (!rest.length) {
-      try { rest = await fetchAddressUtxos(wallet.address); } catch { rest = []; }
-    }
-    fundingAll = restFunding(rest, wallet.address);
-  }
   const needGuess = (quoted.total || quoted.fee || 0n) + (merge.length ? 0n : DUST) + 80_000_000n;
+  const fundingAll = await liveFunding(rpc, wallet.address, needGuess, useKw);
   const funding = [];
   let sum = 0n;
   for (const e of fundingAll) {
@@ -958,12 +987,11 @@ export async function executeKronTrade({ wallet, tick, side, amount, utxos, onSt
     signFundingP2pk(k, asm.transaction, priv, asm.fundingInputIndexes);
   }
   onStatus?.('Broadcasting KRON trade…');
-  const txId = await submitKronSigned(rpc, asm.transaction, nodeUrl);
+  const txId = await submitKronSigned(rpc, asm.transaction);
   return { txId, fee, quote: quoted, signer: external ? 'kasware' : 'local' };
-}
-
-function sleep(ms) {
-  return new Promise(r => setTimeout(r, ms));
+  } finally {
+    try { await disconnectRpc(); } catch {}
+  }
 }
 
 function isOrphanReject(e) {
@@ -988,7 +1016,7 @@ async function trySubmit(rpc, tx, allowOrphan) {
   try {
     const submitted = await withTimeout(
       rpc.submitTransaction({ transaction: tx, allowOrphan: allow }),
-      12000,
+      8000,
       'submit timeout'
     );
     return submitted?.transactionId || submitted || tx.id || null;
@@ -997,7 +1025,7 @@ async function trySubmit(rpc, tx, allowOrphan) {
     try {
       const submitted = await withTimeout(
         rpc.submitTransaction({ transaction: plain, allowOrphan: allow }),
-        12000,
+        8000,
         'submit timeout'
       );
       return submitted?.transactionId || submitted || tx.id || null;
@@ -1006,7 +1034,7 @@ async function trySubmit(rpc, tx, allowOrphan) {
       if (allow) throw e;
       const submitted = await withTimeout(
         rpc.submitTransaction({ transaction: tx, allowOrphan: true }),
-        12000,
+        8000,
         'submit timeout'
       );
       return submitted?.transactionId || submitted || tx.id || null;
@@ -1014,28 +1042,19 @@ async function trySubmit(rpc, tx, allowOrphan) {
   }
 }
 
-async function submitKronSigned(rpc0, tx, startUrl) {
-  let rpc = rpc0;
-  let lastUrl = startUrl || '';
+async function submitKronSigned(rpc, tx) {
   let last = null;
-  for (let n = 0; n < 8; n++) {
+  for (let n = 0; n < 2; n++) {
     try {
-      const txId = await trySubmit(rpc, tx, true);
-      const id = normTxId(txId);
+      const id = normTxId(await trySubmit(rpc, tx, true));
       if (id) return id;
       last = new Error('Node did not return a transaction id');
     } catch (e) {
       last = e;
-      if (isSpentHead(e)) throw new Error('Pool moved. Tap Buy for a new quote.');
-      if (isFalseStack(e)) throw new Error('KasWare signature did not verify. Tap Buy once more.');
-      if (!isOrphanReject(e) && !isSubmitTimeout(e) && n > 0) throw e;
-      try {
-        const next = await connectPublicNode({ force: true, avoid: lastUrl });
-        rpc = next.rpc;
-        lastUrl = next.url || lastUrl;
-      } catch (e2) {
-        last = e2;
-      }
+      if (isSpentHead(e)) throw new Error('Pool moved. Tap Review buy for a new quote.');
+      if (isFalseStack(e)) throw new Error('Signature did not verify. Tap Review buy again.');
+      if (n === 0) { await sleep(400); continue; }
+      throw e;
     }
   }
   throw last || new Error('Broadcast failed.');

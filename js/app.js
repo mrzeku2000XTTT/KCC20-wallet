@@ -28,7 +28,7 @@ import {
 import { bootDappConnect, pingTttDappFrame, TTT_TREASURY } from './dappConnect.js?v=198';
 import { changenowEstimate, changenowCreate, changenowWidgetUrl, cnFrom } from './changenow.js?v=180';
 import { schedulePersistIframeVault, bootIframeVaultWatch } from './iframeVault.js?v=122';
-import { kronMarkets, quoteKronTrade, executeKronTrade, formatKasSompi, lookupKronTick, liveQuote, tradeCostLines, attachKronLogos, kronCandles, kronLogoFor, quoteKcc20Bridge, executeKcc20Bridge, formatTokenRaw } from './kronTrade.js?v=223';
+import { kronMarkets, quoteKronTrade, executeKronTrade, formatKasSompi, lookupKronTick, liveQuote, tradeCostLines, attachKronLogos, kronCandles, kronLogoFor, quoteKcc20Bridge, executeKcc20Bridge, formatTokenRaw } from './kronTrade.js?v=224';
 import {
   BET_AGENT_ADDR, TTT_TICK, WINDOW_MS, windowBounds, fmtRemain,
   kkdagsHeld, isKcc20Pass, hireCost, maxHireHours,
@@ -67,7 +67,7 @@ import {
   ksocialFeeKas
 } from './ksocial.js?v=206';
 
-export const BUILD = '223';
+export const BUILD = '224';
 const DESK_ID_KEY = 'kcc20_desk_id_v1';
 const DESK_VAULT_KEY = 'kcc20_desk_vault_v1';
 
@@ -8510,6 +8510,7 @@ function openTrade(prefill = {}) {
     setAtPane('book');
     return;
   }
+  tradeBusy = false;
   haptic();
   const screen = $('trade-screen');
   if (!screen) return;
@@ -8712,19 +8713,20 @@ async function runTrade({ tick, side, amount, quote, forceKasware = false }) {
   try {
     if (!kw) hydrateNativeKey(wallet);
     await loadKaspaSdk();
-    const utxosNow = kw
-      ? await fetchKaswareUtxos(wallet.address).catch(() => [])
-      : await fetchAddressUtxos(wallet.address).catch(() => []);
-    const result = await executeKronTrade({
-      wallet,
-      tick,
-      side,
-      amount,
-      utxos: utxosNow,
-      forceKasware: kw,
-      onStatus: (m) => { toast(m); setSheetStatus(m); }
-    });
-    hideTradeScreen();
+    const result = await Promise.race([
+      executeKronTrade({
+        wallet,
+        tick,
+        side,
+        amount,
+        forceKasware: kw,
+        onStatus: (m) => { toast(m); setSheetStatus(m); }
+      }),
+      new Promise((_, rej) => setTimeout(() => rej(new Error('Buy timed out. Tap Review buy again.')), 40000))
+    ]);
+    if ($('trade-amount')) $('trade-amount').value = '';
+    if ($('trade-quote')) $('trade-quote').innerHTML = '';
+    if ($('trade-go')) $('trade-go').disabled = false;
     const q = result.quote || quote;
     noteKronFill(q);
     if (q?.side === 'buy' && q.tokenOut != null) {
@@ -8800,15 +8802,17 @@ async function runTrade({ tick, side, amount, quote, forceKasware = false }) {
       ${q?.side === 'buy' ? `<div class="kv"><span class="k">Received</span><span class="v">${esc(formatTokenUnits(q.tokenOut, q.decimals))} ${esc(q.tick)}</span></div>` : ''}
       <div class="kv"><span class="k">Network fee</span><span class="v">${esc(formatKasSompi(result.fee))} KAS</span></div>
       ${txidBlock(result.txId)}
-    `, { confirm: 'Done', cancel: false, onConfirm: () => { closeSheet(); refreshAll(); } });
+    `, { confirm: 'Buy again', cancelLabel: 'Close', gold: true, onConfirm: () => { closeSheet(); refreshAll(); } });
   } catch (e) {
     if (errText(e) === 'cancelled') return;
+    try { await disconnectRpc(); } catch {}
     let msg = errText(e);
     if (/failed to fetch|networkerror|load failed/i.test(msg)) {
-      msg = 'Could not reach Kaspa/KRON (network). Turn VPN off if it is on, hard-refresh, tap Buy again.';
+      msg = 'Could not reach Kaspa/KRON (network). Turn VPN off if it is on, tap Review buy again.';
     }
     toast(msg);
     setSheetStatus(msg, true);
+    if ($('trade-go')) $('trade-go').disabled = false;
   } finally {
     tradeBusy = false;
   }

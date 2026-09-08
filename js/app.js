@@ -67,7 +67,7 @@ import {
   ksocialFeeKas
 } from './ksocial.js?v=207';
 
-export const BUILD = '232';
+export const BUILD = '233';
 const DESK_ID_KEY = 'kcc20_desk_id_v1';
 const DESK_VAULT_KEY = 'kcc20_desk_vault_v1';
 
@@ -3262,11 +3262,11 @@ function setBuildPhase(i) {
 function showBuildApp(name) {
   const view = name || 'home';
   if (view === 'ttt') {
-    openTtt();
+    openTtt({ fromApps: true });
     return;
   }
   if (view === 'kasdistro') {
-    openKasdistro();
+    openKasdistro({ fromApps: true });
     return;
   }
   ['home', 'studio', 'truth', 'ksocial'].forEach(v => {
@@ -3762,8 +3762,13 @@ async function voteKsocial(id, pub) {
   }
 }
 
-function openTtt() {
+function appsScreenOpen() {
+  return !!$('build-screen') && !$('build-screen').classList.contains('hidden');
+}
+
+function openTtt(opts = {}) {
   haptic();
+  openTtt.fromApps = !!(opts.fromApps || appsScreenOpen());
   const frame = $('ttt-frame');
   if (frame) {
     if (!frame.dataset.kcc20Bound) {
@@ -3773,13 +3778,16 @@ function openTtt() {
     if (!frame.getAttribute('src')) frame.src = 'https://tttz.xyz/?kcc20_browser=1';
     else pingTttDappFrame(frame);
   }
+  $('kasdistro-screen')?.classList.add('hidden');
+  $('kasdistro-screen')?.setAttribute('aria-hidden', 'true');
   $('ttt-screen')?.classList.remove('hidden');
   $('ttt-screen')?.setAttribute('aria-hidden', 'false');
   $('tabbar')?.classList.remove('show');
 }
 
-function openKasdistro() {
+function openKasdistro(opts = {}) {
   haptic();
+  openKasdistro.fromApps = !!(opts.fromApps || appsScreenOpen());
   const frame = $('kasdistro-frame');
   if (frame) {
     if (!frame.dataset.kcc20Bound) {
@@ -3789,6 +3797,8 @@ function openKasdistro() {
     if (!frame.getAttribute('src')) frame.src = 'https://kasdistro.com/?kcc20_browser=1';
     else pingKasdistroDappFrame(frame);
   }
+  $('ttt-screen')?.classList.add('hidden');
+  $('ttt-screen')?.setAttribute('aria-hidden', 'true');
   $('kasdistro-screen')?.classList.remove('hidden');
   $('kasdistro-screen')?.setAttribute('aria-hidden', 'false');
   $('tabbar')?.classList.remove('show');
@@ -3973,12 +3983,22 @@ async function openTreasurySweep() {
 function closeTtt() {
   $('ttt-screen')?.classList.add('hidden');
   $('ttt-screen')?.setAttribute('aria-hidden', 'true');
+  if (openTtt.fromApps) {
+    openTtt.fromApps = false;
+    openApps();
+    return;
+  }
   if (wallet && sessionOpen()) $('tabbar')?.classList.add('show');
 }
 
 function closeKasdistro() {
   $('kasdistro-screen')?.classList.add('hidden');
   $('kasdistro-screen')?.setAttribute('aria-hidden', 'true');
+  if (openKasdistro.fromApps) {
+    openKasdistro.fromApps = false;
+    openApps();
+    return;
+  }
   if (wallet && sessionOpen()) $('tabbar')?.classList.add('show');
 }
 

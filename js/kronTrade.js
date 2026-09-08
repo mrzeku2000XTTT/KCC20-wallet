@@ -1,7 +1,7 @@
 /* KRON DEX trades via @kronsdk/kron-sdk (v0.17.2). Quotes + builders from the SDK;
    templates from the CORS-open token descriptor; live heads from idx.kron.technology. */
 import * as kron from '../vendor/kron-sdk/index.js';
-import { loadKaspaSdk, connectPublicNode, fetchAddressUtxos, toRpcTransaction } from './tx.js?v=217';
+import { loadKaspaSdk, connectPublicNode, fetchAddressUtxos, toRpcTransaction } from './tx.js?v=220';
 import { kaswareSigning, signPsktWithKasware, fetchKaswareUtxos, repairSafeJson } from './kasware.js?v=214';
 
 const IDX = 'https://idx.kron.technology/v1/kcc20';
@@ -117,6 +117,41 @@ function errText(e) {
   if (e == null) return 'Unknown error';
   if (typeof e === 'string') return e;
   return e.message || e.toString?.() || String(e);
+}
+
+async function withTimeout(promise, ms, msg) {
+  let t;
+  try {
+    return await Promise.race([
+      promise,
+      new Promise((_, rej) => { t = setTimeout(() => rej(new Error(msg)), ms); })
+    ]);
+  } finally { clearTimeout(t); }
+}
+
+async function waitForTx(rpc, txId, address, ms) {
+  const id = normTxId(txId);
+  if (!id || !rpc) return false;
+  const t0 = Date.now();
+  while (Date.now() - t0 < ms) {
+    try {
+      const r = await withTimeout(rpc.getMempoolEntry({
+        transactionId: id,
+        includeOrphanPool: true,
+        filterTransactionPool: false
+      }), 3000, 'mempool');
+      if (r?.mempoolEntry) return true;
+    } catch {}
+    if (address) {
+      try {
+        const res = await withTimeout(rpc.getUtxosByAddresses({ addresses: [address] }), 4000, 'utxos');
+        const rows = [...(res?.entries || [])];
+        if (rows.some(e => normTxId(e.outpoint?.transactionId) === id)) return true;
+      } catch {}
+    }
+    await sleep(400);
+  }
+  return false;
 }
 
 function hexBytes(h) {
@@ -930,7 +965,11 @@ export async function executeKronTrade({ wallet, tick, side, amount, utxos, onSt
     onStatus?.('Broadcasting KRON trade…');
     const { rpc, url: nodeUrl } = await connectTradeNode(k);
     try {
-      const txId = await submitKronSigned(rpc, pendingSigned.tx, onStatus, nodeUrl);
+      const txId = await submitKronSigned(rpc, pendingSigned.tx, onStatus, nodeUrl, {
+        parentId: pendingSigned.parentId,
+        chained: !!pendingSigned.chained,
+        address: wallet.address
+      });
       const kept = pendingSigned;
       pendingSigned = null;
       if (kept.live) rememberLastPool({ tick: kept.quoted.tick, txId, live: kept.live, quoted: kept.quoted });
@@ -1006,6 +1045,8 @@ export async function executeKronTrade({ wallet, tick, side, amount, utxos, onSt
 
   onStatus?.('Connecting to Kaspa…');
   const { rpc, url: nodeUrl } = await connectTradeNode(k);
+  const chained = chainedPool(quoted.tick);
+  if (chained?.txId) await waitForTx(rpc, chained.txId, wallet.address, 12000);
 
   onStatus?.('Selecting KAS UTXOs…');
   const useKw = !!(forceKasware || kaswareSigning(wallet));
@@ -1098,9 +1139,15 @@ export async function executeKronTrade({ wallet, tick, side, amount, utxos, onSt
     change: asm.change,
     changeIndex: asm.transaction.outputs.length - 1,
     fee,
-    signer
+    signer,
+    chained: !!chained,
+    parentId: chained?.txId || ''
   };
-  const txId = await submitKronSigned(rpc, asm.transaction, onStatus, nodeUrl);
+  const txId = await submitKronSigned(rpc, asm.transaction, onStatus, nodeUrl, {
+    parentId: chained?.txId || '',
+    address: wallet.address,
+    chained: !!chained
+  });
   pendingSigned = null;
   if (liveHead) rememberLastPool({ tick: quoted.tick, txId, live: liveHead, quoted });
   rememberLastFund({
@@ -1129,29 +1176,51 @@ function isFalseStack(e) {
   return /false stack|verify the signature script/i.test(errText(e));
 }
 
+function isSubmitTimeout(e) {
+  return /timeout|timed out/i.test(errText(e));
+}
+
 async function trySubmit(rpc, tx, allowOrphan) {
   const allow = !!allowOrphan;
+  const plain = toRpcTransaction(tx, { version: 1, sigOpCount: 0 });
   try {
-    const submitted = await rpc.submitTransaction({ transaction: tx, allowOrphan: allow });
+    const submitted = await withTimeout(
+      rpc.submitTransaction({ transaction: tx, allowOrphan: allow }),
+      12000,
+      'submit timeout'
+    );
     return submitted?.transactionId || submitted || tx.id || null;
   } catch (e) {
-    const plain = toRpcTransaction(tx, { version: 1, sigOpCount: 0 });
+    if (isSubmitTimeout(e)) throw e;
     try {
-      const submitted = await rpc.submitTransaction({ transaction: plain, allowOrphan: allow });
+      const submitted = await withTimeout(
+        rpc.submitTransaction({ transaction: plain, allowOrphan: allow }),
+        12000,
+        'submit timeout'
+      );
       return submitted?.transactionId || submitted || tx.id || null;
-    } catch {
+    } catch (e2) {
+      if (isSubmitTimeout(e2)) throw e2;
       if (allow) throw e;
-      const submitted = await rpc.submitTransaction({ transaction: tx, allowOrphan: true });
+      const submitted = await withTimeout(
+        rpc.submitTransaction({ transaction: tx, allowOrphan: true }),
+        12000,
+        'submit timeout'
+      );
       return submitted?.transactionId || submitted || tx.id || null;
     }
   }
 }
 
-async function submitKronSigned(rpc0, tx, onStatus, startUrl) {
-  const rpc = rpc0;
+async function submitKronSigned(rpc0, tx, onStatus, startUrl, opts = {}) {
+  let rpc = rpc0;
+  let url = startUrl || '';
+  const parentId = opts.chained ? opts.parentId : null;
+  if (parentId) await waitForTx(rpc, parentId, opts.address, 8000);
   let last = null;
-  for (let n = 0; n < 24; n++) {
+  for (let n = 0; n < 8; n++) {
     try {
+      if (parentId) await waitForTx(rpc, parentId, opts.address, 2000);
       const txId = await trySubmit(rpc, tx, true);
       const id = normTxId(txId);
       if (id) return id;
@@ -1166,11 +1235,19 @@ async function submitKronSigned(rpc0, tx, onStatus, startUrl) {
         pendingSigned = null;
         throw new Error('KasWare signature did not verify. Tap Buy once more.');
       }
-      if (!isOrphanReject(e) && n > 0) throw e;
-      await sleep(1500);
+      if (isSubmitTimeout(e) && url) {
+        try {
+          const next = await connectPublicNode({ force: true, prefer: url, only: true });
+          rpc = next.rpc;
+          url = next.url || url;
+        } catch {}
+        continue;
+      }
+      if (!isOrphanReject(e) && !isSubmitTimeout(e) && n > 0) throw e;
+      await sleep(800);
     }
   }
-  if (last && isOrphanReject(last)) {
+  if (last && (isOrphanReject(last) || isSubmitTimeout(last))) {
     throw new Error('Still sending the swap you already signed. Tap Buy — no new KasWare popup.');
   }
   throw last || new Error('Broadcast failed. Tap Buy once more.');

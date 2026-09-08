@@ -881,19 +881,23 @@ export async function connectPublicNode(opts = {}) {
   const k = await loadKaspaSdk();
   const net = networkId();
   const avoid = String(opts.avoid || '');
-  if (!opts.force && _rpc && _rpc.isConnected && _rpcNet === net && (!avoid || _rpcUrl !== avoid)) {
+  const prefer = String(opts.prefer || '');
+  if (!opts.force && _rpc && _rpc.isConnected && _rpcNet === net && (!avoid || _rpcUrl !== avoid) && (!prefer || _rpcUrl === prefer)) {
     return { rpc: _rpc, url: _rpcUrl, reused: true };
   }
   if (_rpc) await disconnectRpc();
 
   const encoding = k.Encoding.Borsh;
   const urls = [];
-  try {
-    const resolver = new k.Resolver();
-    const resolved = await withTimeout(resolver.getUrl(encoding, net), 6000, 'resolver timeout');
-    if (resolved) urls.push(String(resolved));
-  } catch {}
-  for (const u of (PUBLIC_WRPC[net] || PUBLIC_WRPC.mainnet)) if (!urls.includes(u)) urls.push(u);
+  if (prefer) urls.push(prefer);
+  if (!opts.only) {
+    try {
+      const resolver = new k.Resolver();
+      const resolved = await withTimeout(resolver.getUrl(encoding, net), 6000, 'resolver timeout');
+      if (resolved && !urls.includes(String(resolved))) urls.push(String(resolved));
+    } catch {}
+    for (const u of (PUBLIC_WRPC[net] || PUBLIC_WRPC.mainnet)) if (!urls.includes(u)) urls.push(u);
+  }
 
   let last = 'no public node responded';
   for (const url of urls) {

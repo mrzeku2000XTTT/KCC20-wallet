@@ -87,6 +87,19 @@ Load `sdk.js` **before** you dispatch `kaspa:requestProvider`.
 | `openWallet({ screen, to, amount })` / `request('openWallet', …)` | **v169.** Reopen/focus the wallet. `screen`: `send` \| `home` \| `tokens`. Prefills Send. Does **not** auto-broadcast; window stays open. |
 | `disconnect()` | drop origin |
 
+## KasDistro (You → Apps)
+
+Site: https://kasdistro.com  
+In-wallet tab: You → Apps → KasDistro (iframe, same as TTT). Logo: their `kasdistro-logo.png`.  
+Scrapeable page: https://kcc-20-wallet.vercel.app/kasdistro.html
+
+KasDistro pays **KAS to many `kaspa:q` addresses**. They load `sdk.js?v=169`, call `connect()` on a user click, then either:
+
+- `sendKaspa({ to, amount })` for one recipient, or
+- build one unsigned Safe JSON with many outputs and `signPskt` + `pushTx` (Nilla-style: they build, we sign).
+
+Do **not** use `buyKron` or `sendToken` for KAS distro. Keys never leave the PWA.
+
 ## What this is not
 
 - Not a Chrome Web Store extension. No `chrome.runtime`.

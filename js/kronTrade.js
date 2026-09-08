@@ -395,7 +395,11 @@ function decodeCurveRedeem(redeem) {
     if (redeem[s] === 0x01 && redeem[s + 1] <= 1 && redeem[s + 2] === 0x20 && redeem[s + 35] === 0x08) hits.push(s);
   }
   if (hits.length !== 1) throw new Error('Could not read the bonding-curve script from the last trade');
-  return { script: redeem.slice(), stateStart: hits[0] };
+  const stateStart = hits[0];
+  const script = redeem.slice();
+  let tokenReserve = 0n;
+  for (let i = 0; i < 8; i++) tokenReserve |= BigInt(script[stateStart + 36 + i] || 0) << BigInt(8 * i);
+  return { script, stateStart, tokenReserve, graduated: script[stateStart + 1] === 1 };
 }
 
 async function poolHead(tick, tokenCovidHex, poolCovidHex) {
@@ -453,6 +457,7 @@ async function curveHead(tick, token, entry) {
       const invVal = BigInt(invOut?.amount ?? invOut?.value ?? DUST);
       const tokenCovid = hexBytes(entry.covenantId || live.covenantId);
       const curveCovid = hexBytes(entry.extensions?.curveCovenantId || live.curveCovenantId);
+      const tokenReserve = tpl.tokenReserve > 0n ? tpl.tokenReserve : BigInt(live.cpState?.tokenReserve || live.tokenReserve || token?.tokenReserve || 0);
       return {
         tpl,
         curveCovid,
@@ -460,7 +465,7 @@ async function curveHead(tick, token, entry) {
           transactionId: row.txid,
           index: 0,
           realKas,
-          state: { graduated: false, tokenCovid, tokenReserve }
+          state: { graduated: !!tpl.graduated, tokenCovid, tokenReserve }
         },
         inventory: {
           transactionId: row.txid,
@@ -886,8 +891,8 @@ export async function executeKronTrade({ wallet, tick, side, amount, utxos, onSt
 
   let spend;
   let merge = [];
-  if (quoted.side === 'buy') {
-    try { merge = (await loadUserTokens(tick, wallet.address, { limit: 2, withKas: true })).slice(0, 2); } catch { merge = []; }
+  if (quoted.side === 'buy' && quoted.graduated) {
+    try { merge = (await loadUserTokens(tick, wallet.address, { limit: 2, withKas: true })).filter(p => p?.state?.amount > 0n).slice(0, 2); } catch { merge = []; }
   }
   const presence = merge.length ? 2 + merge.length : 0;
   if (quoted.side === 'buy' && quoted.graduated) {
@@ -956,7 +961,9 @@ export async function executeKronTrade({ wallet, tick, side, amount, utxos, onSt
   rpc = conn.rpc;
 
   onStatus?.('Selecting KAS UTXOs…');
-  const useKw = !!(forceKasware || kaswareSigning(wallet));
+  const nativeHex = String(wallet.privKey || '').replace(/^0x/i, '').trim();
+  const canPin = /^[0-9a-fA-F]{64}$/.test(nativeHex);
+  const useKw = !canPin && !!(forceKasware || kaswareSigning(wallet));
   const needGuess = (quoted.total || quoted.fee || 0n) + (merge.length ? 0n : DUST) + 80_000_000n;
   const fundingAll = await liveFunding(rpc, wallet.address, needGuess, useKw);
   const funding = [];
@@ -973,7 +980,7 @@ export async function executeKronTrade({ wallet, tick, side, amount, utxos, onSt
   let asm = assembleSpend(k, spend, funding, wallet.address, 10_000n);
   const fee = kron.spend.estimateNativeFee(k, 'mainnet', asm, 100);
   asm = assembleSpend(k, spend, funding, wallet.address, fee);
-  const external = !!(forceKasware || kaswareSigning(wallet));
+  const external = useKw;
   if (external) {
     onStatus?.('Approve in KasWare…');
     let plan;
@@ -1015,7 +1022,20 @@ export async function executeKronTrade({ wallet, tick, side, amount, utxos, onSt
     signFundingP2pk(k, asm.transaction, priv, asm.fundingInputIndexes);
   }
   onStatus?.('Broadcasting KRON trade…');
-  const txId = await submitKronSigned(rpc, asm.transaction);
+  let txId;
+  try {
+    txId = await submitKronSigned(rpc, asm.transaction);
+  } catch (e) {
+    if (external && canPin && (isFalseStack(e) || /signature did not verify/i.test(errText(e)))) {
+      onStatus?.('KasWare sig failed — signing with this wallet’s key…');
+      wallet.privKey = nativeHex;
+      const priv = new k.PrivateKey(nativeHex);
+      signFundingP2pk(k, asm.transaction, priv, asm.fundingInputIndexes);
+      txId = await submitKronSigned(rpc, asm.transaction);
+    } else {
+      throw e;
+    }
+  }
   landed = true;
   return { txId, fee, quote: quoted, signer: external ? 'kasware' : 'local' };
   } finally {

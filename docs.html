@@ -47,21 +47,21 @@
     </nav>
   </header>
   <main>
-    <p class="pill">sdkVersion 166</p>
+    <p class="pill">sdkVersion 169</p>
     <h1>Connect KCC20 Wallet in any app</h1>
     <p>One script. Creates <code>window.kcc20</code>. Same job as KasWare’s <code>window.kasware</code>, except this is a <b>hosted PWA</b>, not a browser extension. Keys never leave <code>kcc-20-wallet.vercel.app</code>. Your app builds the unsigned transaction. The user Approves in our window.</p>
 
     <div class="ok">
       <b>Install (one line)</b>
       <pre style="margin:10px 0 0">script src="https://kcc-20-wallet.vercel.app/sdk.js?v=169"</pre>
-      After load: <code>window.kcc20.sdkVersion === "166"</code>
+      After load: <code>window.kcc20.sdkVersion === "169"</code>
     </div>
 
     <h2>1. Getting started</h2>
     <p>Only call Connect from a <b>user click</b>. Never on page load. Never on app switch. That is the same rule KasWare documents.</p>
 <pre>const s = document.createElement('script');
 s.src = 'https://kcc-20-wallet.vercel.app/sdk.js?v=169';
-s.onload = () => console.log(window.kcc20.sdkVersion); // "166"
+s.onload = () => console.log(window.kcc20.sdkVersion); // "169"
 document.head.appendChild(s);
 
 // or wait for:
@@ -166,7 +166,7 @@ window.dispatchEvent(new Event('kaspa:requestProvider'));</pre>
 
     <h2>7. Pitfalls (what dApps actually hit)</h2>
     <ol>
-      <li><b>Stale SDK</b> — first load cached an old <code>sdk.js</code>. Require <code>sdkVersion === "166"</code>. Script URL must include <code>?v=166</code>.</li>
+      <li><b>Stale SDK</b> — first load cached an old <code>sdk.js</code>. Require <code>sdkVersion === "169"</code>. Script URL must include <code>?v=169</code>.</li>
       <li><b>Connect first after a successful Connect</b> — old SDK needed the popup to stay open. v166 keeps the session. Do not Connect-loop.</li>
       <li><b>Wrong object</b> — call <code>getPublicKey</code> on the same <code>window.kcc20</code> that ran <code>connect()</code>. Do not clone the provider before Connect.</li>
       <li><b>Empty UTXOs</b> — that <code>kaspa:q</code> has no KAS. User must fund it. Do not fake UTXOs.</li>
@@ -178,7 +178,31 @@ window.dispatchEvent(new Event('kaspa:requestProvider'));</pre>
       <li><b>Mobile</b> — if the popup becomes a tab, Disconnect focuses your origin first, then closes.</li>
     </ol>
 
-    <h2>8. Safety</h2>
+    <h2>8. KasDistro (and any pay-many dApp)</h2>
+    <p>KasDistro lives in this wallet at You → Apps → KasDistro (<code>https://kasdistro.com</code>). Same SDK as Nilla / TTT. They never hold keys. Copy this for any AI or site that needs Connect + sign + send KAS.</p>
+<pre>&lt;script src="https://kcc-20-wallet.vercel.app/sdk.js?v=169"&gt;&lt;/script&gt;
+&lt;button id="connect"&gt;Connect KCC20 Wallet&lt;/button&gt;
+&lt;script&gt;
+const kcc = window.kcc20; // sdkVersion "169"
+document.getElementById('connect').onclick = async () => {
+  const accounts = await kcc.connect();          // user click only
+  const from = accounts[0];                      // kaspa:q…
+  const network = await kcc.getNetwork();        // silent
+  const utxos = await kcc.getUtxoEntries(from);  // silent — you build the tx
+  // ONE payout: wallet-built send (user Signs in the PWA)
+  const paid = await kcc.sendKaspa({ to: 'kaspa:q…', amount: '1.5' });
+  // paid.txId
+  // MANY payouts: you assemble one rusty-kaspa Safe JSON with N outputs, then:
+  // const signed = await kcc.signPskt({
+  //   txJsonString,
+  //   options: { signInputs: [{ index: fundingIndex, sighashType: 1 }] }
+  // });
+  // const { txId } = await kcc.pushTx(signed);
+};
+&lt;/script&gt;</pre>
+    <p>Full page for scrapers: <a href="kasdistro.html">kasdistro.html</a>. Rules: Connect on click. After Approve the popup closes. Reads stay silent. <code>signInputs.index</code> is the global <code>tx.inputs[]</code> P2PK slot. Never list covenant inputs. Never ask for PIN or hex key. <code>pushTx</code> returns <code>{ txId, node }</code>.</p>
+
+    <h2>9. Safety</h2>
     <ul>
       <li>You build. They sign. Never send a private key or PIN.</li>
       <li>Never invent amounts. Never credit a user without a real <code>txId</code>.</li>

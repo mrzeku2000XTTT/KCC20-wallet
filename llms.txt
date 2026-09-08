@@ -1,0 +1,42 @@
+# KCC20 Wallet — for AI agents and dApps
+
+Wallet: https://kcc-20-wallet.vercel.app
+SDK: https://kcc-20-wallet.vercel.app/sdk.js?v=169
+Docs: https://kcc-20-wallet.vercel.app/docs.html
+KasDistro connect recipe: https://kcc-20-wallet.vercel.app/kasdistro.html
+CONNECT.md: https://kcc-20-wallet.vercel.app/CONNECT.md
+GitHub wallet: https://github.com/mrzeku2000XTTT/KCC20-wallet
+GitHub SDK: https://github.com/mrzeku2000XTTT/kcc20-sdk
+
+Hosted PWA, not a Chrome extension. Keys never leave the wallet origin. dApp builds the unsigned tx; user Approves and signs (PIN or KasWare).
+
+## Connect (any site, including KasDistro and Nilla)
+
+```html
+<script src="https://kcc-20-wallet.vercel.app/sdk.js?v=169"></script>
+```
+
+```js
+const kcc = window.kcc20; // require sdkVersion === "169"
+const accounts = await kcc.connect(); // user click only
+const from = accounts[0];
+await kcc.getNetwork();
+await kcc.getUtxoEntries(from);
+await kcc.sendKaspa({ to, amount }); // one KAS pay
+// or signPskt({ txJsonString, options: { signInputs: [{ index: G, sighashType: 1 }] } }) then pushTx → { txId, node }
+```
+
+`signInputs.index` = global tx.inputs[] P2PK funding index. Never list covenant/curve/pool. After connect the popup closes on purpose.
+
+## In-wallet apps (You → Apps)
+
+1. TTT — https://tttz.xyz
+2. KasDistro — https://kasdistro.com (logo: kasdistro-logo.png). Distribute KAS to many kaspa:q.
+3. K Social — on-chain feed
+4. Faceless Studio / Proof of Fact
+
+KasDistro iframe: You → Apps → KasDistro. Same host-ready postMessage as TTT (`kcc20_browser=1`).
+
+## Do not
+
+Ask for seed, PIN, or 64-hex. Overwrite window.kasware. Use sendToken or buyKron for a KAS airdrop.

@@ -25,10 +25,10 @@ import {
   newHashlockSecret, checkinHop, currentHop, parseXmssKit, p2shFromRedeemHex, spendXmssVault,
   disconnectRpc, buildDcaDrips, sendKasMany, releaseDcaDrip, cancelDcaDrip, isMassError
 } from './tx.js?v=220';
-import { bootDappConnect, pingTttDappFrame, TTT_TREASURY } from './dappConnect.js?v=198';
+import { bootDappConnect, pingTttDappFrame, pingKasdistroDappFrame, TTT_TREASURY } from './dappConnect.js?v=199';
 import { changenowEstimate, changenowCreate, changenowWidgetUrl, cnFrom } from './changenow.js?v=180';
 import { schedulePersistIframeVault, bootIframeVaultWatch } from './iframeVault.js?v=122';
-import { kronMarkets, quoteKronTrade, executeKronTrade, formatKasSompi, lookupKronTick, liveQuote, tradeCostLines, attachKronLogos, kronCandles, kronLogoFor, quoteKcc20Bridge, executeKcc20Bridge, formatTokenRaw } from './kronTrade.js?v=226';
+import { kronMarkets, quoteKronTrade, executeKronTrade, formatKasSompi, lookupKronTick, liveQuote, tradeCostLines, attachKronLogos, kronCandles, kronLogoFor, quoteKcc20Bridge, executeKcc20Bridge, formatTokenRaw } from './kronTrade.js?v=227';
 import {
   BET_AGENT_ADDR, TTT_TICK, WINDOW_MS, windowBounds, fmtRemain,
   kkdagsHeld, isKcc20Pass, hireCost, maxHireHours,
@@ -67,7 +67,7 @@ import {
   ksocialFeeKas
 } from './ksocial.js?v=206';
 
-export const BUILD = '226';
+export const BUILD = '227';
 const DESK_ID_KEY = 'kcc20_desk_id_v1';
 const DESK_VAULT_KEY = 'kcc20_desk_vault_v1';
 
@@ -3265,6 +3265,10 @@ function showBuildApp(name) {
     openTtt();
     return;
   }
+  if (view === 'kasdistro') {
+    openKasdistro();
+    return;
+  }
   ['home', 'studio', 'truth', 'ksocial'].forEach(v => {
     $('app-' + v)?.classList.toggle('hidden', v !== view);
   });
@@ -3774,6 +3778,22 @@ function openTtt() {
   $('tabbar')?.classList.remove('show');
 }
 
+function openKasdistro() {
+  haptic();
+  const frame = $('kasdistro-frame');
+  if (frame) {
+    if (!frame.dataset.kcc20Bound) {
+      frame.dataset.kcc20Bound = '1';
+      frame.addEventListener('load', () => pingKasdistroDappFrame(frame));
+    }
+    if (!frame.getAttribute('src')) frame.src = 'https://kasdistro.com/?kcc20_browser=1';
+    else pingKasdistroDappFrame(frame);
+  }
+  $('kasdistro-screen')?.classList.remove('hidden');
+  $('kasdistro-screen')?.setAttribute('aria-hidden', 'false');
+  $('tabbar')?.classList.remove('show');
+}
+
 function notifyTttTokenSent(payload) {
   const win = $('ttt-frame')?.contentWindow;
   if (!win) return;
@@ -3953,6 +3973,12 @@ async function openTreasurySweep() {
 function closeTtt() {
   $('ttt-screen')?.classList.add('hidden');
   $('ttt-screen')?.setAttribute('aria-hidden', 'true');
+  if (wallet && sessionOpen()) $('tabbar')?.classList.add('show');
+}
+
+function closeKasdistro() {
+  $('kasdistro-screen')?.classList.add('hidden');
+  $('kasdistro-screen')?.setAttribute('aria-hidden', 'true');
   if (wallet && sessionOpen()) $('tabbar')?.classList.add('show');
 }
 
@@ -8745,7 +8771,9 @@ async function reviewTrade() {
     : `<div class="kv"><span class="k">Sell</span><span class="v">${esc(formatTokenUnits(q.tokenIn, q.decimals))} ${esc(q.tick)}</span></div>
        <div class="kv"><span class="k">You receive</span><span class="v">${esc(formatKasSompi(q.net))} KAS</span></div>
        <div class="kv"><span class="k">Protocol fees</span><span class="v">${esc(formatKasSompi(q.fee))} KAS</span></div>`;
-  const kw = kaswareEnabled();
+  hydrateNativeKey(wallet);
+  const canPin = !!hexKey(wallet?.privKey);
+  const kw = !canPin && (kaswareEnabled() || walletIsKaswareChip(wallet));
   openSheet('Review ' + q.tick + ' ' + q.side, buyBits, {
     confirm: kw ? 'Pay with KasWare' : 'Pay with PIN',
     gold: true,
@@ -11369,6 +11397,7 @@ function bind() {
   });
   click('profile-build', openTtt);
   click('ttt-close', closeTtt);
+  click('kasdistro-close', closeKasdistro);
   click('ttt-fund', openTttFund);
   click('ttt-sweep', () => openTreasurySweep().catch(e => toast(errText(e))));
   click('build-close', closeBuildRoadmap);

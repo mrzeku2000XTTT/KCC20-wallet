@@ -593,6 +593,15 @@
         <iframe id="ttt-frame" class="ttt-frame" title="tttz.xyz" referrerpolicy="no-referrer-when-downgrade" allow="clipboard-write; fullscreen; storage-access"></iframe>
       </div>
 
+      <div class="ttt-screen hidden" id="kasdistro-screen" aria-hidden="true">
+        <div class="ttt-head">
+          <button type="button" class="trade-x" id="kasdistro-close">Close</button>
+          <h2>KasDistro</h2>
+          <img class="ttt-mark" src="assets/kasdistro.png" alt="KasDistro">
+        </div>
+        <iframe id="kasdistro-frame" class="ttt-frame" title="kasdistro.com" referrerpolicy="no-referrer-when-downgrade" allow="clipboard-write; fullscreen; storage-access"></iframe>
+      </div>
+
       <div class="build-screen hidden" id="build-screen" aria-hidden="true">
         <div class="build-head">
           <button type="button" class="trade-x hidden" id="build-back">Back</button>
@@ -602,12 +611,17 @@
         </div>
 
         <div id="app-home" class="app-home">
-          <p class="build-lede">Open an app. TTT first. K Social is the Kaspa L1 feed — in this wallet, no new tab.</p>
+          <p class="build-lede">Open an app. TTT first. KasDistro pays many kaspa:q addresses. K Social is the Kaspa L1 feed — in this wallet, no new tab.</p>
           <div class="app-grid">
             <button type="button" class="app-tile" data-app="ttt">
               <span class="app-ico app-ico-img"><img src="assets/ttt.png" alt=""></span>
               <b>TTT</b>
               <span>tttz.xyz — Connect with this wallet</span>
+            </button>
+            <button type="button" class="app-tile" data-app="kasdistro">
+              <span class="app-ico app-ico-img"><img src="assets/kasdistro.png" alt=""></span>
+              <b>KasDistro</b>
+              <span>kasdistro.com — Connect · pay many wallets</span>
             </button>
             <button type="button" class="app-tile" data-app="ksocial">
               <span class="app-ico">K</span>
@@ -870,7 +884,7 @@
   <script type="module">
     import('./js/iframeVault.js?v=122').then(function (mod) {
       return (mod.restoreIframeVault ? mod.restoreIframeVault() : Promise.resolve()).then(function () {
-        return import('./js/app.js?v=226');
+        return import('./js/app.js?v=227');
       });
     }).catch(function (err) {
       console.error(err);

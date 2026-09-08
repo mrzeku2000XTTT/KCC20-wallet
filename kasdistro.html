@@ -1,0 +1,87 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>KasDistro + KCC20 Wallet — Connect, sign, pay many kaspa:q</title>
+  <meta name="description" content="How KasDistro and any AI/dApp connect KCC20 Wallet to sign and send KAS. window.kcc20.connect, sendKaspa, signPskt, pushTx. Keys never leave the PWA.">
+  <meta name="robots" content="index, follow">
+  <link rel="canonical" href="https://kcc-20-wallet.vercel.app/kasdistro.html">
+  <meta property="og:title" content="KasDistro × KCC20 Wallet connect">
+  <meta property="og:image" content="https://kcc-20-wallet.vercel.app/assets/kasdistro.png">
+  <link rel="icon" href="assets/kasdistro.png">
+  <style>
+    :root { color-scheme: dark; --gold: #c9a36a; --bg: #0b0b0c; --card: #141416; --muted: rgba(235,235,245,.68); --line: rgba(255,255,255,.1); }
+    * { box-sizing: border-box; }
+    body { margin: 0; font: 16px/1.55 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; background: var(--bg); color: #f5f5f7; }
+    a { color: var(--gold); }
+    header { border-bottom: 1px solid var(--line); padding: 16px 22px; display: flex; gap: 12px; align-items: center; }
+    header img { width: 40px; height: 40px; border-radius: 10px; object-fit: contain; background: #111; }
+    main { max-width: 820px; margin: 0 auto; padding: 28px 20px 80px; }
+    h1 { font-size: 30px; letter-spacing: -0.5px; margin: 0 0 10px; }
+    h2 { font-size: 20px; margin: 28px 0 8px; }
+    p, li { color: var(--muted); }
+    code, pre { font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 13px; }
+    code { background: #1c1c1e; padding: 2px 6px; border-radius: 6px; color: #f3e2bf; }
+    pre { background: var(--card); border: 1px solid var(--line); border-radius: 14px; padding: 14px 16px; overflow: auto; color: #e8e8ed; }
+    .ok { border: 1px solid #1e4a32; background: #0e1a14; border-radius: 12px; padding: 12px 14px; color: #b6e2c8; }
+  </style>
+</head>
+<body>
+  <header>
+    <img src="assets/kasdistro.png" alt="KasDistro">
+    <div>
+      <b>KasDistro × KCC20 Wallet</b><br>
+      <span style="color:var(--muted);font-size:13px;">Connect wallet · sign · distribute KAS · no keys on kasdistro.com</span>
+    </div>
+  </header>
+  <main>
+    <h1>How KasDistro (and any AI) connects this wallet</h1>
+    <p>KasDistro is <a href="https://kasdistro.com">kasdistro.com</a> — pay KAS to many <code>kaspa:q</code> addresses in one flow. In KCC20 Wallet it is You → Apps → KasDistro (same iframe tab as TTT / Nilla). Logo is theirs: <code>https://kasdistro.com/kasdistro-logo.png</code>.</p>
+    <p>This page is public and meant to be scraped. Pin <code>sdk.js?v=169</code>. Require <code>window.kcc20.sdkVersion === "169"</code>.</p>
+
+    <div class="ok">
+      <b>One-line install</b>
+      <pre style="margin:10px 0 0">script src="https://kcc-20-wallet.vercel.app/sdk.js?v=169"</pre>
+    </div>
+
+    <h2>Rules</h2>
+    <ol>
+      <li>Call <code>connect()</code> only from a <b>user click</b>.</li>
+      <li>After Approve the wallet popup <b>closes on purpose</b>. Silent reads still work.</li>
+      <li>You build the unsigned tx. The user signs. Never ask for PIN, seed, or 64-hex.</li>
+      <li><code>signInputs.index</code> is the global <code>tx.inputs[]</code> P2PK funding slot. Do not list covenant / curve / pool inputs.</li>
+      <li><code>pushTx</code> returns <code>{ txId, node }</code> — read <code>.txId</code>.</li>
+      <li>Never overwrite a real <code>window.kasware</code>.</li>
+    </ol>
+
+    <h2>Connect + one KAS send</h2>
+<pre>const kcc = window.kcc20;
+document.getElementById('connect').onclick = async () => {
+  const [from] = await kcc.connect();
+  const network = await kcc.getNetwork();       // kaspa_mainnet | kaspa_testnet_10
+  const paid = await kcc.sendKaspa({ to: recipientKaspaQ, amount: '1.5' });
+  // paid.txId
+};</pre>
+
+    <h2>Many recipients (you build one tx)</h2>
+<pre>const utxos = await kcc.getUtxoEntries(from);
+const pubKey = await kcc.getPublicKey();
+// Assemble rusty-kaspa Safe JSON: one funding P2PK input, N outputs to kaspa:q…
+const signed = await kcc.signPskt({
+  txJsonString,
+  options: { signInputs: [{ index: fundingIndex, sighashType: 1 }] }
+});
+const { txId } = await kcc.pushTx(signed);</pre>
+
+    <h2>What not to call</h2>
+    <ul>
+      <li><code>buyKron</code> — that buys a KCC20 ticker. KasDistro distributes native KAS.</li>
+      <li><code>sendToken</code> — that moves a held KCC20 bag, not KAS.</li>
+      <li>Do not invent amounts. Do not credit a payout without a real <code>txId</code>.</li>
+    </ul>
+
+    <p>More: <a href="docs.html">SDK docs</a> · <a href="CONNECT.md">CONNECT.md</a> · <a href="https://github.com/mrzeku2000XTTT/kcc20-sdk">kcc20-sdk</a> · wallet <a href="https://kcc-20-wallet.vercel.app">kcc-20-wallet.vercel.app</a></p>
+  </main>
+</body>
+</html>

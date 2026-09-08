@@ -270,7 +270,7 @@ async function ensureUnlocked() {
 
 function connectBody(w, req, origin) {
   return '<p class="muted" style="text-align:left;padding:0 0 8px;">This dApp wants a Kaspa address. Pick which of your added wallets to use. Keys stay here.</p>'
-    + '<div class="kv"><span class="k">App</span><span class="v">' + esc(req.name || (String(origin).includes('tttz.xyz') ? 'TTT' : origin)) + '</span></div>'
+    + '<div class="kv"><span class="k">App</span><span class="v">' + esc(req.name || (String(origin).includes('kasdistro.com') ? 'KasDistro' : (String(origin).includes('tttz.xyz') ? 'TTT' : origin))) + '</span></div>'
     + '<div class="kv"><span class="k">Wallet</span><span class="v">' + esc(w?.name || 'Wallet') + '</span></div>'
     + '<div class="kv kv-stack"><span class="k">Address</span><span class="v">' + esc(w?.address || '') + '</span></div>'
     + '<div class="kv"><span class="k">Network</span><span class="v">' + esc(netName()) + '</span></div>';
@@ -897,17 +897,26 @@ function announce() {
 
 export const TTT_TREASURY = 'kaspa:qq5yhvly6338dspa9mm24g8q6chvy6v0jww3k4dgqywh0lju5mmm5pj334ews';
 const TTT_ORIGINS = ['https://tttz.xyz', 'https://www.tttz.xyz', 'http://127.0.0.1:5173', 'http://localhost:5173', 'http://127.0.0.1:4173', 'http://localhost:4173'];
+const KASDISTRO_ORIGINS = ['https://kasdistro.com', 'https://www.kasdistro.com'];
 
 function isTttOrigin(origin) {
   const o = String(origin || '').toLowerCase();
   return TTT_ORIGINS.some(x => x.toLowerCase() === o) || o.endsWith('tttz.xyz');
 }
 
-export function pingTttDappFrame(frame) {
+function pingDappFrame(frame, origins) {
   const win = frame && frame.contentWindow;
   if (!win) return;
   const payload = { type: 'host-ready', origin: location.origin, browser: 'kcc20', methods: HOST_METHODS };
-  TTT_ORIGINS.forEach((o) => { try { postTo(win, o, payload); } catch {} });
+  (origins || []).forEach((o) => { try { postTo(win, o, payload); } catch {} });
+}
+
+export function pingTttDappFrame(frame) {
+  pingDappFrame(frame, TTT_ORIGINS);
+}
+
+export function pingKasdistroDappFrame(frame) {
+  pingDappFrame(frame, KASDISTRO_ORIGINS);
 }
 
 export function bootDappConnect(opts) {
@@ -915,6 +924,7 @@ export function bootDappConnect(opts) {
   if (booted) {
     announce();
     pingTttDappFrame(typeof document !== 'undefined' ? document.getElementById('ttt-frame') : null);
+    pingKasdistroDappFrame(typeof document !== 'undefined' ? document.getElementById('kasdistro-frame') : null);
     return;
   }
   booted = true;

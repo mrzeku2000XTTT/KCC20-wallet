@@ -980,7 +980,7 @@ export async function executeKronTrade({ wallet, tick, side, amount, utxos, onSt
     signFundingP2pk(k, asm.transaction, priv, asm.fundingInputIndexes);
   }
   onStatus?.('Signed. Broadcasting…');
-  const txId = await submitKronSigned(rpc, asm.transaction, onStatus, nodeUrl);
+  const txId = await submitKronSigned(rpc, asm.transaction, onStatus);
   return { txId, fee, quote: quoted, signer: external ? 'kasware' : 'local' };
 }
 
@@ -1019,19 +1019,19 @@ async function trySubmit(rpc, tx, allowOrphan) {
 }
 
 function orphanHint() {
-  return 'Signed in KasWare, but public Kaspa nodes do not have this KRON pool UTXO yet. Wait ~8 seconds, reject leftover popups, tap Buy again. Not a bad signature.';
+  return 'KasWare already signed. KRON’s node has not accepted this pool swap yet (busy pool, not a bad signature). Wait 10 seconds, reject leftover popups, tap Buy again. Turn VPN off if it is on.';
 }
 
 const KRON_WRPC = [
-  'wss://node.kron.technology/kaspa/mainnet/wrpc/borsh',
-  'wss://node.kron.technology'
+  'wss://node.kron.technology',
+  'wss://node.kron.technology/kaspa/mainnet/wrpc/borsh'
 ];
 
-async function connectKronSubmitNode(avoid) {
+async function connectKronSubmitNode() {
   const k = await loadKaspaSdk();
   const encoding = k.Encoding.Borsh;
+  let last = 'KRON node unreachable';
   for (const url of KRON_WRPC) {
-    if (avoid && url === avoid) continue;
     let rpc = null;
     try {
       rpc = new k.RpcClient({ url, encoding, networkId: 'mainnet' });
@@ -1041,26 +1041,31 @@ async function connectKronSubmitNode(avoid) {
       ]);
       await rpc.getServerInfo();
       return { rpc, url };
-    } catch {
+    } catch (e) {
+      last = errText(e);
       try { if (rpc) await rpc.disconnect(); } catch {}
     }
   }
-  return connectPublicNode({ force: true, avoid });
+  throw new Error('Could not reach KRON’s node (' + last + '). Turn VPN off if it is on, tap Buy again.');
 }
 
-async function submitKronSigned(rpc0, tx, onStatus, startUrl) {
+async function submitKronSigned(rpc0, tx, onStatus) {
+  onStatus?.('Broadcasting signed swap to KRON…');
   let rpc = rpc0;
-  let lastUrl = startUrl || '';
-  let last = null;
-  onStatus?.('Broadcasting signed swap…');
   try {
-    const kron = await connectKronSubmitNode('');
+    const kron = await connectKronSubmitNode();
     rpc = kron.rpc;
-    lastUrl = kron.url || lastUrl;
-  } catch {}
-  for (let n = 0; n < 10; n++) {
+  } catch (e) {
+    throw e;
+  }
+  let last = null;
+  for (let n = 0; n < 6; n++) {
     try {
       const txId = await trySubmit(rpc, tx, true);
+      if (txId && typeof txId === 'object') {
+        const id = txId.transactionId || txId.txId || txId.id;
+        if (id) return id;
+      }
       if (txId) return txId;
       last = new Error('Node did not return a transaction id');
     } catch (e) {
@@ -1071,22 +1076,10 @@ async function submitKronSigned(rpc0, tx, onStatus, startUrl) {
       if (isFalseStack(e)) {
         throw new Error('KasWare signature did not verify. Reject leftover popups, hard-refresh this wallet, tap Buy again.');
       }
-      if (!isOrphanReject(e) && n > 1) throw e;
-      if (n < 2) {
-        onStatus?.('Signed. Waiting for the KRON node to accept…');
-        await sleep(1200);
-        continue;
-      }
-      onStatus?.('This node is behind the KRON pool — trying another…');
-      try {
-        const next = n < 5
-          ? await connectKronSubmitNode(lastUrl)
-          : await connectPublicNode({ force: true, avoid: lastUrl });
-        rpc = next.rpc;
-        lastUrl = next.url || '';
-      } catch (e2) {
-        last = e2;
-      }
+      onStatus?.(n < 2
+        ? 'Signed. Waiting for KRON to accept the pool swap…'
+        : 'KRON node is catching up — retrying (not hopping random nodes)…');
+      await sleep(1500);
     }
   }
   if (last && isOrphanReject(last)) throw new Error(orphanHint());

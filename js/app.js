@@ -21,14 +21,14 @@ import {
   buildTimelockCovenant, buildOwnerEnvelope, buildEscrowCovenant, buildBetEscrowCovenant, buildMultisigCovenant, currentDaa,
   pingPublicNode, sweepVault, toRpcTransaction, p2shSpendScript, planKasPayment, storageMassOk,
   compoundUtxos, sendKrc20, sendKcc20, loadKrc20Pending, lockKcc20Timelock, sweepKcc20Capsule,
-  fetchOwnedUtxos, collectSpendableUtxos, buildSentinelChain, buildRecurringChain, buildHashlockCovenant,
+  fetchOwnedUtxos, collectSpendableUtxos, nativeP2pkUtxos, buildSentinelChain, buildRecurringChain, buildHashlockCovenant,
   newHashlockSecret, checkinHop, currentHop, parseXmssKit, p2shFromRedeemHex, spendXmssVault,
   disconnectRpc, buildDcaDrips, sendKasMany, releaseDcaDrip, cancelDcaDrip, isMassError
-} from './tx.js?v=222';
+} from './tx.js?v=223';
 import { bootDappConnect, pingTttDappFrame, pingKasdistroDappFrame, TTT_TREASURY } from './dappConnect.js?v=200';
 import { changenowEstimate, changenowCreate, changenowWidgetUrl, cnFrom } from './changenow.js?v=180';
 import { schedulePersistIframeVault, bootIframeVaultWatch } from './iframeVault.js?v=122';
-import { kronMarkets, quoteKronTrade, executeKronTrade, formatKasSompi, lookupKronTick, liveQuote, tradeCostLines, attachKronLogos, kronCandles, kronLogoFor, quoteKcc20Bridge, executeKcc20Bridge, formatTokenRaw } from './kronTrade.js?v=231';
+import { kronMarkets, quoteKronTrade, executeKronTrade, formatKasSompi, lookupKronTick, liveQuote, tradeCostLines, attachKronLogos, kronCandles, kronLogoFor, quoteKcc20Bridge, executeKcc20Bridge, formatTokenRaw } from './kronTrade.js?v=232';
 import {
   BET_AGENT_ADDR, TTT_TICK, WINDOW_MS, windowBounds, fmtRemain,
   kkdagsHeld, isKcc20Pass, hireCost, maxHireHours,
@@ -67,7 +67,7 @@ import {
   ksocialFeeKas
 } from './ksocial.js?v=207';
 
-export const BUILD = '231';
+export const BUILD = '232';
 const DESK_ID_KEY = 'kcc20_desk_id_v1';
 const DESK_VAULT_KEY = 'kcc20_desk_vault_v1';
 
@@ -4910,6 +4910,7 @@ async function tickLive(full) {
       } catch {}
     }
     if (Array.isArray(ownedBag)) {
+      ownedBag = nativeP2pkUtxos(ownedBag, wallet);
       const keepOptimistic = Date.now() < hushUtxosUntil
         && Array.isArray(utxos) && utxos.length === 1
         && ownedBag.length > 1
@@ -8918,32 +8919,34 @@ async function openCompound() {
   haptic();
   hydrateNativeKey(wallet);
   const kw = kaswareSigning(wallet);
-  let bag = Array.isArray(utxos) ? utxos : [];
-  if (kw) {
-    try {
-      const live = await fetchKaswareUtxos(wallet.address);
-      bag = (live || []).map(u => validateAndCleanUtxo(u)).filter(Boolean);
-      utxos = bag;
-      paintUtxoCount();
-    } catch (e) {
-      toast(errText(e) || 'KasWare did not return coins');
-      return;
-    }
+  toast('Counting native KAS coins…');
+  let bag;
+  try {
+    bag = await collectSpendableUtxos(wallet);
+  } catch (e) {
+    toast(errText(e) || 'Could not load UTXOs');
+    return;
   }
+  utxos = bag;
+  paintUtxoCount();
   const n = bag.length;
   if (n < 2) {
-    toast(kw ? 'KasWare has 1 UTXO — nothing to compound' : 'Already one UTXO');
+    toast(n === 1
+      ? 'Only 1 native KAS coin in this wallet — nothing to compound'
+      : 'No native KAS coins to compound');
     return;
   }
   const feeEst = 0.0045 + n * 0.00015;
   if (walletIsKaswareChip(wallet)) autoArmKaswareForWallet(wallet).catch(() => {});
+  openCompound._bag = bag;
+  openCompound._addr = wallet.address;
   openSheet('Compound UTXOs', `
-    <div class="kv"><span class="k">Wallet</span><span class="v">${esc(wallet?.name || 'This wallet')}</span></div>
+    <div class="kv"><span class="k">Wallet</span><span class="v">${esc(walletPublicName(wallet))}</span></div>
     <div class="kv"><span class="k">Network</span><span class="v">${isTestnet() ? 'TN10' : 'mainnet'}</span></div>
     <div class="kv"><span class="k">UTXOs now</span><span class="v">${n}</span></div>
     <div class="kv"><span class="k">Balance</span><span class="v">${formatAmount(bag.reduce((a, e) => a + Number(e.amount || 0n), 0))} KAS</span></div>
     <div class="kv"><span class="k">Network fee</span><span class="v">~${feeEst.toFixed(4)} KAS</span></div>
-    <p class="muted" style="text-align:left;">Merges <b>every spendable KAS coin KasWare can sign</b> into <b>one</b> UTXO. ${kw ? 'Same list as the KasWare UTXO tab. Approve the PSKT — it must show one output.' : 'Native PIN signs.'}</p>
+    <p class="muted" style="text-align:left;">Merges every native <b>kaspa:q</b> coin in this wallet into <b>one</b> UTXO. Token cells and privacy coins stay put. ${kw ? 'Approve the PSKT in KasWare — it must show one output.' : 'PIN signs.'}</p>
   `, { confirm: kw ? 'Pay with KasWare' : 'Compound now', gold: true, onConfirm: () => runCompound() });
 }
 
@@ -8974,11 +8977,14 @@ async function runCompound() {
       await requirePin('Confirm compound');
     }
     await loadKaspaSdk();
-    setSheetStatus('Collecting every spendable UTXO in this wallet…');
+    setSheetStatus('Collecting every native KAS coin in this wallet…');
     await pingPublicNode();
-    const available = await collectSpendableUtxos(wallet);
-    if (!available.length) throw new Error('No UTXOs — receive KAS first');
-    if (available.length < 2) throw new Error('Already one UTXO — nothing to compound');
+    let available = (openCompound._addr === wallet.address && Array.isArray(openCompound._bag))
+      ? openCompound._bag
+      : null;
+    if (!available || available.length < 2) available = await collectSpendableUtxos(wallet);
+    if (!available.length) throw new Error('No native KAS coins — receive KAS first');
+    if (available.length < 2) throw new Error('Only 1 native KAS coin in this wallet — nothing to compound');
     setSheetStatus(kw
       ? `Approve merge of ${available.length} UTXOs in KasWare (one output)…`
       : `Merging ${available.length} UTXOs into one…`);

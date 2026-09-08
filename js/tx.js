@@ -1573,20 +1573,39 @@ function meetToccataFee(k, tx, priv, entries, floor = 0n, protectIndex = -1) {
   return scripts;
 }
 
+function addrId(a) {
+  const s = String(a || '').trim().toLowerCase();
+  const i = s.indexOf(':');
+  return i >= 0 ? s.slice(i + 1) : s;
+}
+
+function sameAddr(a, b) {
+  const x = addrId(a), y = addrId(b);
+  return !!(x && y && x === y);
+}
+
 function ownedSpendRows(wallet) {
   const src = (wallet?.receiveAddrs && wallet.receiveAddrs.length)
-    ? wallet.receiveAddrs
-    : [{ address: wallet.address, privateKey: wallet.privKey, pubKey: wallet.pubKey }];
+    ? wallet.receiveAddrs.slice()
+    : [];
+  if (wallet?.address && !src.some(a => sameAddr(a.address, wallet.address))) {
+    src.unshift({ address: wallet.address, privateKey: wallet.privKey, pubKey: wallet.pubKey });
+  }
+  if (!src.length && wallet?.address) {
+    src.push({ address: wallet.address, privateKey: wallet.privKey, pubKey: wallet.pubKey });
+  }
   const rows = [];
   const seen = new Set();
   for (const a of src) {
     const key = a.privateKey || a.privKey || wallet.privKey;
-    if (a.address && !seen.has(a.address)) {
-      seen.add(a.address);
+    const id = addrId(a.address);
+    if (a.address && id && !seen.has(id)) {
+      seen.add(id);
       rows.push({ address: a.address, privKey: key, redeemHex: '' });
     }
-    if (a.privacyAddress && a.privacyRedeem && !seen.has(a.privacyAddress)) {
-      seen.add(a.privacyAddress);
+    const pid = addrId(a.privacyAddress);
+    if (a.privacyAddress && a.privacyRedeem && pid && !seen.has(pid)) {
+      seen.add(pid);
       rows.push({ address: a.privacyAddress, privKey: key, redeemHex: a.privacyRedeem });
     }
   }
@@ -1594,15 +1613,49 @@ function ownedSpendRows(wallet) {
 }
 
 function attachSpendMeta(entries, rows) {
-  const byAddr = new Map(rows.map(r => [r.address, r]));
   return entries.map(e => {
-    const row = byAddr.get(e.address);
+    const row = rows.find(r => sameAddr(r.address, e.address)) || rows.find(r => !r.redeemHex);
     return {
       ...e,
-      privKey: row?.privKey || e.privKey || '',
-      redeemHex: row?.redeemHex || e.redeemHex || ''
+      privKey: e.privKey || row?.privKey || '',
+      redeemHex: e.redeemHex || row?.redeemHex || ''
     };
-  }).filter(e => e.privKey && e.outpoint?.transactionId && e.amount > 0n);
+  }).filter(e => e.outpoint?.transactionId && e.amount > 0n);
+}
+
+function uniqueOutpoints(list) {
+  const seen = new Set();
+  const out = [];
+  for (const u of list || []) {
+    const key = utxoKey(u);
+    if (!key || seen.has(key)) continue;
+    seen.add(key);
+    out.push(u);
+  }
+  return out;
+}
+
+/** Native kaspa:q coins only — the set Home counts and Compound merges. */
+export function nativeP2pkUtxos(list, wallet) {
+  const seen = new Set();
+  const out = [];
+  for (const u of list || []) {
+    const c = validateAndCleanUtxo(u);
+    if (!c) continue;
+    const addr = u.address || wallet?.address || '';
+    if (!isP2pkAddr(addr, wallet?.address)) continue;
+    if (!isNativeP2pkScript(c.scriptPublicKey?.script || c.scriptPublicKey)) continue;
+    const key = utxoKey(c);
+    if (!key || seen.has(key)) continue;
+    seen.add(key);
+    out.push({
+      ...u,
+      ...c,
+      address: addr,
+      privKey: u.privKey || u.privateKey || wallet?.privKey || ''
+    });
+  }
+  return out;
 }
 
 export async function fetchOwnedUtxos(wallet) {
@@ -1612,7 +1665,7 @@ export async function fetchOwnedUtxos(wallet) {
     const { rpc } = await connectPublicNode();
     const raw = await fetchNodeUtxosMany(rpc, rows.map(r => r.address));
     const tagged = attachSpendMeta(raw, rows);
-    if (tagged.length || raw.length === 0) return tagged;
+    if (tagged.length || raw.length === 0) return uniqueOutpoints(tagged);
   } catch {}
   const bags = [];
   for (let i = 0; i < rows.length; i += 8) {
@@ -1631,7 +1684,7 @@ export async function fetchOwnedUtxos(wallet) {
     }));
     bags.push(...part.flat());
   }
-  return bags;
+  return uniqueOutpoints(bags);
 }
 
 function utxoKey(u) {
@@ -1647,11 +1700,11 @@ function isP2pkAddr(addr, fallback) {
   return /:q/i.test(a) || !a;
 }
 
-/** Schnorr P2PK redeem: <32-byte x-only pubkey> CHECKSIG. Token/covenant scripts must not be merged. */
+/** Native KAS P2PK: Schnorr (32-byte x-only) or ECDSA (33-byte). Token/covenant scripts must not be merged. */
 function isNativeP2pkScript(script) {
-  let h = hexish(script);
-  if (/^000020[0-9a-f]{64}ac$/i.test(h)) h = h.slice(4);
-  return /^20[0-9a-f]{64}ac$/i.test(h);
+  let h = hexish(script).replace(/^0x/i, '').toLowerCase();
+  if (/^0000(20[0-9a-f]{64}ac|21[0-9a-f]{66}ac)$/.test(h)) h = h.slice(4);
+  return /^(20[0-9a-f]{64}ac|21[0-9a-f]{66}ac)$/.test(h);
 }
 
 function outpointId(raw) {
@@ -1750,13 +1803,14 @@ export async function collectSpendableUtxos(wallet) {
   if (kaswareSigning(wallet)) {
     const kw = await fetchKaswareUtxos(wallet.address);
     add(kw, { address: wallet.address });
-    return [...map.values()];
+    return nativeP2pkUtxos([...map.values()], wallet);
   }
   try { add(await fetchOwnedUtxos(wallet)); } catch {}
   for (const row of ownedSpendRows(wallet)) {
+    if (row.redeemHex) continue;
     try { add(await fetchAddressUtxos(row.address), row); } catch {}
   }
-  return [...map.values()];
+  return nativeP2pkUtxos([...map.values()], wallet);
 }
 
 function requiredFeeFromError(e) {

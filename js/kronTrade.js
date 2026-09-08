@@ -1,7 +1,7 @@
 /* KRON DEX trades via @kronsdk/kron-sdk (v0.17.2). Quotes + builders from the SDK;
    templates from the CORS-open token descriptor; live heads from idx.kron.technology. */
 import * as kron from '../vendor/kron-sdk/index.js';
-import { loadKaspaSdk, connectPublicNode, disconnectRpc, fetchAddressUtxos, toRpcTransaction } from './tx.js?v=216';
+import { loadKaspaSdk, connectPublicNode, fetchAddressUtxos, toRpcTransaction } from './tx.js?v=217';
 import { kaswareSigning, signPsktWithKasware, fetchKaswareUtxos, repairSafeJson } from './kasware.js?v=214';
 
 const IDX = 'https://idx.kron.technology/v1/kcc20';
@@ -15,6 +15,7 @@ const PARTNER_REF = 'kcc20wallet';
 let listCache = null;
 let listAt = 0;
 const descCache = new Map();
+let lastKronSubmitAt = 0;
 
 function errText(e) {
   if (e == null) return 'Unknown error';
@@ -752,8 +753,7 @@ function assembleSpend(k, spend, fundingEntries, changeAddress, networkFee) {
 }
 
 async function connectTradeNode(k) {
-  try { await disconnectRpc(); } catch {}
-  return connectPublicNode({ force: true });
+  return connectPublicNode();
 }
 
 async function loadUserTokens(tick, address, { limit = 4, withKas = true } = {}) {
@@ -797,6 +797,11 @@ function pickTokens(pieces, need, maxN) {
 
 export async function executeKronTrade({ wallet, tick, side, amount, utxos, onStatus, forceKasware = false }) {
   const k = await loadKaspaSdk();
+  const wait = lastKronSubmitAt ? 5000 - (Date.now() - lastKronSubmitAt) : 0;
+  if (wait > 0) {
+    onStatus?.('Waiting for the last swap to land…');
+    await sleep(wait);
+  }
   const resolved = await resolveKronTick(tick);
   const token = resolved.token;
   const entry = kronEntryFromIdx(tick, token);
@@ -935,6 +940,7 @@ export async function executeKronTrade({ wallet, tick, side, amount, utxos, onSt
   }
   onStatus?.('Broadcasting KRON trade…');
   const txId = await submitKronSigned(rpc, asm.transaction, onStatus, nodeUrl);
+  lastKronSubmitAt = Date.now();
   return { txId, fee, quote: quoted, signer: external ? 'kasware' : 'local' };
 }
 
@@ -973,37 +979,32 @@ async function trySubmit(rpc, tx, allowOrphan) {
 }
 
 function orphanHint() {
-  return 'KRON curve/pool is not on this Kaspa node yet (orphan — not a bad KasWare signature). Wait ~10 seconds, reject leftover KasWare popups, then tap Buy again.';
+  return 'The last swap is still landing. Reject leftover KasWare popups, wait a few seconds, tap Buy again for a fresh quote. Not a bad signature.';
 }
 
 async function submitKronSigned(rpc0, tx, onStatus, startUrl) {
-  let rpc = rpc0;
-  let lastUrl = startUrl || '';
+  const rpc = rpc0;
   let last = null;
-  for (let n = 0; n < 8; n++) {
+  for (let n = 0; n < 6; n++) {
     try {
       const txId = await trySubmit(rpc, tx, true);
+      if (txId && typeof txId === 'object') {
+        const id = txId.transactionId || txId.txId || txId.id;
+        if (id) return id;
+      }
       if (txId) return txId;
       last = new Error('Node did not return a transaction id');
     } catch (e) {
       last = e;
       if (isSpentHead(e)) {
-        throw new Error('KRON curve/pool moved before this swap landed. Tap Buy again for a fresh quote.');
+        throw new Error('KRON pool already moved (usually the last buy just landed). Reject leftover popups, tap Buy again.');
       }
       if (isFalseStack(e)) {
         throw new Error('KasWare signature did not verify. Reject leftover popups, hard-refresh this wallet, tap Buy again.');
       }
       if (!isOrphanReject(e) && n > 0) throw e;
-      onStatus?.(isOrphanReject(e)
-        ? 'Landing the swap on another Kaspa node…'
-        : 'Broadcasting on another Kaspa node…');
-      try {
-        const next = await connectPublicNode({ force: true, avoid: lastUrl });
-        rpc = next.rpc;
-        lastUrl = next.url || '';
-      } catch (e2) {
-        last = e2;
-      }
+      onStatus?.('Waiting for the last swap to land on this node…');
+      await sleep(1500);
     }
   }
   if (last && isOrphanReject(last)) throw new Error(orphanHint());

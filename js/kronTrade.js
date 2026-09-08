@@ -7,6 +7,7 @@ import { kaswareSigning, signPsktWithKasware, fetchKaswareUtxos, repairSafeJson 
 const IDX = 'https://idx.kron.technology/v1/kcc20';
 const REG = 'https://api.kron.technology';
 const KASPA = 'https://api.kaspa.org';
+const KASPA_REST = ['https://api.kaspa.org', 'https://api.kaspa.ws'];
 const SCALE = 1_000_000n;
 const DUST = 50_000_000n;
 const NETWORK_EST = 40_000_000n; // ~0.40 KAS typical covenant mass fee
@@ -297,21 +298,52 @@ function curveQuoteState(token, entry) {
   };
 }
 
+function normalizeRpcTx(tx) {
+  const outs = [...(tx?.outputs || [])].map(o => ({
+    amount: o.value ?? o.amount,
+    value: o.value ?? o.amount
+  }));
+  const ins = [...(tx?.inputs || [])].map(i => ({
+    signature_script: i.signatureScript || i.signature_script || '',
+    signatureScript: i.signatureScript || i.signature_script || ''
+  }));
+  return { outputs: outs, inputs: ins, transaction_outputs: outs, transaction_inputs: ins };
+}
+
 async function kaspaTx(id) {
+  const tid = String(id || '').replace(/^0x/i, '').toLowerCase();
+  if (!/^[0-9a-f]{64}$/.test(tid)) throw new Error('Bad KRON pool tx id');
   let last = null;
-  for (let i = 0; i < 3; i++) {
-    try {
-      const res = await fetch(`${KASPA}/transactions/${id}?resolve_previous_outpoints=no`, { cache: 'no-store' });
-      if (!res.ok) throw new Error('Kaspa tx lookup failed');
-      return await res.json();
-    } catch (e) {
-      last = e;
-      await new Promise(r => setTimeout(r, 250 * (i + 1)));
+  const bases = [...new Set([KASPA, ...KASPA_REST])];
+  for (const base of bases) {
+    for (let i = 0; i < 2; i++) {
+      try {
+        const ac = new AbortController();
+        const t = setTimeout(() => ac.abort(), 8000);
+        const res = await fetch(`${base}/transactions/${tid}?resolve_previous_outpoints=no`, {
+          cache: 'no-store',
+          signal: ac.signal
+        });
+        clearTimeout(t);
+        if (!res.ok) throw new Error('Kaspa tx lookup HTTP ' + res.status);
+        return await res.json();
+      } catch (e) {
+        last = e;
+        await new Promise(r => setTimeout(r, 200 * (i + 1)));
+      }
     }
   }
+  try {
+    const { rpc } = await connectPublicNode();
+    const r = await rpc.getTransaction({ transactionId: tid, includeBlockVerboseData: false });
+    const tx = r?.transaction || r;
+    if (tx) return normalizeRpcTx(tx);
+  } catch (e) {
+    last = e;
+  }
   const m = errText(last);
-  if (/failed to fetch|networkerror|load failed/i.test(m)) {
-    throw new Error('Could not reach api.kaspa.org for the KRON pool tx. Check VPN/network, tap Buy again.');
+  if (/failed to fetch|networkerror|load failed|abort/i.test(m)) {
+    throw new Error('Could not load the KRON pool tx (api.kaspa.org blocked). Turn VPN off if it is on, tap Buy again.');
   }
   throw last || new Error('Kaspa tx lookup failed');
 }
@@ -354,7 +386,8 @@ function decodeCurveRedeem(redeem) {
 async function poolHead(tick, tokenCovidHex, poolCovidHex) {
   const head = await idx('/token/' + encodeURIComponent(tick) + '/poolhead');
   if (!head?.pool) throw new Error('No KRON pool head for ' + tick);
-  const tx = await kaspaTx(head.pool.transactionId);
+  let tx = null;
+  try { tx = await kaspaTx(head.pool.transactionId); } catch {}
   const res = head.reserves;
   const state = {
     kasReserve: BigInt(res.kasReserve),
@@ -363,8 +396,16 @@ async function poolHead(tick, tokenCovidHex, poolCovidHex) {
     totalShares: BigInt(res.totalShares),
     lpCovid: hexBytes(res.lpCovid)
   };
-  const poolVal = txOutValue(tx, head.pool.index);
-  if (poolVal && poolVal % SCALE === 0n) state.kasReserve = poolVal / SCALE;
+  if (tx) {
+    try {
+      const poolVal = txOutValue(tx, head.pool.index);
+      if (poolVal && poolVal % SCALE === 0n) state.kasReserve = poolVal / SCALE;
+    } catch {}
+  }
+  let tokenVal = DUST;
+  if (tx) {
+    try { tokenVal = txOutValue(tx, head.poolToken.index); } catch {}
+  }
   return {
     poolCovid: hexBytes(poolCovidHex),
     utxo: {
@@ -374,7 +415,7 @@ async function poolHead(tick, tokenCovidHex, poolCovidHex) {
       tokenUtxo: {
         transactionId: head.poolToken.transactionId,
         index: Number(head.poolToken.index),
-        value: txOutValue(tx, head.poolToken.index)
+        value: tokenVal
       }
     }
   };

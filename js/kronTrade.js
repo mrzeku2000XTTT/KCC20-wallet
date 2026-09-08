@@ -433,12 +433,12 @@ async function poolHead(tick, tokenCovidHex, poolCovidHex) {
 
 async function curveHead(tick, token, entry) {
   const live = (await idxToken(tick).catch(() => null)) || token || {};
-  const tokenReserve = BigInt(live.cpState?.tokenReserve || live.tokenReserve || token?.tokenReserve || 0);
-  const indexerKas = BigInt(live.cpState?.realKas || 0);
+  const liveReserve = BigInt(live.cpState?.tokenReserve || live.tokenReserve || token?.tokenReserve || 0);
+  const indexerKas = BigInt(live.cpState?.realKas || live.reserveKas || 0);
   let trades = await idx('/token/' + encodeURIComponent(tick) + '/trades?limit=8');
-  const rows = Array.isArray(trades) ? trades : (trades ? [trades] : []);
+  const rows = (Array.isArray(trades) ? trades : (trades ? [trades] : [])).filter(r => r?.txid && r.kind !== 'pool');
   const genesis = entry?.extensions?.genesisTxid || live.genesisTxid;
-  if (genesis && !rows.some(r => r?.txid === genesis)) rows.push({ txid: genesis });
+  if (genesis && !rows.some(r => r?.txid === genesis)) rows.push({ txid: genesis, kind: 'curve' });
   let lastErr = new Error('No curve trades yet — cannot locate the live curve');
   for (const row of rows) {
     if (!row?.txid) continue;
@@ -455,17 +455,23 @@ async function curveHead(tick, token, entry) {
       const invOut = outs[1];
       const realKas = BigInt(curveOut?.amount ?? curveOut?.value ?? indexerKas);
       const invVal = BigInt(invOut?.amount ?? invOut?.value ?? DUST);
-      const tokenCovid = hexBytes(entry.covenantId || live.covenantId);
-      const curveCovid = hexBytes(entry.extensions?.curveCovenantId || live.curveCovenantId);
-      const tokenReserve = tpl.tokenReserve > 0n ? tpl.tokenReserve : BigInt(live.cpState?.tokenReserve || live.tokenReserve || token?.tokenReserve || 0);
+      const tokenCovid = tpl.script.slice(tpl.stateStart + 3, tpl.stateStart + 35);
+      // Input redeem is the PREVIOUS curve. Output 0 is the live unspent curve.
+      let tokenReserve = tpl.tokenReserve;
+      const vol = BigInt(Math.round(Number(row.volume || 0)));
+      const side = String(row.side || '').toLowerCase();
+      if (side === 'buy' && vol > 0n && vol < tokenReserve) tokenReserve -= vol;
+      else if (side === 'sell' && vol > 0n) tokenReserve += vol;
+      else if (liveReserve > 0n) tokenReserve = liveReserve;
+      if (tokenReserve <= 0n) throw new Error('curve tokenReserve missing');
       return {
         tpl,
-        curveCovid,
+        curveCovid: hexBytes(entry.extensions?.curveCovenantId || live.curveCovenantId),
         utxo: {
           transactionId: row.txid,
           index: 0,
           realKas,
-          state: { graduated: !!tpl.graduated, tokenCovid, tokenReserve }
+          state: { graduated: false, tokenCovid, tokenReserve }
         },
         inventory: {
           transactionId: row.txid,
@@ -536,13 +542,18 @@ function tokenRawFromHuman(human, decimals) {
 
 function kronEntryFromIdx(tick, token) {
   const t = String(tick).toUpperCase();
-  return findKronEntry(t) || {
+  const listed = findKronEntry(t);
+  if (listed) return listed;
+  return {
     symbol: t,
     decimals: Number(token.dec ?? token.decimals ?? 0),
     covenantId: token.covenantId,
     extensions: {
       graduated: !!token.graduated,
-      poolCovenantId: token.poolCovenantId || token.cpState?.poolCovenantId
+      poolCovenantId: token.poolCovenantId || token.cpState?.poolCovenantId,
+      curveCovenantId: token.curveCovenantId,
+      genesisTxid: token.genesisTxid,
+      curveParams: token.curveParams || token.extensions?.curveParams
     }
   };
 }

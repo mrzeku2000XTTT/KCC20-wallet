@@ -28,7 +28,7 @@ import {
 import { bootDappConnect, pingTttDappFrame, TTT_TREASURY } from './dappConnect.js?v=198';
 import { changenowEstimate, changenowCreate, changenowWidgetUrl, cnFrom } from './changenow.js?v=180';
 import { schedulePersistIframeVault, bootIframeVaultWatch } from './iframeVault.js?v=122';
-import { kronMarkets, quoteKronTrade, executeKronTrade, formatKasSompi, lookupKronTick, liveQuote, tradeCostLines, attachKronLogos, kronCandles, kronLogoFor, quoteKcc20Bridge, executeKcc20Bridge, formatTokenRaw } from './kronTrade.js?v=217';
+import { kronMarkets, quoteKronTrade, executeKronTrade, formatKasSompi, lookupKronTick, liveQuote, tradeCostLines, attachKronLogos, kronCandles, kronLogoFor, quoteKcc20Bridge, executeKcc20Bridge, formatTokenRaw } from './kronTrade.js?v=218';
 import {
   BET_AGENT_ADDR, TTT_TICK, WINDOW_MS, windowBounds, fmtRemain,
   kkdagsHeld, isKcc20Pass, hireCost, maxHireHours,
@@ -67,7 +67,7 @@ import {
   ksocialFeeKas
 } from './ksocial.js?v=206';
 
-export const BUILD = '217';
+export const BUILD = '218';
 const DESK_ID_KEY = 'kcc20_desk_id_v1';
 const DESK_VAULT_KEY = 'kcc20_desk_vault_v1';
 
@@ -8703,7 +8703,10 @@ async function reviewTrade() {
   });
 }
 
+let tradeBusy = false;
 async function runTrade({ tick, side, amount, quote, forceKasware = false }) {
+  if (tradeBusy) { toast('Swap already running'); return; }
+  tradeBusy = true;
   const kw = !!(forceKasware && kaswareEnabled());
   toast(kw ? 'Building KCC20 swap for KasWare…' : 'Building KRON swap…');
   try {
@@ -8806,6 +8809,8 @@ async function runTrade({ tick, side, amount, quote, forceKasware = false }) {
     }
     toast(msg);
     setSheetStatus(msg, true);
+  } finally {
+    tradeBusy = false;
   }
 }
 

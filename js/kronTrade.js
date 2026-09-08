@@ -798,10 +798,7 @@ function pickTokens(pieces, need, maxN) {
 export async function executeKronTrade({ wallet, tick, side, amount, utxos, onStatus, forceKasware = false }) {
   const k = await loadKaspaSdk();
   const wait = lastKronSubmitAt ? 5000 - (Date.now() - lastKronSubmitAt) : 0;
-  if (wait > 0) {
-    onStatus?.('Waiting for the last swap to land…');
-    await sleep(wait);
-  }
+  if (wait > 0) await sleep(wait);
   const resolved = await resolveKronTick(tick);
   const token = resolved.token;
   const entry = kronEntryFromIdx(tick, token);
@@ -979,13 +976,13 @@ async function trySubmit(rpc, tx, allowOrphan) {
 }
 
 function orphanHint() {
-  return 'The last swap is still landing. Reject leftover KasWare popups, wait a few seconds, tap Buy again for a fresh quote. Not a bad signature.';
+  return 'Tap Buy again in a few seconds. Reject leftover KasWare popups.';
 }
 
 async function submitKronSigned(rpc0, tx, onStatus, startUrl) {
   const rpc = rpc0;
   let last = null;
-  for (let n = 0; n < 6; n++) {
+  for (let n = 0; n < 5; n++) {
     try {
       const txId = await trySubmit(rpc, tx, true);
       if (txId && typeof txId === 'object') {
@@ -997,18 +994,17 @@ async function submitKronSigned(rpc0, tx, onStatus, startUrl) {
     } catch (e) {
       last = e;
       if (isSpentHead(e)) {
-        throw new Error('KRON pool already moved (usually the last buy just landed). Reject leftover popups, tap Buy again.');
+        throw new Error('Tap Buy again — the last swap already moved the pool.');
       }
       if (isFalseStack(e)) {
-        throw new Error('KasWare signature did not verify. Reject leftover popups, hard-refresh this wallet, tap Buy again.');
+        throw new Error('KasWare signature did not verify. Reject leftover popups, tap Buy again.');
       }
       if (!isOrphanReject(e) && n > 0) throw e;
-      onStatus?.('Waiting for the last swap to land on this node…');
-      await sleep(1500);
+      await sleep(1200);
     }
   }
   if (last && isOrphanReject(last)) throw new Error(orphanHint());
-  throw last || new Error('Node did not return a transaction id');
+  throw last || new Error('Broadcast failed. Tap Buy again.');
 }
 
 export function formatKasSompi(n) {

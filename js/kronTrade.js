@@ -7,7 +7,6 @@ import { kaswareSigning, signPsktWithKasware, fetchKaswareUtxos, repairSafeJson 
 const IDX = 'https://idx.kron.technology/v1/kcc20';
 const REG = 'https://api.kron.technology';
 const KASPA = 'https://api.kaspa.org';
-const KASPA_REST = ['https://api.kaspa.org', 'https://api.kaspa.ws'];
 const SCALE = 1_000_000n;
 const DUST = 50_000_000n;
 const NETWORK_EST = 40_000_000n; // ~0.40 KAS typical covenant mass fee
@@ -63,6 +62,16 @@ async function idxToken(tick) {
   let r = await idx('/token/' + encodeURIComponent(tick));
   if (Array.isArray(r)) r = r[0];
   return r || null;
+}
+
+function tokenIsGraduated(token, entry) {
+  return !!(
+    token?.graduated
+    || entry?.extensions?.graduated
+    || entry?.extensions?.poolCovenantId
+    || token?.poolCovenantId
+    || token?.cpState?.poolCovenantId
+  );
 }
 
 function tokenFromEntry(entry) {
@@ -310,42 +319,34 @@ function normalizeRpcTx(tx) {
   return { outputs: outs, inputs: ins, transaction_outputs: outs, transaction_inputs: ins };
 }
 
+async function fetchJsonMs(url, ms) {
+  const ac = new AbortController();
+  const t = setTimeout(() => ac.abort(), ms);
+  try {
+    const res = await fetch(url, { cache: 'no-store', signal: ac.signal });
+    if (!res.ok) throw new Error('HTTP ' + res.status);
+    return await res.json();
+  } finally {
+    clearTimeout(t);
+  }
+}
+
 async function kaspaTx(id) {
   const tid = String(id || '').replace(/^0x/i, '').toLowerCase();
   if (!/^[0-9a-f]{64}$/.test(tid)) throw new Error('Bad KRON pool tx id');
-  let last = null;
-  const bases = [...new Set([KASPA, ...KASPA_REST])];
-  for (const base of bases) {
-    for (let i = 0; i < 2; i++) {
-      try {
-        const ac = new AbortController();
-        const t = setTimeout(() => ac.abort(), 8000);
-        const res = await fetch(`${base}/transactions/${tid}?resolve_previous_outpoints=no`, {
-          cache: 'no-store',
-          signal: ac.signal
-        });
-        clearTimeout(t);
-        if (!res.ok) throw new Error('Kaspa tx lookup HTTP ' + res.status);
-        return await res.json();
-      } catch (e) {
-        last = e;
-        await new Promise(r => setTimeout(r, 200 * (i + 1)));
-      }
-    }
-  }
-  try {
+  const rest = fetchJsonMs(`${KASPA}/transactions/${tid}?resolve_previous_outpoints=no`, 4000);
+  const rpcP = (async () => {
     const { rpc } = await connectPublicNode();
     const r = await rpc.getTransaction({ transactionId: tid, includeBlockVerboseData: false });
     const tx = r?.transaction || r;
-    if (tx) return normalizeRpcTx(tx);
-  } catch (e) {
-    last = e;
+    if (!tx) throw new Error('empty rpc tx');
+    return normalizeRpcTx(tx);
+  })();
+  try {
+    return await Promise.any([rest, rpcP]);
+  } catch {
+    throw new Error('Could not load the KRON market tx. Turn VPN off if it is on, tap Buy again.');
   }
-  const m = errText(last);
-  if (/failed to fetch|networkerror|load failed|abort/i.test(m)) {
-    throw new Error('Could not load the KRON pool tx (api.kaspa.org blocked). Turn VPN off if it is on, tap Buy again.');
-  }
-  throw last || new Error('Kaspa tx lookup failed');
 }
 
 function txOutValue(tx, index) {
@@ -421,6 +422,39 @@ async function poolHead(tick, tokenCovidHex, poolCovidHex) {
   };
 }
 
+async function curveHeadFromTx(row, token, entry, live, tokenReserve, indexerKas) {
+  const tx = await kaspaTx(row.txid);
+  const ins = tx.inputs || tx.transaction_inputs || [];
+  const sig = ins[0]?.signature_script || ins[0]?.signatureScript || '';
+  const redeem = lastPush(sig);
+  if (!redeem || redeem.length < 80) throw new Error('no redeem');
+  const tpl = decodeCurveRedeem(redeem);
+  tpl.params = curveParams(entry);
+  const outs = tx.outputs || tx.transaction_outputs || [];
+  const curveOut = outs[0];
+  const invOut = outs[1];
+  const realKas = BigInt(curveOut?.amount ?? curveOut?.value ?? indexerKas);
+  const invVal = BigInt(invOut?.amount ?? invOut?.value ?? DUST);
+  const tokenCovid = hexBytes(entry.covenantId || live.covenantId);
+  const curveCovid = hexBytes(entry.extensions?.curveCovenantId || live.curveCovenantId);
+  return {
+    tpl,
+    curveCovid,
+    utxo: {
+      transactionId: row.txid,
+      index: 0,
+      realKas,
+      state: { graduated: false, tokenCovid, tokenReserve }
+    },
+    inventory: {
+      transactionId: row.txid,
+      index: 1,
+      value: invVal,
+      amount: tokenReserve
+    }
+  };
+}
+
 async function curveHead(tick, token, entry) {
   const live = (await idxToken(tick).catch(() => null)) || token || {};
   const tokenReserve = BigInt(live.cpState?.tokenReserve || live.tokenReserve || token?.tokenReserve || 0);
@@ -429,45 +463,13 @@ async function curveHead(tick, token, entry) {
   const rows = Array.isArray(trades) ? trades : (trades ? [trades] : []);
   const genesis = entry?.extensions?.genesisTxid || live.genesisTxid;
   if (genesis && !rows.some(r => r?.txid === genesis)) rows.push({ txid: genesis });
-  let lastErr = new Error('No curve trades yet — cannot locate the live curve');
-  for (const row of rows) {
-    if (!row?.txid) continue;
-    try {
-      const tx = await kaspaTx(row.txid);
-      const ins = tx.inputs || tx.transaction_inputs || [];
-      const sig = ins[0]?.signature_script || ins[0]?.signatureScript || '';
-      const redeem = lastPush(sig);
-      if (!redeem || redeem.length < 80) throw new Error('no redeem');
-      const tpl = decodeCurveRedeem(redeem);
-      tpl.params = curveParams(entry);
-      const outs = tx.outputs || tx.transaction_outputs || [];
-      const curveOut = outs[0];
-      const invOut = outs[1];
-      const realKas = BigInt(curveOut?.amount ?? curveOut?.value ?? indexerKas);
-      const invVal = BigInt(invOut?.amount ?? invOut?.value ?? DUST);
-      const tokenCovid = hexBytes(entry.covenantId || live.covenantId);
-      const curveCovid = hexBytes(entry.extensions?.curveCovenantId || live.curveCovenantId);
-      return {
-        tpl,
-        curveCovid,
-        utxo: {
-          transactionId: row.txid,
-          index: 0,
-          realKas,
-          state: { graduated: false, tokenCovid, tokenReserve }
-        },
-        inventory: {
-          transactionId: row.txid,
-          index: 1,
-          value: invVal,
-          amount: tokenReserve
-        }
-      };
-    } catch (e) {
-      lastErr = e;
-    }
+  const tries = rows.filter(r => r?.txid).slice(0, 4);
+  if (!tries.length) throw new Error('No curve trades yet — cannot locate the live curve');
+  try {
+    return await Promise.any(tries.map(row => curveHeadFromTx(row, token, entry, live, tokenReserve, indexerKas)));
+  } catch {
+    throw new Error('Could not load the KRON curve tx. Turn VPN off if it is on, tap Buy again.');
   }
-  throw lastErr;
 }
 
 function withCost(q) {
@@ -541,7 +543,7 @@ export async function quoteKronTrade({ tick, side, amount }) {
   const token = resolved.token;
   const entry = kronEntryFromIdx(tick, token);
   if (!entry?.covenantId && !token?.covenantId) throw new Error(tick + ' is not a launched KRON KCC20');
-  const graduated = !!(token.graduated || entry.extensions?.graduated);
+  const graduated = tokenIsGraduated(token, entry);
   const decimals = Number(entry.decimals ?? token.dec ?? token.decimals ?? 0);
   if (side === 'buy') {
     const kasIn = sompiFromKas(amount);
@@ -837,31 +839,33 @@ function pickTokens(pieces, need, maxN) {
 
 export async function executeKronTrade({ wallet, tick, side, amount, utxos, onStatus, forceKasware = false }) {
   const k = await loadKaspaSdk();
+  onStatus?.('Connecting to Kaspa…');
+  const { rpc, url: nodeUrl } = await connectTradeNode(k);
   const resolved = await resolveKronTick(tick);
   const token = resolved.token;
   const entry = kronEntryFromIdx(tick, token);
   if (!entry?.covenantId && !token?.covenantId) throw new Error(tick + ' is not a launched KRON KCC20');
-  const graduated = !!(token.graduated || entry.extensions?.graduated);
   const desc = await descriptor(entry.covenantId || token.covenantId);
   const tokenTpl = templateFromPart(desc.token);
   const buyer = xOnly(wallet);
   onStatus?.('Quoting on KRON…');
   const quoted = await quoteKronTrade({ tick, side, amount });
+  const graduated = !!(quoted.graduated || tokenIsGraduated(token, entry));
 
   let spend;
   let merge = [];
   if (quoted.side === 'buy') {
-    try { merge = (await loadUserTokens(tick, wallet.address, { limit: 2, withKas: true })).slice(0, 2); } catch { merge = []; }
+    try { merge = (await loadUserTokens(tick, wallet.address, { limit: 2, withKas: false })).slice(0, 2); } catch { merge = []; }
   }
   const presence = merge.length ? 2 + merge.length : 0;
-  if (quoted.side === 'buy' && quoted.graduated) {
+  if (quoted.side === 'buy' && graduated) {
     onStatus?.('Loading pool…');
     const live = await poolHead(tick, entry.covenantId, entry.extensions.poolCovenantId);
     const poolTpl = templateFromPart(desc.pool);
     spend = kron.poolCpV3.buildPoolV3SwapKasForToken(
       k, poolTpl, tokenTpl, poolParams(entry), live.utxo, live.poolCovid, buyer, quoted.raw, merge, presence
     );
-  } else if (quoted.side === 'sell' && quoted.graduated) {
+  } else if (quoted.side === 'sell' && graduated) {
     onStatus?.('Loading pool…');
     const [live, held] = await Promise.all([
       poolHead(tick, entry.covenantId, entry.extensions.poolCovenantId),
@@ -891,9 +895,6 @@ export async function executeKronTrade({ wallet, tick, side, amount, utxos, onSt
       k, head.tpl, tokenTpl, head.utxo, picked, head.inventory, head.curveCovid, buyer, quoted.tokenIn, quoted.kasOut, presence
     );
   }
-
-  onStatus?.('Connecting to Kaspa…');
-  const { rpc, url: nodeUrl } = await connectTradeNode(k);
 
   onStatus?.('Selecting KAS UTXOs…');
   const useKw = !!(forceKasware || kaswareSigning(wallet));

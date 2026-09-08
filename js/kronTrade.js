@@ -18,6 +18,7 @@ const descCache = new Map();
 const LAST_POOL_TTL = 120_000;
 const lastPoolByTick = new Map();
 let lastFund = null;
+let lastTradeNodeUrl = '';
 
 function normTxId(v) {
   if (v == null) return '';
@@ -50,16 +51,18 @@ function chainedPool(tick) {
   return row;
 }
 
-function rememberLastPool({ tick, txId, live, quoted }) {
+function rememberLastPool({ tick, txId, live, quoted, nodeUrl }) {
   if (!quoted?.graduated || !quoted.raw || !live?.utxo) return;
   const q = quoted.raw;
   if (q.newKas == null || q.newToken == null) return;
   const st = live.utxo.state || {};
   const id = normTxId(txId);
   if (!id) return;
+  if (nodeUrl) lastTradeNodeUrl = nodeUrl;
   lastPoolByTick.set(String(tick).toUpperCase(), {
     at: Date.now(),
     txId: id,
+    nodeUrl: nodeUrl || lastTradeNodeUrl || '',
     poolCovid: live.poolCovid,
     spentPool: {
       transactionId: live.utxo.transactionId,
@@ -129,29 +132,10 @@ async function withTimeout(promise, ms, msg) {
   } finally { clearTimeout(t); }
 }
 
-async function waitForTx(rpc, txId, address, ms) {
-  const id = normTxId(txId);
-  if (!id || !rpc) return false;
-  const t0 = Date.now();
-  while (Date.now() - t0 < ms) {
-    try {
-      const r = await withTimeout(rpc.getMempoolEntry({
-        transactionId: id,
-        includeOrphanPool: true,
-        filterTransactionPool: false
-      }), 3000, 'mempool');
-      if (r?.mempoolEntry) return true;
-    } catch {}
-    if (address) {
-      try {
-        const res = await withTimeout(rpc.getUtxosByAddresses({ addresses: [address] }), 4000, 'utxos');
-        const rows = [...(res?.entries || [])];
-        if (rows.some(e => normTxId(e.outpoint?.transactionId) === id)) return true;
-      } catch {}
-    }
-    await sleep(400);
-  }
-  return false;
+async function sameNodeSocket(url) {
+  const prefer = String(url || lastTradeNodeUrl || '');
+  if (!prefer) return connectPublicNode();
+  return connectPublicNode({ force: true, prefer, only: true });
 }
 
 function hexBytes(h) {
@@ -963,16 +947,12 @@ export async function executeKronTrade({ wallet, tick, side, amount, utxos, onSt
   const key = tradeKey(tick, side, amount);
   if (pendingSigned && pendingSigned.key === key && Date.now() - pendingSigned.at < 90_000) {
     onStatus?.('Broadcasting KRON trade…');
-    const { rpc, url: nodeUrl } = await connectTradeNode(k);
+    const { rpc, url: nodeUrl } = await sameNodeSocket(pendingSigned.nodeUrl || lastTradeNodeUrl);
     try {
-      const txId = await submitKronSigned(rpc, pendingSigned.tx, onStatus, nodeUrl, {
-        parentId: pendingSigned.parentId,
-        chained: !!pendingSigned.chained,
-        address: wallet.address
-      });
+      const txId = await submitKronSigned(rpc, pendingSigned.tx, onStatus, nodeUrl);
       const kept = pendingSigned;
       pendingSigned = null;
-      if (kept.live) rememberLastPool({ tick: kept.quoted.tick, txId, live: kept.live, quoted: kept.quoted });
+      if (kept.live) rememberLastPool({ tick: kept.quoted.tick, txId, live: kept.live, quoted: kept.quoted, nodeUrl });
       rememberLastFund({
         address: wallet.address,
         txId,
@@ -1044,9 +1024,18 @@ export async function executeKronTrade({ wallet, tick, side, amount, utxos, onSt
   }
 
   onStatus?.('Connecting to Kaspa…');
-  const { rpc, url: nodeUrl } = await connectTradeNode(k);
   const chained = chainedPool(quoted.tick);
-  if (chained?.txId) await waitForTx(rpc, chained.txId, wallet.address, 12000);
+  let rpc, nodeUrl;
+  if (chained?.txId) {
+    const next = await sameNodeSocket(chained.nodeUrl || lastTradeNodeUrl);
+    rpc = next.rpc;
+    nodeUrl = next.url;
+  } else {
+    const next = await connectTradeNode(k);
+    rpc = next.rpc;
+    nodeUrl = next.url;
+  }
+  if (nodeUrl) lastTradeNodeUrl = nodeUrl;
 
   onStatus?.('Selecting KAS UTXOs…');
   const useKw = !!(forceKasware || kaswareSigning(wallet));
@@ -1141,15 +1130,12 @@ export async function executeKronTrade({ wallet, tick, side, amount, utxos, onSt
     fee,
     signer,
     chained: !!chained,
-    parentId: chained?.txId || ''
-  };
-  const txId = await submitKronSigned(rpc, asm.transaction, onStatus, nodeUrl, {
     parentId: chained?.txId || '',
-    address: wallet.address,
-    chained: !!chained
-  });
+    nodeUrl
+  };
+  const txId = await submitKronSigned(rpc, asm.transaction, onStatus, nodeUrl);
   pendingSigned = null;
-  if (liveHead) rememberLastPool({ tick: quoted.tick, txId, live: liveHead, quoted });
+  if (liveHead) rememberLastPool({ tick: quoted.tick, txId, live: liveHead, quoted, nodeUrl });
   rememberLastFund({
     address: wallet.address,
     txId,
@@ -1212,18 +1198,18 @@ async function trySubmit(rpc, tx, allowOrphan) {
   }
 }
 
-async function submitKronSigned(rpc0, tx, onStatus, startUrl, opts = {}) {
+async function submitKronSigned(rpc0, tx, onStatus, startUrl) {
   let rpc = rpc0;
-  let url = startUrl || '';
-  const parentId = opts.chained ? opts.parentId : null;
-  if (parentId) await waitForTx(rpc, parentId, opts.address, 8000);
+  let url = startUrl || lastTradeNodeUrl || '';
   let last = null;
-  for (let n = 0; n < 8; n++) {
+  for (let n = 0; n < 6; n++) {
     try {
-      if (parentId) await waitForTx(rpc, parentId, opts.address, 2000);
       const txId = await trySubmit(rpc, tx, true);
       const id = normTxId(txId);
-      if (id) return id;
+      if (id) {
+        if (url) lastTradeNodeUrl = url;
+        return id;
+      }
       last = new Error('Node did not return a transaction id');
     } catch (e) {
       last = e;
@@ -1235,16 +1221,17 @@ async function submitKronSigned(rpc0, tx, onStatus, startUrl, opts = {}) {
         pendingSigned = null;
         throw new Error('KasWare signature did not verify. Tap Buy once more.');
       }
-      if (isSubmitTimeout(e) && url) {
+      if ((isSubmitTimeout(e) || isOrphanReject(e)) && url) {
         try {
-          const next = await connectPublicNode({ force: true, prefer: url, only: true });
+          const next = await sameNodeSocket(url);
           rpc = next.rpc;
           url = next.url || url;
         } catch {}
+        await sleep(400);
         continue;
       }
       if (!isOrphanReject(e) && !isSubmitTimeout(e) && n > 0) throw e;
-      await sleep(800);
+      await sleep(400);
     }
   }
   if (last && (isOrphanReject(last) || isSubmitTimeout(last))) {

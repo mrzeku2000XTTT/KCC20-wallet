@@ -1,7 +1,7 @@
 /* KRON DEX trades via @kronsdk/kron-sdk (v0.17.2). Quotes + builders from the SDK;
    templates from the CORS-open token descriptor; live heads from idx.kron.technology. */
 import * as kron from '../vendor/kron-sdk/index.js';
-import { loadKaspaSdk, connectPublicNode, fetchAddressUtxos, toRpcTransaction } from './tx.js?v=215';
+import { loadKaspaSdk, connectPublicNode, disconnectRpc, fetchAddressUtxos, toRpcTransaction } from './tx.js?v=216';
 import { kaswareSigning, signPsktWithKasware, fetchKaswareUtxos, repairSafeJson } from './kasware.js?v=214';
 
 const IDX = 'https://idx.kron.technology/v1/kcc20';
@@ -752,7 +752,8 @@ function assembleSpend(k, spend, fundingEntries, changeAddress, networkFee) {
 }
 
 async function connectTradeNode(k) {
-  return connectPublicNode();
+  try { await disconnectRpc(); } catch {}
+  return connectPublicNode({ force: true });
 }
 
 async function loadUserTokens(tick, address, { limit = 4, withKas = true } = {}) {

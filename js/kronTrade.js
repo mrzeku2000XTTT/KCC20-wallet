@@ -1,5 +1,5 @@
-/* KRON DEX trades via @kronsdk/kron-sdk (v0.17.2). Quotes + builders from the SDK;
-   templates from the CORS-open token descriptor; live heads from idx.kron.technology. */
+/* KRON DEX trades via @kronsdk/kron-sdk (v0.18.2). Quotes + builders from the SDK;
+   templates via fetchCpTemplates (recipient-bound ABI); live heads from idx + last trade UTXO. */
 import * as kron from '../vendor/kron-sdk/index.js';
 import { loadKaspaSdk, connectPublicNode, disconnectRpc, fetchAddressUtxos, toRpcTransaction } from './tx.js?v=220';
 import { kaswareSigning, signPsktWithKasware, fetchKaswareUtxos, repairSafeJson } from './kasware.js?v=214';
@@ -15,6 +15,7 @@ const PARTNER_REF = 'kcc20wallet';
 let listCache = null;
 let listAt = 0;
 const descCache = new Map();
+const tplCache = new Map();
 
 function errText(e) {
   if (e == null) return 'Unknown error';
@@ -371,22 +372,45 @@ function txOutValue(tx, index) {
 }
 
 function lastPush(hex) {
+  const pushes = scriptPushes(hex);
+  return pushes.length ? pushes[pushes.length - 1] : null;
+}
+
+function scriptPushes(hex) {
   const b = hexBytes(hex);
+  const out = [];
   let i = 0;
-  let best = null;
   while (i < b.length) {
     const op = b[i++];
+    if (op === 0) { out.push(new Uint8Array(0)); continue; }
+    if (op >= 81 && op <= 96) { out.push(Uint8Array.of(op - 80)); continue; }
     let n = 0;
     if (op > 0 && op <= 75) n = op;
     else if (op === 76) n = b[i++];
     else if (op === 77) { n = b[i] | (b[i + 1] << 8); i += 2; }
     else if (op === 78) { n = b[i] | (b[i + 1] << 8) | (b[i + 2] << 16) | (b[i + 3] << 24); i += 4; }
     else continue;
-    const slice = b.slice(i, i + n);
+    out.push(b.slice(i, i + n));
     i += n;
-    if (!best || slice.length >= best.length) best = slice;
   }
-  return best;
+  return out;
+}
+
+function scriptInt(bytes) {
+  if (!bytes || !bytes.length) return 0n;
+  let n = 0n;
+  for (let i = 0; i < bytes.length; i++) n |= BigInt(bytes[i]) << BigInt(8 * i);
+  return n;
+}
+
+function tokenDeltaFromCurveSig(sigHex, side) {
+  const pushes = scriptPushes(sigHex);
+  if (pushes.length < 3) return 0n;
+  const a = scriptInt(pushes[0]);
+  const b = scriptInt(pushes[1]);
+  if (side === 'buy') return b;
+  if (side === 'sell') return a;
+  return 0n;
 }
 
 function decodeCurveRedeem(redeem) {
@@ -431,6 +455,22 @@ async function poolHead(tick, tokenCovidHex, poolCovidHex) {
   };
 }
 
+async function loadCpTemplates(entry) {
+  const covid = entry.covenantId;
+  if (!covid) throw new Error('Token covenant id missing');
+  if (tplCache.has(covid)) return tplCache.get(covid);
+  const curveParamsRaw = entry.extensions?.curveParams;
+  if (!curveParamsRaw) throw new Error('No KRON curve params for this token');
+  const tpls = await kron.client.fetchCpTemplates({
+    baseUrl: REG,
+    tokenCovid: covid,
+    curveParams: curveParamsRaw,
+    templateVersion: entry.extensions?.templateVersion ?? null
+  });
+  tplCache.set(covid, tpls);
+  return tpls;
+}
+
 async function curveHead(tick, token, entry) {
   const live = (await idxToken(tick).catch(() => null)) || token || {};
   const liveReserve = BigInt(live.cpState?.tokenReserve || live.tokenReserve || token?.tokenReserve || 0);
@@ -440,32 +480,32 @@ async function curveHead(tick, token, entry) {
   const genesis = entry?.extensions?.genesisTxid || live.genesisTxid;
   if (genesis && !rows.some(r => r?.txid === genesis)) rows.push({ txid: genesis, kind: 'curve' });
   let lastErr = new Error('No curve trades yet — cannot locate the live curve');
+  const tokenCovid = hexBytes(entry.covenantId || live.covenantId);
   for (const row of rows) {
     if (!row?.txid) continue;
     try {
       const tx = await kaspaTx(row.txid);
-      const ins = tx.inputs || tx.transaction_inputs || [];
-      const sig = ins[0]?.signature_script || ins[0]?.signatureScript || '';
-      const redeem = lastPush(sig);
-      if (!redeem || redeem.length < 80) throw new Error('no redeem');
-      const tpl = decodeCurveRedeem(redeem);
-      tpl.params = curveParams(entry);
       const outs = tx.outputs || tx.transaction_outputs || [];
       const curveOut = outs[0];
       const invOut = outs[1];
       const realKas = BigInt(curveOut?.amount ?? curveOut?.value ?? indexerKas);
       const invVal = BigInt(invOut?.amount ?? invOut?.value ?? DUST);
-      const tokenCovid = tpl.script.slice(tpl.stateStart + 3, tpl.stateStart + 35);
-      // Input redeem is the PREVIOUS curve. Output 0 is the live unspent curve.
-      let tokenReserve = tpl.tokenReserve;
-      const vol = BigInt(Math.round(Number(row.volume || 0)));
-      const side = String(row.side || '').toLowerCase();
-      if (side === 'buy' && vol > 0n && vol < tokenReserve) tokenReserve -= vol;
-      else if (side === 'sell' && vol > 0n) tokenReserve += vol;
-      else if (liveReserve > 0n) tokenReserve = liveReserve;
+      const ins = tx.inputs || tx.transaction_inputs || [];
+      const sig = ins[0]?.signature_script || ins[0]?.signatureScript || '';
+      let tokenReserve = 0n;
+      const redeem = lastPush(sig);
+      if (redeem && redeem.length >= 80) {
+        try {
+          const prev = decodeCurveRedeem(redeem);
+          const side = String(row.side || '').toLowerCase();
+          const delta = tokenDeltaFromCurveSig(sig, side);
+          if (side === 'buy' && delta > 0n && delta < prev.tokenReserve) tokenReserve = prev.tokenReserve - delta;
+          else if (side === 'sell' && delta > 0n) tokenReserve = prev.tokenReserve + delta;
+        } catch {}
+      }
+      if (tokenReserve <= 0n && liveReserve > 0n) tokenReserve = liveReserve;
       if (tokenReserve <= 0n) throw new Error('curve tokenReserve missing');
       return {
-        tpl,
         curveCovid: hexBytes(entry.extensions?.curveCovenantId || live.curveCovenantId),
         utxo: {
           transactionId: row.txid,
@@ -553,7 +593,8 @@ function kronEntryFromIdx(tick, token) {
       poolCovenantId: token.poolCovenantId || token.cpState?.poolCovenantId,
       curveCovenantId: token.curveCovenantId,
       genesisTxid: token.genesisTxid,
-      curveParams: token.curveParams || token.extensions?.curveParams
+      curveParams: token.curveParams || token.extensions?.curveParams,
+      templateVersion: token.templateVersion || token.extensions?.templateVersion
     }
   };
 }
@@ -894,8 +935,8 @@ export async function executeKronTrade({ wallet, tick, side, amount, utxos, onSt
   const entry = kronEntryFromIdx(tick, token);
   if (!entry?.covenantId && !token?.covenantId) throw new Error(tick + ' is not a launched KRON KCC20');
   const graduated = !!(token.graduated || entry.extensions?.graduated);
-  const desc = await descriptor(entry.covenantId || token.covenantId);
-  const tokenTpl = templateFromPart(desc.token);
+  const tpls = await loadCpTemplates(entry);
+  const tokenTpl = tpls.token;
   const buyer = xOnly(wallet);
   onStatus?.('Quoting on KRON…');
   const quoted = await quoteKronTrade({ tick, side, amount });
@@ -905,7 +946,7 @@ export async function executeKronTrade({ wallet, tick, side, amount, utxos, onSt
   if (quoted.side === 'buy' && quoted.graduated) {
     try { merge = (await loadUserTokens(tick, wallet.address, { limit: 2, withKas: true })).filter(p => p?.state?.amount > 0n).slice(0, 2); } catch { merge = []; }
   }
-  const presence = merge.length ? 2 + merge.length : 0;
+  const presence = 2 + merge.length;
   if (quoted.side === 'buy' && quoted.graduated) {
     onStatus?.('Loading pool…');
     const live = await poolHead(tick, entry.covenantId, entry.extensions.poolCovenantId);
@@ -916,9 +957,8 @@ export async function executeKronTrade({ wallet, tick, side, amount, utxos, onSt
     quoted.fee = qLive.creatorOut + qLive.platformOut;
     quoted.total = qLive.total;
     withCost(quoted);
-    const poolTpl = templateFromPart(desc.pool);
     spend = kron.poolCpV3.buildPoolV3SwapKasForToken(
-      k, poolTpl, tokenTpl, poolParams(entry), live.utxo, live.poolCovid, buyer, qLive, merge, presence
+      k, tpls.pool, tokenTpl, poolParams(entry), live.utxo, live.poolCovid, buyer, qLive, merge, presence
     );
   } else if (quoted.side === 'sell' && quoted.graduated) {
     onStatus?.('Loading pool…');
@@ -926,11 +966,10 @@ export async function executeKronTrade({ wallet, tick, side, amount, utxos, onSt
       poolHead(tick, entry.covenantId, entry.extensions.poolCovenantId),
       loadUserTokens(tick, wallet.address, { limit: 4, withKas: true })
     ]);
-    const poolTpl = templateFromPart(desc.pool);
     const picked = pickTokens(held, quoted.tokenIn, 3);
-    const presence = 2 + picked.length;
+    const sellPresence = 2 + picked.length;
     spend = kron.poolCpV3.buildPoolV3SwapTokenForKas(
-      k, poolTpl, tokenTpl, poolParams(entry), live.utxo, live.poolCovid, buyer, picked, quoted.raw, presence
+      k, tpls.pool, tokenTpl, poolParams(entry), live.utxo, live.poolCovid, buyer, picked, quoted.raw, sellPresence
     );
   } else if (quoted.side === 'buy') {
     onStatus?.('Loading curve…');
@@ -943,7 +982,7 @@ export async function executeKronTrade({ wallet, tick, side, amount, utxos, onSt
     quoted.raw = qLive;
     withCost(quoted);
     spend = kron.curveCp.buildCpBuy(
-      k, head.tpl, tokenTpl, head.utxo, head.inventory, head.curveCovid, buyer, qLive.kasIn, qLive.tokenOut, merge, presence
+      k, tpls.curve, tokenTpl, head.utxo, head.inventory, head.curveCovid, buyer, qLive.kasIn, qLive.tokenOut, merge, presence
     );
   } else {
     onStatus?.('Loading curve…');
@@ -958,9 +997,9 @@ export async function executeKronTrade({ wallet, tick, side, amount, utxos, onSt
     quoted.fee = qLive.fee;
     quoted.raw = qLive;
     const picked = pickTokens(held, qLive.tokenIn, 3);
-    const presence = 2 + picked.length;
+    const sellPresence = 2 + picked.length;
     spend = kron.curveCp.buildCpSell(
-      k, head.tpl, tokenTpl, head.utxo, picked, head.inventory, head.curveCovid, buyer, qLive.tokenIn, qLive.kasOut, presence
+      k, tpls.curve, tokenTpl, head.utxo, picked, head.inventory, head.curveCovid, buyer, qLive.tokenIn, qLive.kasOut, sellPresence
     );
   }
 

@@ -390,6 +390,7 @@ function selectCovenantTokenOutpoint(entries, expectedOutpoint, expectedCovid) {
 var kcc20Tx_exports = {};
 __export(kcc20Tx_exports, {
   IDENTIFIER: () => IDENTIFIER,
+  MAX_WITNESS_IDX: () => MAX_WITNESS_IDX,
   addressPresenceOwned: () => addressPresenceOwned,
   buildKcc20Send: () => buildKcc20Send,
   covenantIdOwned: () => covenantIdOwned,
@@ -486,12 +487,24 @@ function pushKcc20States(b, states) {
 }
 function transferSigScript(k, redeem, newStates, witnesses, sigs = []) {
   if (newStates.length < 1) throw new Error("transfer requires at least one output state");
+  const witnessBytes = encodeWitnesses(witnesses);
   const b = new SigScriptBuilder(k);
   pushKcc20States(b, newStates);
   b.column(sigs);
-  b.data(Uint8Array.from(witnesses, (w) => w & 255));
+  b.data(witnessBytes);
   b.redeem(redeem);
   return b.drain();
+}
+var MAX_WITNESS_IDX = 127;
+function encodeWitnesses(witnesses) {
+  witnesses.forEach((w, i) => {
+    if (!Number.isInteger(w) || w < 0 || w > MAX_WITNESS_IDX) {
+      throw new Error(
+        `witnesses[${i}] = ${w} is not a usable input index \u2014 must be an integer in [0, ${MAX_WITNESS_IDX}]. KCC-20 witness indices are single bytes and 0x80..0xff decode on-chain as negative script numbers, so an index >= 128 can never authorize an input. Check the presenceWitnessIdx you passed.`
+      );
+    }
+  });
+  return Uint8Array.from(witnesses);
 }
 function buildKcc20Send(k, tpl, senderTokens, recipientPubkey32, sendAmount, presenceWitnessIdx, tokenCovid, opts = {}) {
   if (senderTokens.length < 1) throw new Error("send requires at least one token UTXO");
@@ -532,8 +545,26 @@ __export(curveCpTx_exports, {
   cpSpk: () => cpSpk,
   cpSpkForState: () => cpSpkForState,
   materializeCpScript: () => materializeCpScript,
-  p2pkSpk: () => p2pkSpk
+  p2pkSpk: () => p2pkSpk2
 });
+
+// src/native/abiGuard.ts
+var warned = /* @__PURE__ */ new Set();
+var silenced = () => globalThis.KRON_SDK_SILENCE_ABI_WARNINGS === true;
+function resolveRecipientBound(flag, builder, echoField) {
+  if (flag === void 0 && !warned.has(builder) && !silenced()) {
+    warned.add(builder);
+    console.warn(
+      `[kron-sdk] ${builder}: template.recipientBound is unset \u2014 building the LEGACY covenant ABI.
+  Correct for legacy schemas. On a recipient-bound schema the node REJECTS the tx with
+  "failed to verify the signature script: ... pick at an invalid location".
+  Fix: hydrate templates with client.fetchCpTemplates() (or client.shapeCpTemplates() if you fetch
+  yourself) so the flag comes from the compiler echo's \`${echoField}\`. Set recipientBound:false
+  explicitly to assert a legacy schema and silence this. (All: globalThis.KRON_SDK_SILENCE_ABI_WARNINGS = true)`
+    );
+  }
+  return flag === true;
+}
 
 // src/native/poolCpTx.ts
 var poolCpTx_exports = {};
@@ -588,6 +619,11 @@ var poolCpSpkForState = (k, tpl, state) => poolCpSpk(k, materializePoolCpScript(
 function poolCpAddress(k, tpl, state, network) {
   return k.addressFromScriptPublicKey(poolCpSpkForState(k, tpl, state), network)?.toString() ?? "";
 }
+var p2pkSpk = (k, pubkey) => {
+  const sb = new k.ScriptBuilder();
+  sb.addData(pubkey).addOp(172);
+  return new k.ScriptPublicKey(0, sb.drain());
+};
 function retainKasUnits(kasUnits, state, p) {
   const weight = p.lpFeeBps * (state.totalShares - p.lockedShares);
   if (weight <= 0n) return 0n;
@@ -659,30 +695,33 @@ function removeMinDShares(state) {
   const minTok = ceilDiv3(state.totalShares, state.tokenReserve);
   return minKas < minTok ? minKas : minTok;
 }
-function snapRemoveDShares(state, desiredDShares) {
-  if (desiredDShares <= 0n || desiredDShares < removeMinDShares(state)) return 0n;
+function snapRemoveDShares(state, desiredDShares, opts = {}) {
+  if (desiredDShares <= 0n) return 0n;
+  if (!opts.allowZeroPayout && desiredDShares < removeMinDShares(state)) return 0n;
   return desiredDShares;
 }
-function quoteRemoveLiquidity(state, p, dShares) {
+function quoteRemoveLiquidity(state, p, dShares, opts = {}) {
   if (dShares <= 0n) throw new Error("dShares must be positive");
   if (state.totalShares - dShares < p.lockedShares) throw new Error("removal would dip below the permanently-locked floor");
   const dKas = state.kasReserve * dShares / state.totalShares;
   const dToken = state.tokenReserve * dShares / state.totalShares;
-  if (dKas === 0n && dToken === 0n) throw new Error("withdrawal too small: both payout sides round to zero");
+  if (dKas === 0n && dToken === 0n && !opts.allowZeroPayout) throw new Error("withdrawal too small: both payout sides round to zero");
   return { dShares, dKas, dToken, newKas: state.kasReserve - dKas, newToken: state.tokenReserve - dToken, newShares: state.totalShares - dShares };
 }
-function addLiquiditySig(k, redeem, dKas, dToken, dShares, poolTokenOut, poolLpOut, lpSharesOut) {
+function addLiquiditySig(k, redeem, dKas, dToken, dShares, poolTokenOut, poolLpOut, lpSharesOut, recipient) {
   const b = new SigScriptBuilder(k).int(dKas).int(dToken).int(dShares);
   pushKcc20StateScalar(b, poolTokenOut);
   pushKcc20StateScalar(b, poolLpOut);
   pushKcc20StateScalar(b, lpSharesOut);
+  if (recipient) b.int(BigInt(recipient.witness)).data(recipient.pubkey);
   return b.selector(POOL_CP_SELECTOR.addLiquidity).redeem(redeem).drain();
 }
-function removeLiquiditySig(k, redeem, dShares, dKas, dToken, poolTokenOut, lpTokenOut, poolLpOut) {
+function removeLiquiditySig(k, redeem, dShares, dKas, dToken, poolTokenOut, lpTokenOut, poolLpOut, recipient) {
   const b = new SigScriptBuilder(k).int(dShares).int(dKas).int(dToken);
   pushKcc20StateScalar(b, poolTokenOut);
   pushKcc20StateScalar(b, lpTokenOut);
   pushKcc20StateScalar(b, poolLpOut);
+  if (recipient) b.int(BigInt(recipient.witness)).data(recipient.pubkey);
   return b.selector(POOL_CP_SELECTOR.removeLiquidity).redeem(redeem).drain();
 }
 function buildAddLiquidity(k, tpl, tokenTpl, utxo, lpInventory, poolCovid, lpDepositToken, lpPubkey, q, presenceWitnessIdx, opts) {
@@ -690,13 +729,22 @@ function buildAddLiquidity(k, tpl, tokenTpl, utxo, lpInventory, poolCovid, lpDep
     throw new Error(`Refusing to build addLiquidity: pool LP-bind integrity is ${opts?.lpBindVerified === false ? "FAILED (counterfeit shares could drain your deposit)" : "UNVERIFIED"}. Await IndexerClient.assertLpBindSafe(tick), then pass the fetched verdict as opts.lpBindVerified.`);
   }
   if (lpDepositToken.state.amount !== q.dToken) throw new Error("LP deposit token UTXO must equal dToken exactly (split first)");
+  resolveRecipientBound(tpl.recipientBound, "buildAddLiquidity", "poolRecipientBound");
+  if (tpl.recipientBound && presenceWitnessIdx < 4) throw new Error("addLiquidity on a recipient-bound schema needs presenceWitnessIdx >= 4 (past the covenant inputs)");
   const dust = opts.tokenDust ?? COVENANT_DUST;
   const { kasReserve, tokenReserve, tokenCovid, lpCovid } = utxo.state;
+  if (tpl.canonicalInventoryRequired && lpInventory.amount !== MAX_SHARES - utxo.state.totalShares) {
+    throw new Error("pool LP inventory must equal MAX_SHARES - totalShares");
+  }
   const poolCovidHex = hexOf(poolCovid);
   const tokenCovidHex = hexOf(tokenCovid);
   const lpCovidHex = hexOf(lpCovid);
   const poolTokenOut = covenantIdOwned(poolCovid, q.newToken, false);
-  const poolLpOut = covenantIdOwned(poolCovid, lpInventory.amount - q.dShares, false);
+  const poolLpOut = covenantIdOwned(
+    poolCovid,
+    tpl.canonicalInventoryRequired ? MAX_SHARES - q.newShares : lpInventory.amount - q.dShares,
+    false
+  );
   const lpSharesOut = addressPresenceOwned(lpPubkey, q.dShares);
   const curRedeem = materializePoolCpScript(tpl, utxo.state);
   const newRedeem = materializePoolCpScript(tpl, { kasReserve: q.newKas, tokenReserve: q.newToken, tokenCovid, totalShares: q.newShares, lpCovid });
@@ -708,7 +756,7 @@ function buildAddLiquidity(k, tpl, tokenTpl, utxo, lpInventory, poolCovid, lpDep
   const lStates = [poolLpOut, lpSharesOut];
   const lWitnesses = [0];
   const inputs = [
-    { transactionId: utxo.transactionId, index: utxo.index, value: kasReserve * SCALE, scriptPublicKey: poolCpSpk(k, curRedeem), signatureScript: addLiquiditySig(k, curRedeem, q.dKas, q.dToken, q.dShares, poolTokenOut, poolLpOut, lpSharesOut), redeem: curRedeem, role: "pool" },
+    { transactionId: utxo.transactionId, index: utxo.index, value: kasReserve * SCALE, scriptPublicKey: poolCpSpk(k, curRedeem), signatureScript: addLiquiditySig(k, curRedeem, q.dKas, q.dToken, q.dShares, poolTokenOut, poolLpOut, lpSharesOut, tpl.recipientBound ? { witness: presenceWitnessIdx, pubkey: lpPubkey } : void 0), redeem: curRedeem, role: "pool" },
     { transactionId: lpDepositToken.transactionId, index: lpDepositToken.index, value: lpDepositToken.value, scriptPublicKey: kcc20Spk(k, lpDepositRedeem), signatureScript: transferSigScript(k, lpDepositRedeem, aStates, aWitnesses), redeem: lpDepositRedeem, role: "lpDeposit" },
     { transactionId: utxo.tokenUtxo.transactionId, index: utxo.tokenUtxo.index, value: utxo.tokenUtxo.value, scriptPublicKey: kcc20Spk(k, poolAResRedeem), signatureScript: transferSigScript(k, poolAResRedeem, aStates, aWitnesses), redeem: poolAResRedeem, role: "poolToken" },
     { transactionId: lpInventory.transactionId, index: lpInventory.index, value: lpInventory.value, scriptPublicKey: kcc20Spk(k, poolLpInvRedeem), signatureScript: transferSigScript(k, poolLpInvRedeem, lStates, lWitnesses), redeem: poolLpInvRedeem, role: "poolLpInventory" }
@@ -723,12 +771,14 @@ function buildAddLiquidity(k, tpl, tokenTpl, utxo, lpInventory, poolCovid, lpDep
 }
 function buildRemoveLiquidity(k, tpl, tokenTpl, utxo, lpShares, poolCovid, lpPubkey, q, presenceWitnessIdx, opts = {}) {
   if (lpShares.state.amount !== q.dShares) throw new Error("LP shares UTXO must equal dShares exactly (split first)");
+  const canonical = !!tpl.canonicalInventoryRequired;
+  resolveRecipientBound(tpl.recipientBound, "buildRemoveLiquidity", "poolRecipientBound");
+  if (tpl.recipientBound && presenceWitnessIdx < (canonical ? 4 : 3)) throw new Error("removeLiquidity on a recipient-bound schema needs presenceWitnessIdx past the covenant inputs");
   const dust = opts.tokenDust ?? COVENANT_DUST;
   const { kasReserve, tokenReserve, tokenCovid, lpCovid } = utxo.state;
   const poolCovidHex = hexOf(poolCovid);
   const tokenCovidHex = hexOf(tokenCovid);
   const lpCovidHex = hexOf(lpCovid);
-  const canonical = !!tpl.canonicalInventoryRequired;
   const lpInventory = opts.lpInventory;
   if (canonical && (!lpInventory || lpInventory.amount !== MAX_SHARES - utxo.state.totalShares)) {
     throw new Error("removeLiquidity requires the canonical pool LP inventory (pass opts.lpInventory equal to MAX_SHARES - totalShares)");
@@ -746,7 +796,7 @@ function buildRemoveLiquidity(k, tpl, tokenTpl, utxo, lpShares, poolCovid, lpPub
   const lStates = [poolLpOut];
   const lWitnesses = canonical ? [0, presenceWitnessIdx] : [presenceWitnessIdx];
   const inputs = [
-    { transactionId: utxo.transactionId, index: utxo.index, value: kasReserve * SCALE, scriptPublicKey: poolCpSpk(k, curRedeem), signatureScript: removeLiquiditySig(k, curRedeem, q.dShares, q.dKas, q.dToken, poolTokenOut, lpTokenOut, poolLpOut), redeem: curRedeem, role: "pool" },
+    { transactionId: utxo.transactionId, index: utxo.index, value: kasReserve * SCALE, scriptPublicKey: poolCpSpk(k, curRedeem), signatureScript: removeLiquiditySig(k, curRedeem, q.dShares, q.dKas, q.dToken, poolTokenOut, lpTokenOut, poolLpOut, tpl.recipientBound ? { witness: presenceWitnessIdx, pubkey: lpPubkey } : void 0), redeem: curRedeem, role: "pool" },
     { transactionId: utxo.tokenUtxo.transactionId, index: utxo.tokenUtxo.index, value: utxo.tokenUtxo.value, scriptPublicKey: kcc20Spk(k, poolAResRedeem), signatureScript: transferSigScript(k, poolAResRedeem, aStates, aWitnesses), redeem: poolAResRedeem, role: "poolToken" },
     ...canonical ? [{ transactionId: lpInventory.transactionId, index: lpInventory.index, value: lpInventory.value, scriptPublicKey: kcc20Spk(k, poolLpInvRedeem), signatureScript: transferSigScript(k, poolLpInvRedeem, lStates, lWitnesses), redeem: poolLpInvRedeem, role: "poolLpInventory" }] : [],
     { transactionId: lpShares.transactionId, index: lpShares.index, value: lpShares.value, scriptPublicKey: kcc20Spk(k, lpSharesRedeem), signatureScript: transferSigScript(k, lpSharesRedeem, lStates, lWitnesses), redeem: lpSharesRedeem, role: "lpShares" }
@@ -754,6 +804,11 @@ function buildRemoveLiquidity(k, tpl, tokenTpl, utxo, lpShares, poolCovid, lpPub
   const outputs = [
     { value: q.newKas * SCALE, scriptPublicKey: poolCpSpk(k, newRedeem), role: "pool", binding: { covid: poolCovidHex, authorizingInput: 0 } },
     { value: continuationValue(dust, utxo.tokenUtxo.value), scriptPublicKey: kcc20Spk(k, materializeKcc20Script(tokenTpl, poolTokenOut)), role: "poolToken", binding: { covid: tokenCovidHex, authorizingInput: 1 } },
+    // HLK-L12: the withdrawn KAS is an explicit output pinned to the LP at REMOVE_KAS_OUT=2 — AFTER the reserve
+    // (output 1), so the reserve's index is unchanged and the indexer's reserve.index−1 pool pointer stays
+    // correct (dKas>0 only — the HLK-L07 zero-payout burn has no KAS leg and keeps the legacy layout). Plain
+    // P2PK, no covenant binding (like the fee legs).
+    ...tpl.recipientBound && q.dKas > 0n ? [{ value: q.dKas * SCALE, scriptPublicKey: p2pkSpk(k, lpPubkey), role: "lpKas" }] : [],
     ...q.dToken > 0n ? [{ value: dust, scriptPublicKey: kcc20Spk(k, materializeKcc20Script(tokenTpl, lpTokenOut)), role: "lpToken", binding: { covid: tokenCovidHex, authorizingInput: 1 } }] : [],
     { value: canonical ? continuationValue(dust, lpInventory.value) : dust, scriptPublicKey: kcc20Spk(k, materializeKcc20Script(tokenTpl, poolLpOut)), role: "poolLpInventory", binding: { covid: lpCovidHex, authorizingInput: 2 } }
   ];
@@ -817,21 +872,23 @@ var cpSpkForState = (k, tpl, state) => cpSpk(k, materializeCpScript(tpl, state))
 function cpAddress(k, tpl, state, network) {
   return k.addressFromScriptPublicKey(cpSpkForState(k, tpl, state), network)?.toString() ?? "";
 }
-function p2pkSpk(k, pubkey) {
+function p2pkSpk2(k, pubkey) {
   const sb = new k.ScriptBuilder();
   sb.addData(pubkey).addOp(172);
   return new k.ScriptPublicKey(0, sb.drain());
 }
-function buySig(k, redeem, kasIn, tokenOut, inventoryOut, buyerOut) {
+function buySig(k, tpl, redeem, kasIn, tokenOut, inventoryOut, buyerOut, buyerWitness, buyerIdentifier) {
   const b = new SigScriptBuilder(k).int(kasIn).int(tokenOut);
   pushKcc20StateScalar(b, inventoryOut);
   pushKcc20StateScalar(b, buyerOut);
+  if (tpl.recipientBound) b.int(BigInt(buyerWitness)).data(buyerIdentifier);
   return b.selector(SELECTOR.buy).redeem(redeem).drain();
 }
-function sellSig(k, redeem, tokenIn, kasOut, inventoryOut, traderChangeOut) {
+function sellSig(k, tpl, redeem, tokenIn, kasOut, inventoryOut, traderChangeOut, sellerWitness, sellerIdentifier) {
   const b = new SigScriptBuilder(k).int(tokenIn).int(kasOut);
   pushKcc20StateScalar(b, inventoryOut);
   pushKcc20StateScalar(b, traderChangeOut);
+  if (tpl.recipientBound) b.int(BigInt(sellerWitness)).data(sellerIdentifier);
   return b.selector(SELECTOR.sell).redeem(redeem).drain();
 }
 function graduateSigV2(k, redeem, pool, poolTokens) {
@@ -845,6 +902,10 @@ function buildCpBuy(k, tpl, tokenTpl, utxo, inventory, curveCovid, buyerPubkey, 
   if (tokenOut <= 0n || tokenOut >= inventory.amount) throw new Error("invalid tokenOut");
   if (inventory.amount !== utxo.state.tokenReserve) throw new Error("inventory.amount must equal the curve's committed tokenReserve");
   if (mergeTokens.length > 0 && presenceWitnessIdx === 0) throw new Error("presenceWitnessIdx must be set to a co-present signed P2PK funding input when mergeTokens is non-empty (input 0 is the curve covenant and carries no signature)");
+  resolveRecipientBound(tpl.recipientBound, "buildCpBuy", "tradeRecipientBound");
+  if (tpl.recipientBound && presenceWitnessIdx < 2 + mergeTokens.length) {
+    throw new Error("recipient-bound schema: presenceWitnessIdx must point at the buyer's own P2PK funding input (HLK-L04)");
+  }
   const dust = opts.tokenDust ?? COVENANT_DUST;
   const curveCovidHex = hexOf2(curveCovid);
   const tokenCovidHex = hexOf2(utxo.state.tokenCovid);
@@ -866,7 +927,7 @@ function buildCpBuy(k, tpl, tokenTpl, utxo, inventory, curveCovid, buyerPubkey, 
   const witnesses = [0, ...mergeTokens.map(() => presenceWitnessIdx)];
   const newStates = [inventoryOut, buyerOut];
   const inputs = [
-    { transactionId: utxo.transactionId, index: utxo.index, value: utxo.realKas, scriptPublicKey: cpSpk(k, curRedeem), signatureScript: buySig(k, curRedeem, kasIn, tokenOut, inventoryOut, buyerOut), redeem: curRedeem, role: "curve" },
+    { transactionId: utxo.transactionId, index: utxo.index, value: utxo.realKas, scriptPublicKey: cpSpk(k, curRedeem), signatureScript: buySig(k, tpl, curRedeem, kasIn, tokenOut, inventoryOut, buyerOut, presenceWitnessIdx, buyerPubkey), redeem: curRedeem, role: "curve" },
     // inventory (covid A, C-owned) spent via kcc20 transfer; the C-owned input is authorized by the curve (input 0)
     { transactionId: inventory.transactionId, index: inventory.index, value: inventory.value, scriptPublicKey: kcc20Spk(k, invRedeem), signatureScript: transferSigScript(k, invRedeem, newStates, witnesses), redeem: invRedeem, role: "inventory" },
     ...mergeTokens.map((mt) => {
@@ -878,18 +939,22 @@ function buildCpBuy(k, tpl, tokenTpl, utxo, inventory, curveCovid, buyerPubkey, 
     { value: newKas, scriptPublicKey: cpSpk(k, newCurveRedeem), role: "curve", binding: { covid: curveCovidHex, authorizingInput: 0 } },
     { value: continuationValue(dust, inventory.value), scriptPublicKey: kcc20Spk(k, invOutRedeem), role: "inventory", binding: { covid: tokenCovidHex, authorizingInput: 1 } },
     { value: dust, scriptPublicKey: kcc20Spk(k, buyerRedeem), role: "recipient", binding: { covid: tokenCovidHex, authorizingInput: 1 } },
-    { value: padFee3(creatorFee), scriptPublicKey: p2pkSpk(k, tpl.params.creatorFeeOwner), role: "creatorFee" },
-    { value: padFee3(platformFee), scriptPublicKey: p2pkSpk(k, tpl.params.platformFeeOwner), role: "platformFee" }
+    { value: padFee3(creatorFee), scriptPublicKey: p2pkSpk2(k, tpl.params.creatorFeeOwner), role: "creatorFee" },
+    { value: padFee3(platformFee), scriptPublicKey: p2pkSpk2(k, tpl.params.platformFeeOwner), role: "platformFee" }
   ];
-  if (devFund) outputs.push({ value: padFee3(devFundFee), scriptPublicKey: p2pkSpk(k, devFund.owner), role: "devFundFee" });
+  if (devFund) outputs.push({ value: padFee3(devFundFee), scriptPublicKey: p2pkSpk2(k, devFund.owner), role: "devFundFee" });
   return { kind: "buy", inputs, outputs, economics: { kasIn, tokenOut, creatorFee, platformFee, devFundFee, newRealKas: newKas, newTokenReserve: newToken, merged: mergeSum }, covids: { tokenCovid: tokenCovidHex } };
 }
 function buildCpSell(k, tpl, tokenTpl, utxo, sellerTokens, inventory, curveCovid, traderPubkey, tokenIn, kasOut, presenceWitnessIdx, opts = {}) {
   if (utxo.state.graduated) throw new Error("curve has graduated \u2014 sells are locked");
   if (sellerTokens.length < 1) throw new Error("need at least one seller token");
   if (tokenIn <= 0n) throw new Error("tokenIn must be positive");
-  if (kasOut <= 0n || kasOut % SCALE2 !== 0n || kasOut > utxo.realKas) throw new Error("invalid kasOut");
+  if (kasOut <= 0n || kasOut % SCALE2 !== 0n || kasOut >= utxo.realKas) throw new Error("invalid kasOut \u2014 must leave at least 0.01 KAS in the curve");
   if (inventory.amount !== utxo.state.tokenReserve) throw new Error("inventory.amount must equal the curve's committed tokenReserve");
+  resolveRecipientBound(tpl.recipientBound, "buildCpSell", "tradeRecipientBound");
+  if (tpl.recipientBound && presenceWitnessIdx < 2 + sellerTokens.length) {
+    throw new Error("recipient-bound schema: presenceWitnessIdx must point at the seller's own P2PK funding input (HLK-L04)");
+  }
   const dust = opts.tokenDust ?? COVENANT_DUST;
   const curveCovidHex = hexOf2(curveCovid);
   const tokenCovidHex = hexOf2(utxo.state.tokenCovid);
@@ -911,7 +976,7 @@ function buildCpSell(k, tpl, tokenTpl, utxo, sellerTokens, inventory, curveCovid
   const witnesses = [0, ...sellerTokens.map(() => presenceWitnessIdx)];
   const newStates = hasChange ? [inventoryOut, traderChangeOut] : [inventoryOut];
   const inputs = [
-    { transactionId: utxo.transactionId, index: utxo.index, value: utxo.realKas, scriptPublicKey: cpSpk(k, curRedeem), signatureScript: sellSig(k, curRedeem, tokenIn, kasOut, inventoryOut, traderChangeOut), redeem: curRedeem, role: "curve" },
+    { transactionId: utxo.transactionId, index: utxo.index, value: utxo.realKas, scriptPublicKey: cpSpk(k, curRedeem), signatureScript: sellSig(k, tpl, curRedeem, tokenIn, kasOut, inventoryOut, traderChangeOut, presenceWitnessIdx, traderPubkey), redeem: curRedeem, role: "curve" },
     { transactionId: inventory.transactionId, index: inventory.index, value: inventory.value, scriptPublicKey: kcc20Spk(k, invRedeem), signatureScript: transferSigScript(k, invRedeem, newStates, witnesses), redeem: invRedeem, role: "inventory" },
     ...sellerTokens.map((st) => {
       const r = materializeKcc20Script(tokenTpl, st.state);
@@ -921,10 +986,10 @@ function buildCpSell(k, tpl, tokenTpl, utxo, sellerTokens, inventory, curveCovid
   const outputs = [
     { value: utxo.realKas - kasOut, scriptPublicKey: cpSpk(k, newCurveRedeem), role: "curve", binding: { covid: curveCovidHex, authorizingInput: 0 } },
     { value: continuationValue(dust, inventory.value), scriptPublicKey: kcc20Spk(k, invOutRedeem), role: "inventory", binding: { covid: tokenCovidHex, authorizingInput: 1 } },
-    { value: padFee3(creatorFee), scriptPublicKey: p2pkSpk(k, tpl.params.creatorFeeOwner), role: "creatorFee" },
-    { value: padFee3(platformFee), scriptPublicKey: p2pkSpk(k, tpl.params.platformFeeOwner), role: "platformFee" }
+    { value: padFee3(creatorFee), scriptPublicKey: p2pkSpk2(k, tpl.params.creatorFeeOwner), role: "creatorFee" },
+    { value: padFee3(platformFee), scriptPublicKey: p2pkSpk2(k, tpl.params.platformFeeOwner), role: "platformFee" }
   ];
-  if (devFund) outputs.push({ value: padFee3(devFundFee), scriptPublicKey: p2pkSpk(k, devFund.owner), role: "devFundFee" });
+  if (devFund) outputs.push({ value: padFee3(devFundFee), scriptPublicKey: p2pkSpk2(k, devFund.owner), role: "devFundFee" });
   if (hasChange) outputs.push({ value: dust, scriptPublicKey: kcc20Spk(k, materializeKcc20Script(tokenTpl, traderChangeOut)), role: "seller", binding: { covid: tokenCovidHex, authorizingInput: 1 } });
   return { kind: "sell", inputs, outputs, economics: { tokenIn, kasOut, change, creatorFee, platformFee, devFundFee, newRealKas: utxo.realKas - kasOut, newTokenReserve: newToken }, covids: { tokenCovid: tokenCovidHex } };
 }
@@ -963,7 +1028,7 @@ function buildCpGraduate(k, tpl, tokenTpl, poolTemplate, utxo, inventory, curveC
     { value: lockedValue, scriptPublicKey: cpSpk(k, lockedRedeem), role: "curve", binding: { covid: curveCovidHex, authorizingInput: 0 } },
     { value: poolKas, scriptPublicKey: poolSpkV, role: "pool", binding: { covid: poolCovidHex, authorizingInput: 0 } },
     { value: continuationValue(dust, inventory.value), scriptPublicKey: kcc20Spk(k, poolTokenRedeem), role: "poolToken", binding: { covid: tokenCovidHex, authorizingInput: 1 } },
-    { value: padFee3(gradFee), scriptPublicKey: p2pkSpk(k, tpl.params.platformFeeOwner), role: "gradFee" }
+    { value: padFee3(gradFee), scriptPublicKey: p2pkSpk2(k, tpl.params.platformFeeOwner), role: "gradFee" }
   ];
   return { kind: "graduate", inputs, outputs, economics: { poolKas, gradFee, leftover, poolLockedShares }, covids: { tokenCovid: hexOf2(A), poolCovid: poolCovidHex } };
 }
@@ -1028,25 +1093,29 @@ var quotePoolV3Buy = quotePoolCpBuy;
 var quotePoolV3Sell = quotePoolCpSell;
 var POOL_V3_SELECTOR = { swapKasForToken: 0, swapTokenForKas: 1, addLiquidity: 2, removeLiquidity: 3, bindLp: 4 };
 var hexOf3 = (u8) => Array.from(u8, (b) => b.toString(16).padStart(2, "0")).join("");
-var p2pkSpk2 = (k, pubkey) => {
+var p2pkSpk3 = (k, pubkey) => {
   const sb = new k.ScriptBuilder();
   sb.addData(pubkey).addOp(172);
   return new k.ScriptPublicKey(0, sb.drain());
 };
-function v3SwapBuySig(k, redeem, kasInUnits, tokenOut, poolTokenOut, traderTokenOut) {
+function v3SwapBuySig(k, redeem, kasInUnits, tokenOut, poolTokenOut, traderTokenOut, recipient) {
   const b = new SigScriptBuilder(k).int(kasInUnits).int(tokenOut);
   pushKcc20StateScalar(b, poolTokenOut);
   pushKcc20StateScalar(b, traderTokenOut);
+  if (recipient) b.int(BigInt(recipient.witness)).data(recipient.pubkey);
   return b.selector(POOL_V3_SELECTOR.swapKasForToken).redeem(redeem).drain();
 }
-function v3SwapSellSig(k, redeem, kasOutUnits, poolTokenOut, traderChangeOut) {
+function v3SwapSellSig(k, redeem, kasOutUnits, poolTokenOut, traderChangeOut, recipient) {
   const b = new SigScriptBuilder(k).int(kasOutUnits);
   pushKcc20StateScalar(b, poolTokenOut);
   pushKcc20StateScalar(b, traderChangeOut);
+  if (recipient) b.int(BigInt(recipient.witness)).data(recipient.pubkey);
   return b.selector(POOL_V3_SELECTOR.swapTokenForKas).redeem(redeem).drain();
 }
 function buildPoolV3SwapKasForToken(k, tpl, tokenTpl, params, utxo, poolCovid, traderPubkey, q, mergeTokens = [], presenceWitnessIdx = 0, opts = {}) {
   if (mergeTokens.length > 0 && presenceWitnessIdx === 0) throw new Error("presenceWitnessIdx must be set to a co-present signed P2PK funding input when mergeTokens is non-empty (input 0 is the pool covenant and carries no signature)");
+  resolveRecipientBound(tpl.recipientBound, "buildPoolV3SwapKasForToken", "poolRecipientBound");
+  if (tpl.recipientBound && presenceWitnessIdx < 2 + mergeTokens.length) throw new Error("swapKasForToken on a recipient-bound schema needs presenceWitnessIdx past the covenant inputs");
   const dust = opts.tokenDust ?? COVENANT_DUST;
   const { kasReserve, tokenReserve, tokenCovid, totalShares, lpCovid } = utxo.state;
   const poolCovidHex = hexOf3(poolCovid);
@@ -1059,8 +1128,9 @@ function buildPoolV3SwapKasForToken(k, tpl, tokenTpl, params, utxo, poolCovid, t
   const poolTokInRedeem = materializeKcc20Script(tokenTpl, covenantIdOwned(poolCovid, tokenReserve, false));
   const witnesses = [0, ...mergeTokens.map(() => presenceWitnessIdx)];
   const newStates = [poolTokenOut, traderTokenOut];
+  const recipient = tpl.recipientBound ? { witness: presenceWitnessIdx, pubkey: traderPubkey } : void 0;
   const inputs = [
-    { transactionId: utxo.transactionId, index: utxo.index, value: kasReserve * SCALE, scriptPublicKey: poolCpV3Spk(k, curRedeem), signatureScript: v3SwapBuySig(k, curRedeem, q.kasInUnits, q.tokenOut, poolTokenOut, traderTokenOut), redeem: curRedeem, role: "pool" },
+    { transactionId: utxo.transactionId, index: utxo.index, value: kasReserve * SCALE, scriptPublicKey: poolCpV3Spk(k, curRedeem), signatureScript: v3SwapBuySig(k, curRedeem, q.kasInUnits, q.tokenOut, poolTokenOut, traderTokenOut, recipient), redeem: curRedeem, role: "pool" },
     { transactionId: utxo.tokenUtxo.transactionId, index: utxo.tokenUtxo.index, value: utxo.tokenUtxo.value, scriptPublicKey: kcc20Spk(k, poolTokInRedeem), signatureScript: transferSigScript(k, poolTokInRedeem, newStates, witnesses), redeem: poolTokInRedeem, role: "poolToken" },
     ...mergeTokens.map((tt) => {
       const r = materializeKcc20Script(tokenTpl, tt.state);
@@ -1071,13 +1141,15 @@ function buildPoolV3SwapKasForToken(k, tpl, tokenTpl, params, utxo, poolCovid, t
     { value: q.newKas * SCALE, scriptPublicKey: poolCpV3Spk(k, newRedeem), role: "pool", binding: { covid: poolCovidHex, authorizingInput: 0 } },
     { value: continuationValue(dust, utxo.tokenUtxo.value), scriptPublicKey: kcc20Spk(k, materializeKcc20Script(tokenTpl, poolTokenOut)), role: "poolToken", binding: { covid: tokenCovidHex, authorizingInput: 1 } },
     { value: dust, scriptPublicKey: kcc20Spk(k, materializeKcc20Script(tokenTpl, traderTokenOut)), role: "trader", binding: { covid: tokenCovidHex, authorizingInput: 1 } },
-    { value: q.creatorOut, scriptPublicKey: p2pkSpk2(k, params.creatorFeeOwner), role: "creatorFee" },
-    { value: q.platformOut, scriptPublicKey: p2pkSpk2(k, params.platformFeeOwner), role: "platformFee" }
+    { value: q.creatorOut, scriptPublicKey: p2pkSpk3(k, params.creatorFeeOwner), role: "creatorFee" },
+    { value: q.platformOut, scriptPublicKey: p2pkSpk3(k, params.platformFeeOwner), role: "platformFee" }
   ];
   return { kind: "swapKasForToken", inputs, outputs, economics: { kasIn: q.kasIn, tokenOut: q.tokenOut }, covids: { poolCovid: poolCovidHex, tokenCovid: tokenCovidHex } };
 }
 function buildPoolV3SwapTokenForKas(k, tpl, tokenTpl, params, utxo, poolCovid, traderPubkey, traderTokens, q, presenceWitnessIdx, opts = {}) {
   if (traderTokens.length < 1) throw new Error("need at least one trader token");
+  resolveRecipientBound(tpl.recipientBound, "buildPoolV3SwapTokenForKas", "poolRecipientBound");
+  if (tpl.recipientBound && presenceWitnessIdx < 2 + traderTokens.length) throw new Error("swapTokenForKas on a recipient-bound schema needs presenceWitnessIdx past the covenant inputs");
   const dust = opts.tokenDust ?? COVENANT_DUST;
   const { kasReserve, tokenReserve, tokenCovid, totalShares, lpCovid } = utxo.state;
   const poolCovidHex = hexOf3(poolCovid);
@@ -1093,8 +1165,9 @@ function buildPoolV3SwapTokenForKas(k, tpl, tokenTpl, params, utxo, poolCovid, t
   const poolTokInRedeem = materializeKcc20Script(tokenTpl, covenantIdOwned(poolCovid, tokenReserve, false));
   const witnesses = [0, ...traderTokens.map(() => presenceWitnessIdx)];
   const newStates = hasChange ? [poolTokenOut, traderChangeOut] : [poolTokenOut];
+  const recipient = tpl.recipientBound ? { witness: presenceWitnessIdx, pubkey: traderPubkey } : void 0;
   const inputs = [
-    { transactionId: utxo.transactionId, index: utxo.index, value: kasReserve * SCALE, scriptPublicKey: poolCpV3Spk(k, curRedeem), signatureScript: v3SwapSellSig(k, curRedeem, q.kasOutUnits, poolTokenOut, traderChangeOut), redeem: curRedeem, role: "pool" },
+    { transactionId: utxo.transactionId, index: utxo.index, value: kasReserve * SCALE, scriptPublicKey: poolCpV3Spk(k, curRedeem), signatureScript: v3SwapSellSig(k, curRedeem, q.kasOutUnits, poolTokenOut, traderChangeOut, recipient), redeem: curRedeem, role: "pool" },
     { transactionId: utxo.tokenUtxo.transactionId, index: utxo.tokenUtxo.index, value: utxo.tokenUtxo.value, scriptPublicKey: kcc20Spk(k, poolTokInRedeem), signatureScript: transferSigScript(k, poolTokInRedeem, newStates, witnesses), redeem: poolTokInRedeem, role: "poolToken" },
     ...traderTokens.map((tt) => {
       const r = materializeKcc20Script(tokenTpl, tt.state);
@@ -1104,8 +1177,12 @@ function buildPoolV3SwapTokenForKas(k, tpl, tokenTpl, params, utxo, poolCovid, t
   const outputs = [
     { value: q.newKas * SCALE, scriptPublicKey: poolCpV3Spk(k, newRedeem), role: "pool", binding: { covid: poolCovidHex, authorizingInput: 0 } },
     { value: continuationValue(dust, utxo.tokenUtxo.value), scriptPublicKey: kcc20Spk(k, materializeKcc20Script(tokenTpl, poolTokenOut)), role: "poolToken", binding: { covid: tokenCovidHex, authorizingInput: 1 } },
-    { value: q.creatorOut, scriptPublicKey: p2pkSpk2(k, params.creatorFeeOwner), role: "creatorFee" },
-    { value: q.platformOut, scriptPublicKey: p2pkSpk2(k, params.platformFeeOwner), role: "platformFee" }
+    { value: q.creatorOut, scriptPublicKey: p2pkSpk3(k, params.creatorFeeOwner), role: "creatorFee" },
+    { value: q.platformOut, scriptPublicKey: p2pkSpk3(k, params.platformFeeOwner), role: "platformFee" },
+    // HLK-L12: the trader's KAS proceeds are an explicit output pinned at SWAP_KAS_OUT=4, floored against the
+    // RAW bps fees (the covenant's floor); any fee-output padding (creatorOut/platformOut vs the raw fees) is
+    // funded from the trader's own inputs. Plain P2PK, no covenant binding (like the fee legs).
+    ...tpl.recipientBound ? [{ value: q.kasOut - q.creatorFee - q.platformFee, scriptPublicKey: p2pkSpk3(k, traderPubkey), role: "traderKas" }] : []
   ];
   if (hasChange) outputs.push({ value: dust, scriptPublicKey: kcc20Spk(k, materializeKcc20Script(tokenTpl, traderChangeOut)), role: "trader", binding: { covid: tokenCovidHex, authorizingInput: 1 } });
   return { kind: "swapTokenForKas", inputs, outputs, economics: { kasOut: q.kasOut, tokenIn: q.tokenIn }, covids: { poolCovid: poolCovidHex, tokenCovid: tokenCovidHex } };
@@ -1339,7 +1416,9 @@ var client_exports = {};
 __export(client_exports, {
   IndexerClient: () => IndexerClient,
   RegistryClient: () => RegistryClient,
-  SequencerClient: () => SequencerClient
+  SequencerClient: () => SequencerClient,
+  fetchCpTemplates: () => fetchCpTemplates,
+  shapeCpTemplates: () => shapeCpTemplates
 });
 
 // src/client/indexerClient.ts
@@ -1549,6 +1628,70 @@ var SequencerClient = class {
     return () => es.close();
   }
 };
+
+// src/client/templates.ts
+var hexToBytes2 = (h) => Uint8Array.from((h.replace(/^0x/, "").match(/../g) ?? []).map((b) => parseInt(b, 16)));
+var DISCRIMINATORS = ["tradeRecipientBound", "poolRecipientBound", "zeroRemoveAllowed", "canonicalLpInventory"];
+function shapeCpTemplates(t) {
+  const p = t.params;
+  if (!p || !DISCRIMINATORS.some((f) => p[f] !== void 0)) {
+    throw new Error(
+      "cp-template response carries no ABI discriminators (" + DISCRIMINATORS.join(", ") + ') \u2014 this backend predates the recipient-bound covenant schemas. Shaping it would silently build the LEGACY ABI, which recipient-bound tokens reject at submit with "pick at an invalid location". Point at a current deployment (e.g. https://api.kron.technology).'
+    );
+  }
+  return {
+    token: { script: hexToBytes2(t.token.scriptHex), stateStart: t.token.stateStart, maxIns: t.token.maxIns, maxOuts: t.token.maxOuts },
+    pool: {
+      script: hexToBytes2(t.pool.scriptHex),
+      stateStart: t.pool.stateStart,
+      canonicalInventoryRequired: !!Number(p.canonicalLpInventory),
+      zeroRemoveAllowed: !!Number(p.zeroRemoveAllowed),
+      // HLK-L07; absent ⇒ legacy throw-on-zero
+      recipientBound: !!Number(p.poolRecipientBound)
+      // HLK-L12; absent ⇒ legacy pool ABI (4/3/6/6 args)
+    },
+    curve: {
+      script: hexToBytes2(t.curve.scriptHex),
+      stateStart: t.curve.stateStart,
+      recipientBound: !!Number(p.tradeRecipientBound),
+      // HLK-L04; absent ⇒ legacy 4-arg buy/sell
+      params: {
+        creatorFeeOwner: hexToBytes2(p.creatorFeeOwner),
+        platformFeeOwner: hexToBytes2(p.platformFeeOwner),
+        vKas: BigInt(p.vKas),
+        graduationKas: BigInt(p.graduationKas),
+        creatorFeeBps: BigInt(p.creatorFeeBps),
+        platformFeeBps: BigInt(p.platformFeeBps),
+        graduationFeeBps: BigInt(p.graduationFeeBps),
+        // Dual-ABI: hydrate the dev-fund leg from the COMPILER'S echo (not the raw record) so the
+        // discriminator always reflects the pinned schema actually compiled — old-pinned tokens stay on
+        // the two-fee output shape.
+        ...p.devFundOwner != null ? { devFundOwner: hexToBytes2(String(p.devFundOwner)), devFundBps: BigInt(p.devFundBps) } : {}
+      }
+    }
+  };
+}
+async function fetchCpTemplates(o) {
+  const f = o.fetchImpl ?? globalThis.fetch;
+  if (typeof f !== "function") throw new Error("no fetch available \u2014 pass opts.fetchImpl");
+  const url = `${o.baseUrl.replace(/\/+$/, "")}/api/native/cp-template`;
+  const body = { ...o.curveParams, tokenCovid: o.tokenCovid, ...o.templateVersion ? { templateVersion: o.templateVersion } : {} };
+  const res = await f(url, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(body),
+    ...o.signal ? { signal: o.signal } : {}
+  });
+  const text = await res.text();
+  if (!res.ok) throw new Error(`cp-template ${res.status}: ${text.slice(0, 300)}`);
+  let parsed;
+  try {
+    parsed = JSON.parse(text);
+  } catch {
+    throw new Error(`cp-template returned non-JSON (${text.slice(0, 120)})`);
+  }
+  return shapeCpTemplates(parsed);
+}
 
 // src/verify/index.ts
 var verify_exports = {};

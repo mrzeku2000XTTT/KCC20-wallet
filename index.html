@@ -5,14 +5,29 @@
   <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, viewport-fit=cover">
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-  <meta name="apple-mobile-web-app-title" content="KCC20">
+  <meta name="apple-mobile-web-app-title" content="KCC20 Wallet">
   <meta name="theme-color" content="#050506">
+  <meta name="description" content="KCC20 Wallet is the non-custodial Kaspa L1 wallet for native KAS, KCC20 covenant tokens (KRON, KKDAG), KRC-20, vaults, and Scorpion. Keys never leave your device.">
+  <meta name="keywords" content="KCC20 Wallet, KCC20 wallet, Kaspa wallet, KCC-20, KRON, KKDAG, covenant wallet">
+  <link rel="canonical" href="https://kcc-20-wallet.vercel.app/">
+  <meta property="og:type" content="website">
+  <meta property="og:site_name" content="KCC20 Wallet">
+  <meta property="og:url" content="https://kcc-20-wallet.vercel.app/">
+  <meta property="og:title" content="KCC20 Wallet — Kaspa L1 covenant wallet">
+  <meta property="og:description" content="Non-custodial Kaspa PWA for KAS, KCC20 tokens, vaults, and Scorpion. Keys stay on your device.">
+  <meta property="og:image" content="https://kcc-20-wallet.vercel.app/assets/icon.png">
+  <meta name="twitter:card" content="summary">
+  <meta name="twitter:title" content="KCC20 Wallet">
+  <meta name="twitter:description" content="Non-custodial Kaspa L1 wallet for KCC20 covenant tokens.">
   <link rel="manifest" href="manifest.json">
   <link rel="apple-touch-icon" href="assets/icon.png">
   <link rel="icon" href="assets/icon.png">
-  <title>KCC20 Wallet</title>
+  <title>KCC20 Wallet — Kaspa L1 covenant wallet</title>
   <meta http-equiv="Cache-Control" content="no-store, no-cache, must-revalidate">
   <link rel="stylesheet" href="css/app.css?v=211">
+  <script type="application/ld+json">
+  {"@context":"https://schema.org","@type":"SoftwareApplication","name":"KCC20 Wallet","alternateName":["KCC20 wallet","KCC-20 Wallet"],"applicationCategory":"FinanceApplication","operatingSystem":"Web","url":"https://kcc-20-wallet.vercel.app/","image":"https://kcc-20-wallet.vercel.app/assets/icon.png","description":"Non-custodial Kaspa Layer-1 wallet for native KAS, KCC20 covenant tokens, KRC-20, and time-lock vaults. Keys never leave the device.","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"}}
+  </script>
 </head>
 <body>
   <img class="bg-poster" src="assets/bg.jpg" alt="">
@@ -38,6 +53,7 @@
             <img class="app-icon" src="assets/icon.png" alt="KCC20">
             <h2>KCC20 Wallet</h2>
             <p>Non-custodial Kaspa. Native KAS, KCC20 tokens, and covenant vaults — in an Apple-grade private bank shell.</p>
+            <p class="notice" style="margin-top:10px"><a href="about.html" style="color:inherit">About KCC20 Wallet</a> · <a href="docs.html" style="color:inherit">SDK</a></p>
           </div>
           <div class="glass list">
             <button class="row" id="btn-create">
@@ -510,7 +526,7 @@
             <span class="you-apps-mark"><img src="assets/ttt.png" alt=""></span>
             <span class="you-apps-copy">
               <b>Apps</b>
-              <em>TTT · KasDistro · K Social</em>
+              <em>TTT · KasDistro · KBUILD · K Social</em>
             </span>
             <span class="chev">›</span>
           </button>
@@ -602,6 +618,15 @@
         <iframe id="kasdistro-frame" class="ttt-frame" title="kasdistro.com" referrerpolicy="no-referrer-when-downgrade" allow="clipboard-write; fullscreen; storage-access"></iframe>
       </div>
 
+      <div class="ttt-screen hidden" id="kbuild-screen" aria-hidden="true">
+        <div class="ttt-head">
+          <button type="button" class="trade-x" id="kbuild-close">Close</button>
+          <h2>KBUILD</h2>
+          <img class="ttt-mark" src="assets/ttt.png" alt="KBUILD">
+        </div>
+        <iframe id="kbuild-frame" class="ttt-frame" title="KBUILD" src="kbuild/index.html" allow="clipboard-write"></iframe>
+      </div>
+
       <div class="build-screen hidden" id="build-screen" aria-hidden="true">
         <div class="build-head">
           <button type="button" class="trade-x hidden" id="build-back">Back</button>
@@ -611,12 +636,17 @@
         </div>
 
         <div id="app-home" class="app-home">
-          <p class="build-lede">Open an app. TTT first. KasDistro pays many kaspa:q addresses. K Social is the Kaspa L1 feed — in this wallet, no new tab.</p>
+          <p class="build-lede">Open an app. TTT first. KBUILD drafts SilverScript v1 covenants++. KasDistro pays many kaspa:q addresses. K Social is the Kaspa L1 feed — in this wallet, no new tab.</p>
           <div class="app-grid">
             <button type="button" class="app-tile" data-app="ttt">
               <span class="app-ico app-ico-img"><img src="assets/ttt.png" alt=""></span>
               <b>TTT</b>
               <span>tttz.xyz — Connect with this wallet</span>
+            </button>
+            <button type="button" class="app-tile" data-app="kbuild">
+              <span class="app-ico">K</span>
+              <b>KBUILD</b>
+              <span>Vibe economic builder · SilverScript v1 covenants++</span>
             </button>
             <button type="button" class="app-tile" data-app="kasdistro">
               <span class="app-ico app-ico-img"><img src="assets/kasdistro.png" alt=""></span>
@@ -884,7 +914,7 @@
   <script type="module">
     import('./js/iframeVault.js?v=122').then(function (mod) {
       return (mod.restoreIframeVault ? mod.restoreIframeVault() : Promise.resolve()).then(function () {
-        return import('./js/app.js?v=233');
+        return import('./js/app.js?v=234');
       });
     }).catch(function (err) {
       console.error(err);

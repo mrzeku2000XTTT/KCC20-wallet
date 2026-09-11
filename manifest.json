@@ -1,7 +1,7 @@
 {
   "name": "KCC20 Wallet",
   "short_name": "KCC20",
-  "description": "Premium non-custodial Kaspa wallet for KAS and KCC20 covenants",
+  "description": "KCC20 Wallet — non-custodial Kaspa L1 wallet for KAS and KCC20 covenant tokens",
   "start_url": "./index.html",
   "display": "standalone",
   "orientation": "portrait",

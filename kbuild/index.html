@@ -1,0 +1,68 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="theme-color" content="#07110c" />
+    <title>KBUILD — Kaspa economic vibe builder</title>
+    <link rel="stylesheet" href="./kbuild.css" />
+  </head>
+  <body>
+    <div class="wrap">
+      <div class="brand">
+        <div class="mark" aria-hidden="true"></div>
+        <b>KBUILD</b>
+        <span>SilverScript v1 · covenants++</span>
+      </div>
+      <h1>Describe an economy.<br /><em>Lock it on Kaspa L1.</em></h1>
+      <p class="lede">
+        Official <a href="https://github.com/kaspanet/silverscript/releases/tag/v1.0.0" style="color:#7CFF9A">Silverscript v1.0.0</a>
+        compiles readable stateful contracts to Kaspa Script. KBUILD drafts the <code>.sil</code>, constructor args, and
+        <code>silverc</code> command. Every onchain command is a Kaspa transaction — network fee only. Keys never leave your device.
+      </p>
+
+      <div class="composer">
+        <textarea id="prompt" placeholder="e.g. Vesting vault: owner can release after 30 days of DAA age. Recurring 1 KAS payroll to a pubkey. KCC20-style transfer with leader + delegate."></textarea>
+        <div class="row">
+          <span class="hint">Ctrl+Enter to build · Grok drafts when the proxy is up, else a v1 template</span>
+          <button class="go" id="go" type="button">Build covenant</button>
+        </div>
+      </div>
+      <p class="err" id="err"></p>
+
+      <div class="grid" id="tpl-grid"></div>
+
+      <section class="out hidden" id="out">
+        <h2 id="out-title">Contract</h2>
+        <div class="via" id="out-via"></div>
+        <p id="out-sum"></p>
+        <label>RULES</label>
+        <ul id="out-rules"></ul>
+        <label>CONTRACT.SIL</label>
+        <textarea class="code" id="out-sil" spellcheck="false"></textarea>
+        <div class="actions">
+          <button class="ghost" id="copy-sil" type="button">Copy source</button>
+          <button class="ghost" id="dl-sil" type="button">Download .sil</button>
+        </div>
+        <label>CONSTRUCTOR ARGS.JSON</label>
+        <textarea class="code" id="out-args" spellcheck="false"></textarea>
+        <div class="actions">
+          <button class="ghost" id="copy-args" type="button">Copy args</button>
+        </div>
+        <label>COMPILE (silverc from kaspanet/silverscript v1.0.0)</label>
+        <pre class="cmd" id="out-cmd"></pre>
+        <div class="actions">
+          <button class="ghost" id="copy-cmd" type="button">Copy command</button>
+        </div>
+      </section>
+
+      <p class="foot">
+        KBUILD does not hold funds or keys. Compile with
+        <a href="https://github.com/kaspanet/silverscript">kaspanet/silverscript</a>
+        <code>silverc</code>. Fund and sign in KCC20 Wallet. Repo:
+        <a href="https://github.com/mrzeku2000XTTT/kbuild">mrzeku2000XTTT/kbuild</a>
+      </p>
+    </div>
+    <script type="module" src="./kbuild.js"></script>
+  </body>
+</html>

@@ -67,7 +67,7 @@ import {
   ksocialFeeKas
 } from './ksocial.js?v=207';
 
-export const BUILD = '233';
+export const BUILD = '234';
 const DESK_ID_KEY = 'kcc20_desk_id_v1';
 const DESK_VAULT_KEY = 'kcc20_desk_vault_v1';
 
@@ -3269,6 +3269,10 @@ function showBuildApp(name) {
     openKasdistro({ fromApps: true });
     return;
   }
+  if (view === 'kbuild') {
+    openKbuild({ fromApps: true });
+    return;
+  }
   ['home', 'studio', 'truth', 'ksocial'].forEach(v => {
     $('app-' + v)?.classList.toggle('hidden', v !== view);
   });
@@ -3780,6 +3784,8 @@ function openTtt(opts = {}) {
   }
   $('kasdistro-screen')?.classList.add('hidden');
   $('kasdistro-screen')?.setAttribute('aria-hidden', 'true');
+  $('kbuild-screen')?.classList.add('hidden');
+  $('kbuild-screen')?.setAttribute('aria-hidden', 'true');
   $('ttt-screen')?.classList.remove('hidden');
   $('ttt-screen')?.setAttribute('aria-hidden', 'false');
   $('tabbar')?.classList.remove('show');
@@ -3799,8 +3805,24 @@ function openKasdistro(opts = {}) {
   }
   $('ttt-screen')?.classList.add('hidden');
   $('ttt-screen')?.setAttribute('aria-hidden', 'true');
+  $('kbuild-screen')?.classList.add('hidden');
+  $('kbuild-screen')?.setAttribute('aria-hidden', 'true');
   $('kasdistro-screen')?.classList.remove('hidden');
   $('kasdistro-screen')?.setAttribute('aria-hidden', 'false');
+  $('tabbar')?.classList.remove('show');
+}
+
+function openKbuild(opts = {}) {
+  haptic();
+  openKbuild.fromApps = !!(opts.fromApps || appsScreenOpen());
+  const frame = $('kbuild-frame');
+  if (frame && !frame.getAttribute('src')) frame.src = 'kbuild/index.html';
+  $('ttt-screen')?.classList.add('hidden');
+  $('ttt-screen')?.setAttribute('aria-hidden', 'true');
+  $('kasdistro-screen')?.classList.add('hidden');
+  $('kasdistro-screen')?.setAttribute('aria-hidden', 'true');
+  $('kbuild-screen')?.classList.remove('hidden');
+  $('kbuild-screen')?.setAttribute('aria-hidden', 'false');
   $('tabbar')?.classList.remove('show');
 }
 
@@ -3996,6 +4018,17 @@ function closeKasdistro() {
   $('kasdistro-screen')?.setAttribute('aria-hidden', 'true');
   if (openKasdistro.fromApps) {
     openKasdistro.fromApps = false;
+    openApps();
+    return;
+  }
+  if (wallet && sessionOpen()) $('tabbar')?.classList.add('show');
+}
+
+function closeKbuild() {
+  $('kbuild-screen')?.classList.add('hidden');
+  $('kbuild-screen')?.setAttribute('aria-hidden', 'true');
+  if (openKbuild.fromApps) {
+    openKbuild.fromApps = false;
     openApps();
     return;
   }
@@ -11434,6 +11467,7 @@ function bind() {
   click('profile-build', openTtt);
   click('ttt-close', closeTtt);
   click('kasdistro-close', closeKasdistro);
+  click('kbuild-close', closeKbuild);
   click('ttt-fund', openTttFund);
   click('ttt-sweep', () => openTreasurySweep().catch(e => toast(errText(e))));
   click('build-close', closeBuildRoadmap);

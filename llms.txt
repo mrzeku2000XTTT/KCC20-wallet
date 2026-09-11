@@ -1,6 +1,8 @@
 # KCC20 Wallet — for AI agents and dApps
 
+# KCC20 Wallet
 Wallet: https://kcc-20-wallet.vercel.app
+About: https://kcc-20-wallet.vercel.app/about.html
 SDK: https://kcc-20-wallet.vercel.app/sdk.js?v=169
 Docs: https://kcc-20-wallet.vercel.app/docs.html
 KasDistro connect recipe: https://kcc-20-wallet.vercel.app/kasdistro.html

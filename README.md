@@ -1,20 +1,8 @@
 # KCC20 Wallet
 
-**Live app:** [https://kcc-20-wallet.vercel.app](https://kcc-20-wallet.vercel.app)  
-**dApp SDK (separate repo):** [github.com/mrzeku2000XTTT/kcc20-sdk](https://github.com/mrzeku2000XTTT/kcc20-sdk)  
-**dApp SDK docs:** [https://kcc-20-wallet.vercel.app/docs.html](https://kcc-20-wallet.vercel.app/docs.html) · [CONNECT.md](./CONNECT.md) · [demo](https://kcc-20-wallet.vercel.app/dapp-demo.html)
+**Live app:** [https://kcc-20-wallet.vercel.app](https://kcc-20-wallet.vercel.app) · **About / Google:** [about.html](https://kcc-20-wallet.vercel.app/about.html)
 
 A non-custodial Kaspa wallet for **native KAS**, **KCC20** (KRON / Kas Knight and other covenant tokens), and **KRC-20** (Kasplex). Time-lock vaults, KCC20 freeze, in-app KRON trading, and covenant++ tools — all in the browser. Keys never leave your device.
-
-### For app developers (plug-and-play connect)
-
-Same job as KasWare’s `window.kasware`, without a Chrome extension:
-
-```html
-<script src="https://kcc-20-wallet.vercel.app/sdk.js?v=166"></script>
-```
-
-Then `await window.kcc20.connect()` on a **user click**. Popup closes after Approve. `getPublicKey` / `getUtxoEntries` stay silent. You build the unsigned PSKT; `signPskt` opens the Sign sheet. Full API: [docs.html](https://kcc-20-wallet.vercel.app/docs.html).
 
 Built by **TTT agent internet**.
 
@@ -182,6 +170,8 @@ You can keep several wallets (Wallet 1, Wallet 2, …) and switch them on Home o
 The gold orb is **Argent**. It turns English into a covenant this app can fund. It does not hold keys. “Send Kaspa to my grandson” is a **plain send** (needs his `kaspa:q`). A Time Capsule returns to **you**. Dead-man / heir uses **sentinel**.
 
 Anyone can sit an LLM in front of Argent: load [`argent.js`](https://kcc20-sdk.vercel.app/argent.js), parse with `kcc20Argent.direct(text)`, then `window.kcc20.compileVault` or `sendKas`. Docs: https://kcc20-sdk.vercel.app/argent.html
+
+Copy wallet README to KCC20-wallet if they diverge - KCC20-wallet has its own README. I'll copy the Argent paragraph if the same section exists.
 
 ### Compound UTXOs
 

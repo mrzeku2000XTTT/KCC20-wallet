@@ -127,8 +127,17 @@ export const VAULT_PRODUCTS = [
     name: 'SilverScript',
     type: 'silverscript',
     tag: 'Ag',
-    why: 'Official Kaspa covenant language (v1-rc1). Paste a silverc JSON artifact. Argent does not compile .sil.',
-    blurb: 'Compile .sil with silverc from kaspanet/silverscript. We P2SH-hash the bytecode (kaspa:p) and fund it. Spend uses KCC-01 dispatch (args + 4-byte tag). Keys stay in this wallet.'
+    why: 'Official Kaspa covenant language (v1.0.0). Paste a silverc JSON artifact. Argent does not compile .sil.',
+    blurb: 'Compile .sil with silverc v1.0.0 from kaspanet/silverscript. We P2SH-hash the bytecode (kaspa:p) and fund it. Spend uses KCC-01 dispatch. Keys stay in this wallet.'
+  },
+  {
+    id: 'spendlimit',
+    group: 'alive',
+    name: 'Spend cap',
+    type: 'spendlimit',
+    tag: '▭',
+    why: 'Weekly (or custom) spend limit. SilverScript v1 tracks spent-in-window. Argent 2 can batch several pots in one tx.',
+    blurb: 'Pass amount (the pot) and capKas (max per window). Attach a v1 silverc artifact for the real stateful cap. Without artifact we lock a matching envelope (7d weekly) and attach the .sil for silverc.'
   }
 ];
 

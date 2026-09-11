@@ -2,7 +2,7 @@
    Load: <script src="https://kcc20-sdk.vercel.app/silverscript.js"></script>
    Then: window.kcc20Silver.parse(artifactJson)
 
-   What this is (fact-checked against https://github.com/kaspanet/silverscript/releases/tag/v1-rc1):
+   What this is (fact-checked against https://github.com/kaspanet/silverscript/releases/tag/v1.0.0):
    - SilverScript is Kaspa’s high-level covenant language (CashScript-like).
    - silverc compiles .sil → SilAbiArtifact JSON (schema_version 1).
    - Bytecode is native Kaspa Script (no VM). State lives in the UTXO redeem
@@ -22,9 +22,9 @@
 })(typeof globalThis !== 'undefined' ? globalThis : this, function () {
   'use strict';
 
-  var VERSION = '1.0.0-rc1';
+  var VERSION = '1.0.0';
   var SCHEMA = 1;
-  var RELEASE = 'https://github.com/kaspanet/silverscript/releases/tag/v1-rc1';
+  var RELEASE = 'https://github.com/kaspanet/silverscript/releases/tag/v1.0.0';
   var OP_0 = 0x00;
   var OP_DATA_1 = 0x01;
   var OP_DATA_75 = 0x4b;
@@ -275,15 +275,81 @@
 
   function facts() {
     return {
-      what: 'SilverScript is Kaspa’s high-level smart-contract language. silverc compiles .sil to native Kaspa Script (no EVM, no VM). State lives in the UTXO. v1-rc1 is the compatibility target; v1 mainnet is planned one week after rc1 unless blockers appear.',
-      notArgent: 'Argent in this wallet is still the English → intent → local P2SH builder. SilverScript is the official Kaspa compiler for richer covenants (loops, arrays, KCC-01 dispatch, N:M covenant declarations). Do not claim Argent compiles .sil.',
-      howToCompile: 'Install silverscript, run `silverc contract.sil -o contract.json` (optional --constructor-args args.json). That JSON is a SilAbiArtifact (schema_version 1).',
-      howWeUseIt: 'Paste the silverc JSON into KCC20. We P2SH-hash the bytecode (blake2b-256 → kaspa:p), fund it, and later spend with encodeEntry() (args + 4-byte dispatch tag) as the signature script. PIN/KasWare still signs only P2PK funding.',
-      kcc01: 'Every entry is dispatched with blake3("name(type1,type2,...)")[0..4], stored on the artifact as dispatch_tag. We do not recompute it; we use the tag silverc wrote.',
-      kcc20: 'Official KCC20 examples live in the silverscript repo (kcc20.sil / kcc20-minter.sil). KRON tokens in this wallet are the production KCC20 already on mainnet — do not mix the example contracts with live KRON ticks.',
-      testnetNote: 'Upstream README still cautions bytecode on testnet-10 until v1. rc1 is intended to be functionally equivalent to v1.',
+      what: 'SilverScript v1.0.0 is the official Kaspa high-level smart-contract language. silverc compiles .sil to native Kaspa Script (no EVM). State lives in the UTXO. Covenant declarations cover 1:1, 1:N fanout, and N:M leader/delegate in one transaction.',
+      notArgent: 'Argent 1 is English → one P2SH. Argent 2 funds many vaults in one tx and attaches the matching v1 .sil (spend-limit, N:M). Argent does not compile .sil — silverc does.',
+      howToCompile: 'git clone kaspanet/silverscript (tag v1.0.0). cargo run -p silverscript-lang --bin silverc -- contract.sil --constructor-args args.json',
+      howWeUseIt: 'Paste silverc JSON (schema_version 1). We P2SH-hash bytecode (kaspa:p), fund it, spend with encodeEntry() (args + 4-byte dispatch tag). PIN/KasWare signs only P2PK funding.',
+      kcc01: 'Dispatch tag is blake3("name(type1,type2,...)")[0..4] from silverc. We use the tag on the artifact.',
+      kcc20: 'KCC20 transfer in v1 is binding=cov N:M with a shared delegate. Live KRON ticks in this wallet are production KCC20 — do not mix example contracts with those ticks.',
+      testnetNote: 'v1.0.0 is the official release. Compile with that tag, not rc1, when the dApp intends SilverScript.',
       release: RELEASE
     };
+  }
+
+  var TEMPLATES = {
+    spendlimit: {
+      id: 'spendlimit',
+      title: 'Weekly spend cap',
+      sil: 'pragma silverscript ^1.0.0;\n\n'
+        + 'contract WeeklySpendCap(pubkey owner, int capSompi, int windowMs) {\n'
+        + '    int spent = 0;\n'
+        + '    int windowStart = 0;\n\n'
+        + '    entry spend(sig ownerSig, int paySompi) {\n'
+        + '        require(checkSig(ownerSig, owner));\n'
+        + '        int start = windowStart;\n'
+        + '        int spentNow = spent;\n'
+        + '        if (start == 0 || tx.time >= start + windowMs) {\n'
+        + '            start = tx.time;\n'
+        + '            spentNow = 0;\n'
+        + '        }\n'
+        + '        require(paySompi > 0);\n'
+        + '        require(spentNow + paySompi <= capSompi);\n'
+        + '        int minerFee = 1000;\n'
+        + '        int remain = tx.inputs[this.activeInputIndex].value - paySompi - minerFee;\n'
+        + '        require(remain >= 0);\n'
+        + '        require(tx.outputs[0].value == paySompi);\n'
+        + '        validateOutputState(1, State { spent: spentNow + paySompi, windowStart: start });\n'
+        + '        require(tx.outputs[1].value == remain);\n'
+        + '    }\n'
+        + '}\n'
+    },
+    vaultnm: {
+      id: 'vaultnm',
+      title: 'N:M multi-state (one tx)',
+      sil: 'pragma silverscript ^1.0.0;\n\n'
+        + 'contract VaultNM(int max_ins, int max_outs, int init_amount, byte[32] init_owner, int init_round) {\n'
+        + '    int amount = init_amount;\n'
+        + '    byte[32] owner = init_owner;\n'
+        + '    int round = init_round;\n\n'
+        + '    #[covenant(binding = cov, from = max_ins, to = max_outs, mode = verification)]\n'
+        + '    function conserve_and_bump(State[] prev_states, State[] new_states, sig leader_sig) {\n'
+        + '        require(new_states.length > 0);\n'
+        + '        int in_sum = 0;\n'
+        + '        for(i, 0, prev_states.length, max_ins) { in_sum = in_sum + prev_states[i].amount; }\n'
+        + '        int out_sum = 0;\n'
+        + '        for(i, 0, new_states.length, max_outs) {\n'
+        + '            out_sum = out_sum + new_states[i].amount;\n'
+        + '            require(new_states[i].owner == prev_states[0].owner);\n'
+        + '            require(new_states[i].round == prev_states[0].round + 1);\n'
+        + '        }\n'
+        + '        require(in_sum >= out_sum);\n'
+        + '    }\n\n'
+        + '    #[covenant.delegate]\n'
+        + '    function authorizeDelegate(sig owner_sig) {\n'
+        + '        require(checkSig(owner_sig, pubkey(owner)));\n'
+        + '    }\n'
+        + '}\n'
+    }
+  };
+
+  function matchSilverIntent(type, message) {
+    var t = String(type || '').toLowerCase();
+    var m = String(message || '').toLowerCase();
+    var blob = t + ' ' + m;
+    if (/spend\s*limit|weekly|allowance|cap\b|budget/.test(blob)) return TEMPLATES.spendlimit;
+    if (/\bn\s*:\s*m\b|multi.?state|argent\s*2|parallel|batch vault/.test(blob)) return TEMPLATES.vaultnm;
+    if (TEMPLATES[t]) return TEMPLATES[t];
+    return null;
   }
 
   function compileVaultPayload(opts) {
@@ -318,6 +384,8 @@
     val: val,
     facts: facts,
     compileVaultPayload: compileVaultPayload,
+    templates: TEMPLATES,
+    matchSilverIntent: matchSilverIntent,
     pushInt: pushInt,
     pushBytes: pushBytes
   };
@@ -328,6 +396,8 @@ export const parse = _sil.parse;
 export const encodeEntry = _sil.encodeEntry;
 export const redeemHex = _sil.redeemHex;
 export const compileVaultPayload = _sil.compileVaultPayload;
+export const matchSilverIntent = _sil.matchSilverIntent;
+export const silverTemplates = _sil.templates;
 export const summary = _sil.summary;
 export const facts = _sil.facts;
 export const contractOf = _sil.contract;

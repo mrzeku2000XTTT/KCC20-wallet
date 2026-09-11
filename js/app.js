@@ -11,9 +11,9 @@ import {
   fetchKcc20Portfolio, fetchKrc20Portfolio, fetchKcc20PortfolioMany, fetchKrc20PortfolioMany,
   fetchKronAddrTrades, fetchKronTokenUtxos, fetchKronAddrHoldings, KRON_IDX,
   krc20Logo, toTokenRaw, setVaultOwner, kcc20Identicon, VAULT_GROUPS, LIFE_KINDS, lifeKindMeta
-} from './kcc20.js?v=124';
-import { parseIntent, describeIntent, askFor, parseDurationField, interpretVaultChat, normalizeChat, normalizeVaultType } from './intent.js?v=125';
-import { parse as parseSilArtifact, redeemHex as silRedeemHex } from './silverscript.js?v=184';
+} from './kcc20.js?v=125';
+import { parseIntent, describeIntent, askFor, parseDurationField, interpretVaultChat, normalizeChat, normalizeVaultType, collectKasAmount } from './intent.js?v=126';
+import { parse as parseSilArtifact, redeemHex as silRedeemHex, matchSilverIntent } from './silverscript.js?v=185';
 import { payloadFromAddress } from './script.js?v=90';
 import { explainTransaction, scorpionAnswer } from './scorpion.js?v=114';
 import {
@@ -25,7 +25,7 @@ import {
   newHashlockSecret, checkinHop, currentHop, parseXmssKit, p2shFromRedeemHex, spendXmssVault,
   disconnectRpc, buildDcaDrips, sendKasMany, releaseDcaDrip, cancelDcaDrip, isMassError
 } from './tx.js?v=223';
-import { bootDappConnect, pingTttDappFrame, pingKasdistroDappFrame, TTT_TREASURY } from './dappConnect.js?v=200';
+import { bootDappConnect, pingTttDappFrame, pingKasdistroDappFrame, TTT_TREASURY } from './dappConnect.js?v=201';
 import { changenowEstimate, changenowCreate, changenowWidgetUrl, cnFrom } from './changenow.js?v=180';
 import { schedulePersistIframeVault, bootIframeVaultWatch } from './iframeVault.js?v=122';
 import { kronMarkets, quoteKronTrade, executeKronTrade, formatKasSompi, lookupKronTick, liveQuote, tradeCostLines, attachKronLogos, kronCandles, kronLogoFor, quoteKcc20Bridge, executeKcc20Bridge, formatTokenRaw } from './kronTrade.js?v=232';
@@ -67,7 +67,7 @@ import {
   ksocialFeeKas
 } from './ksocial.js?v=207';
 
-export const BUILD = '234'; // KBUILD Apps + Google SEO (about.html, sitemap)
+export const BUILD = '235';
 const DESK_ID_KEY = 'kcc20_desk_id_v1';
 const DESK_VAULT_KEY = 'kcc20_desk_vault_v1';
 
@@ -89,6 +89,7 @@ function productForIntent(intent) {
   if (t === 'timelock') return VAULT_PRODUCTS.find(p => p.id === 'timelock');
   if (t === 'sentinel') return VAULT_PRODUCTS.find(p => p.id === 'sentinel' || p.type === 'sentinel');
   if (t === 'onramp') return VAULT_PRODUCTS.find(p => p.id === 'onramp' || p.type === 'onramp');
+  if (t === 'spendlimit') return VAULT_PRODUCTS.find(p => p.id === 'spendlimit' || p.type === 'spendlimit');
   return VAULT_PRODUCTS.find(p => p.id === t)
     || VAULT_PRODUCTS.find(p => p.type === t)
     || { id: t, name: t, type: t };
@@ -1555,11 +1556,14 @@ async function switchDappWallet(id) {
 function describeVaultIntent(spec) {
   const specType = normalizeVaultType(spec?.type || spec?.vaultType || spec?.preset || spec?.product || '') || String(spec?.type || '').trim();
   const specParams = spec?.params && typeof spec.params === 'object' ? { ...spec.params } : {};
+  const kasAmt = collectKasAmount(spec);
+  if (kasAmt) specParams.amountKas = kasAmt;
   if (!spec?.params && spec && typeof spec === 'object') {
-    ['amountKas', 'lockMinutes', 'lockDays', 'beneficiary', 'buyerAddress', 'counterparty', 'payee', 'payKas', 'tick', 'amountToken', 'destination', 'receiver', 'kit', 'hopCount', 'periods'].forEach((k) => {
+    ['amountKas', 'amount', 'kas', 'lockMinutes', 'lockDays', 'beneficiary', 'buyerAddress', 'counterparty', 'payee', 'payKas', 'tick', 'amountToken', 'destination', 'receiver', 'kit', 'hopCount', 'periods'].forEach((k) => {
       if (spec[k] != null && specParams[k] == null) specParams[k] = spec[k];
     });
   }
+  if (kasAmt) specParams.amountKas = kasAmt;
   if (spec?.message) {
     const view = interpretVaultChat(spec.message, specType ? { type: specType, params: specParams } : null);
     if (view.kind === 'talk') {
@@ -1586,6 +1590,10 @@ function describeVaultIntent(spec) {
       if (hardParsed && mt !== parsedType && parsedType === 'sentinel') intent.type = 'sentinel';
       else intent.type = mt;
     }
+    if (intent && (intent.type === 'silverscript' || intent.type === 'spendlimit')) {
+      const tpl = matchSilverIntent(intent.type, spec.message);
+      if (tpl?.sil && !intent.params.sil) intent.params.sil = tpl.sil;
+    }
     return {
       complete: !intent.missing?.length,
       ask: askFor(intent.missing),
@@ -1598,13 +1606,21 @@ function describeVaultIntent(spec) {
     return { complete: false, ask: 'Need a vault type (timelock, sentinel / deadman, escrow, …) or a message Argent can parse.', type: '', summary: '', intent: null };
   }
   const intent = { type: specType, params: specParams, missing: [], complete: true, source: 'dapp' };
+  if (!(Number(specParams.amountKas) > 0) && !(specParams.amountToken && specParams.tick)) {
+    intent.missing.push('amount in KAS');
+    intent.complete = false;
+  }
   if (specType === 'sentinel' && !specParams.beneficiary && !specParams.heir) {
-    intent.missing = ['heir / beneficiary kaspa: address'];
+    intent.missing.push('heir / beneficiary kaspa: address');
     intent.complete = false;
   }
   if (specType === 'onramp' && !specParams.receiver && !specParams.destination) {
-    intent.missing = ['buyer kaspa: address who can claim'];
+    intent.missing.push('buyer kaspa: address who can claim');
     intent.complete = false;
+  }
+  if (intent.type === 'silverscript' || intent.type === 'spendlimit') {
+    const tpl = matchSilverIntent(intent.type, spec.message || spec.type);
+    if (tpl?.sil && !intent.params.sil) intent.params.sil = tpl.sil;
   }
   return {
     complete: intent.complete,
@@ -1620,6 +1636,11 @@ async function dappCompileVault(spec) {
   if (preview.type === 'send') {
     throw new Error('That is a plain send, not a vault. Call sendKas({ dest, amount }).');
   }
+  const kasAmt = collectKasAmount(spec) || collectKasAmount(preview.intent);
+  if (kasAmt && preview.intent?.params) preview.intent.params.amountKas = kasAmt;
+  if (!(Number(preview.intent?.params?.amountKas) > 0) && !(preview.intent?.params?.amountToken && preview.intent?.params?.tick)) {
+    throw new Error('Argent needs a real amount in KAS. Pass amount or amountKas (e.g. compileVault({ type, amount: 10, params })).');
+  }
   if (!preview.complete || !preview.intent) {
     throw new Error(preview.ask || 'Argent needs more fields');
   }
@@ -1634,6 +1655,93 @@ async function dappCompileVault(spec) {
     txId: funded?.txId || '',
     explorer: funded?.txId ? ('https://kas.fyi/transaction/' + funded.txId) : '',
     params: vault.params || preview.intent.params
+  };
+}
+
+async function fundVaultsMany(vaults, opts = {}) {
+  if (!vaults?.length) throw new Error('Argent 2 needs at least one vault');
+  if (vaults.length === 1) return fundVault(vaults[0], opts);
+  const silent = !!opts.silent;
+  if (!wallet?.address) throw new Error('No wallet');
+  hydrateNativeKey(wallet);
+  if (!opts.skipPin) {
+    try { await requirePin('Confirm Argent 2 multi-lock'); }
+    catch (e) {
+      if (errText(e) === 'cancelled') return;
+      throw e;
+    }
+  }
+  const outputs = vaults.map((v) => {
+    const amt = Number(v.params?.amountKas);
+    if (!(amt > 0)) throw new Error('Each Argent 2 vault needs a real amountKas');
+    return { address: v.address, amount: kasToSompi(amt) };
+  });
+  let availableUtxos = [];
+  try {
+    availableUtxos = wallet.receiveAddrs?.length > 1
+      ? await fetchOwnedUtxos(wallet)
+      : await fetchAddressUtxos(wallet.address);
+  } catch {}
+  if (!availableUtxos.length) throw new Error('No UTXOs — receive KAS first');
+  await pingPublicNode();
+  const result = await sendKasMany({
+    wallet,
+    outputs,
+    utxos: availableUtxos,
+    signWithKasware: kaswareSigning(wallet)
+  });
+  vaults.forEach((v) => {
+    const lockedKas = Number(v.params?.amountKas);
+    const lockedSompi = Math.round(lockedKas * 1e8);
+    const mins = Number(v.params?.lockMinutes || 0);
+    const unlockAt = mins ? Date.now() + mins * 60 * 1000 : 0;
+    updateVault(v.address, {
+      status: unlockAt && unlockAt > Date.now() ? 'locked' : 'funded',
+      fundTxId: result.txId,
+      fundedSompi: lockedSompi,
+      lockedSompi: lockedSompi,
+      fundFeeKas: result.feeKas || 0,
+      unlockAt
+    });
+  });
+  afterTx();
+  if (silent) return { txId: result.txId, feeKas: result.feeKas, count: vaults.length, node: result.node };
+  return { txId: result.txId, feeKas: result.feeKas, count: vaults.length, node: result.node };
+}
+
+async function dappCompileVaults(spec) {
+  const list = spec?.vaults || spec?.intents || spec?.items || [];
+  if (!Array.isArray(list) || !list.length) {
+    throw new Error('Argent 2: pass vaults: [{ type, amount, params }, ...] — one tx, many states.');
+  }
+  const built = [];
+  for (const item of list) {
+    const preview = describeVaultIntent(item);
+    if (preview.type === 'send') throw new Error('Use sendKas for plain sends, not compileVaults');
+    const kasAmt = collectKasAmount(item) || collectKasAmount(preview.intent);
+    if (kasAmt && preview.intent?.params) preview.intent.params.amountKas = kasAmt;
+    if (!(Number(preview.intent?.params?.amountKas) > 0) && !(preview.intent?.params?.amountToken && preview.intent?.params?.tick)) {
+      throw new Error('Each Argent 2 vault needs a real amount in KAS');
+    }
+    if (!preview.complete || !preview.intent) throw new Error(preview.ask || 'Argent 2 needs more fields on a vault');
+    const p = productForIntent(preview.intent);
+    const vault = await buildCovenant(p, preview.intent.params, { silent: true });
+    if (!vault?.address) throw new Error('Argent 2 did not compile a kaspa:p vault');
+    built.push(vault);
+  }
+  const funded = await fundVaultsMany(built, { skipPin: true, silent: true });
+  return {
+    argent: 2,
+    txId: funded.txId,
+    feeKas: funded.feeKas,
+    node: funded.node,
+    vaults: built.map((v) => ({
+      type: v.type,
+      name: v.name,
+      address: v.address,
+      amountKas: v.params?.amountKas,
+      params: v.params
+    }))
   };
 }
 
@@ -1742,6 +1850,7 @@ function dappHooks() {
     tradeKron: dappTradeKron,
     describeVaultIntent,
     compileVault: dappCompileVault,
+    compileVaults: dappCompileVaults,
     sendKas: dappSendKas,
     openWallet: dappOpenWallet,
     afterTx
@@ -10425,7 +10534,7 @@ async function buildCovenant(p, explicit, opts = {}) {
       payload.kitHeight = kit.height;
       payload.masterRoot = kit.masterRoot;
       payload.scriptBytes = kit.scriptBytes;
-    } else if (p.type === 'silverscript') {
+    } else if (p.type === 'silverscript' || (p.type === 'spendlimit' && (params.artifact || params.artifactJson || params.redeemHex))) {
       const art = parseSilArtifact(params.artifact || params.artifactJson);
       const names = Object.keys(art.contracts || {});
       const cName = params.contract || names[0];
@@ -10434,6 +10543,15 @@ async function buildCovenant(p, explicit, opts = {}) {
       payload.silContract = cName;
       payload.silEntries = Object.keys(art.contracts[cName].entries || {});
       payload.redeemHex = redeem;
+    } else if (p.type === 'spendlimit') {
+      const sil = matchSilverIntent('spendlimit', '') || matchSilverIntent(p.type, params.period);
+      if (sil?.sil) payload.sil = sil.sil;
+      payload.capKas = params.capKas || params.payKas;
+      payload.period = params.period || 'weekly';
+      const wait = Number(params.lockMinutes) || Math.round((Number(params.lockDays) || 7) * 1440) || 10080;
+      built = await buildTimelockCovenant({ pubkeyHex: wallet.pubKey, minutes: wait });
+      payload.lockMinutes = wait;
+      payload.argentNote = 'Envelope until silverc v1.0.0 artifact is attached. .sil is on params.sil.';
     } else if (p.type === 'timelock') {
       built = await buildTimelockCovenant({ pubkeyHex: wallet.pubKey, minutes });
     } else if (p.type === 'life') {

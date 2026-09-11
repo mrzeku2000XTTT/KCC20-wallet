@@ -11,7 +11,7 @@ const HOST_METHODS = [
   'switchNetwork', 'signPskt', 'signPsbt', 'pushTx', 'getUtxoEntries', 'getBalance',
   'getTokenBalance', 'getHoldings', 'getState', 'sendToken', 'sendKcc20', 'payToken', 'payKcc20', 'fundCredits',
   'quoteKron', 'quoteToken', 'buyKron', 'buyToken', 'sellKron', 'sellToken', 'tradeKron', 'tradeToken',
-  'compileVault', 'lockVault', 'sendKas', 'sendKaspa', 'openWallet'
+  'compileVault', 'lockVault', 'compileVaults', 'lockVaults', 'sendKas', 'sendKaspa', 'openWallet'
 ];
 
 let hooks = null;
@@ -165,7 +165,7 @@ function maybeCloseDappPopup(method) {
       connect: 1, requestAccounts: 1, signPskt: 1, signPsbt: 1, pushTx: 1, disconnect: 1,
       sendToken: 1, sendKcc20: 1, payToken: 1, payKcc20: 1, fundCredits: 1,
       buyKron: 1, buyToken: 1, sellKron: 1, sellToken: 1, tradeKron: 1, tradeToken: 1,
-      compileVault: 1, lockVault: 1, sendKas: 1, sendKaspa: 1
+      compileVault: 1, lockVault: 1, compileVaults: 1, lockVaults: 1, sendKas: 1, sendKaspa: 1
     };
     // openWallet must keep the popup visible (TTT Send / app-store unlock).
     if (!closeAfter[String(method || '')]) return;
@@ -655,19 +655,54 @@ async function handleTradeKron(req) {
   return hooks.tradeKron({ tick, side, amount });
 }
 
+function collectKasAmount(src, depth) {
+  if (src == null) return '';
+  const d = depth || 0;
+  if (d > 4) return '';
+  if (typeof src === 'number' && Number.isFinite(src) && src > 0) return String(src);
+  if (typeof src === 'string') {
+    const t = src.trim().replace(/,/g, '');
+    if (!t || /^an amount$/i.test(t)) return '';
+    const m = t.match(/(\d+(?:\.\d+)?)\s*(kas|kaspa)?\b/i);
+    if (m && Number(m[1]) > 0) return m[1];
+    return '';
+  }
+  if (typeof src !== 'object') return '';
+  const keys = ['amountKas', 'amount', 'kas', 'kasAmount', 'value', 'lockKas', 'lockAmount', 'fundKas'];
+  for (let i = 0; i < keys.length; i++) {
+    const v = collectKasAmount(src[keys[i]], d + 1);
+    if (v) return v;
+  }
+  if (src.params) {
+    const v = collectKasAmount(src.params, d + 1);
+    if (v) return v;
+  }
+  return '';
+}
+
 function vaultIntentFromReq(params) {
   const p = params || {};
+  const nested = (p.params && typeof p.params === 'object') ? { ...p.params } : {};
+  const kas = collectKasAmount(p) || collectKasAmount(nested);
+  if (kas) nested.amountKas = kas;
+  ['lockMinutes', 'lockDays', 'beneficiary', 'heir', 'buyerAddress', 'destination', 'receiver', 'tick', 'amountToken', 'capKas', 'period', 'artifact'].forEach((k) => {
+    if (p[k] != null && nested[k] == null) nested[k] = p[k];
+  });
   if (p.message || p.text || p.prompt) {
     return {
       message: String(p.message || p.text || p.prompt || '').trim(),
       type: p.type || p.vaultType || p.preset || p.product || '',
-      params: p.params || {}
+      params: nested,
+      amountKas: kas,
+      amount: kas
     };
   }
   return {
     type: String(p.type || p.vaultType || p.preset || p.product || '').trim(),
-    params: p.params || p,
-    message: ''
+    params: Object.keys(nested).length ? nested : (p.params || p),
+    message: '',
+    amountKas: kas,
+    amount: kas
   };
 }
 
@@ -689,9 +724,12 @@ async function handleCompileVault(req) {
   if (preview && preview.type === 'send') {
     throw new Error('That is a plain send, not a vault. Call sendKas({ dest, amount }). Time Capsule would return to you, not the destination.');
   }
-  if (preview && preview.complete === false) {
-    throw new Error(preview.ask || 'Argent needs more fields (amount, duration, or a kaspa: address).');
+  const missing = preview?.intent?.missing || [];
+  const missingElse = missing.filter((m) => !/amount/i.test(String(m)));
+  if (preview && preview.complete === false && missingElse.length) {
+    throw new Error(preview.ask || 'Argent needs more fields (duration or a kaspa: address).');
   }
+  let amountKas = collectKasAmount(spec) || collectKasAmount(preview?.intent) || collectKasAmount(req.params);
   const payBody = async () => {
     const live = hooks.getWallet?.() || w;
     const payerLine = (typeof hooks.payerLabel === 'function' && hooks.payerLabel())
@@ -704,7 +742,9 @@ async function handleCompileVault(req) {
         + '<div class="kv kv-stack"><span class="k">WALLET</span><span class="v">' + esc(payerLine) + (kw ? ' · KasWare' : '') + '</span></div>'
         + '<div class="kv"><span class="k">Type</span><span class="v">' + esc(preview.type || spec.type || 'vault') + '</span></div>'
         + '<div class="kv kv-stack"><span class="k">Intent</span><span class="v">' + esc(preview.summary || '') + '</span></div>'
-        + '<p class="muted" style="text-align:left;padding:8px 0 0;">Time Capsule / life lock returns to this wallet. A grandson only gets funds on timeout if this is a sentinel with his kaspa:q as beneficiary.</p>'
+        + '<div class="field" style="margin-top:10px;"><label>Amount (KAS) to lock</label>'
+        + '<input id="dapp-vault-amt" type="text" inputmode="decimal" value="' + esc(amountKas) + '" placeholder="e.g. 10"></div>'
+        + '<p class="muted" style="text-align:left;padding:8px 0 0;">This is the real KAS funded into the covenant. Network fee is extra. Time Capsule / life lock returns to this wallet. A grandson only gets funds on timeout if this is a sentinel with his kaspa:q as beneficiary.</p>'
     };
   };
   let view = await payBody();
@@ -729,7 +769,72 @@ async function handleCompileVault(req) {
   } else if (typeof hooks.requirePin === 'function') {
     await hooks.requirePin('Confirm vault fund');
   }
-  return hooks.compileVault({ ...spec, skipPin: true });
+  const typed = collectKasAmount($('dapp-vault-amt')?.value) || amountKas;
+  if (!(Number(typed) > 0)) throw new Error('Enter a real amount of KAS greater than 0. dApps must pass amount or amountKas on compileVault.');
+  amountKas = typed;
+  const params = { ...(spec.params || {}), amountKas };
+  return hooks.compileVault({ ...spec, params, amountKas, amount: amountKas, skipPin: true });
+}
+
+async function handleCompileVaults(req) {
+  await ensureBoundPayer();
+  let w = await ensureUnlocked();
+  const origin = req.origin;
+  if (!originAllowed(origin)) await handleConnect(req);
+  if (typeof hooks.compileVaults !== 'function') {
+    throw new Error('This wallet build cannot run Argent 2. Hard-refresh KCC20 (BUILD 235+).');
+  }
+  const list = req.params?.vaults || req.params?.intents || req.params?.items || [];
+  if (!Array.isArray(list) || !list.length) {
+    throw new Error('Argent 2 needs vaults: [{ type, amount, params }, ...]');
+  }
+  const rows = list.map((item, i) => {
+    const spec = vaultIntentFromReq(item);
+    const amt = collectKasAmount(spec) || collectKasAmount(item);
+    return { spec, amt, type: spec.type || ('vault ' + (i + 1)) };
+  });
+  const missingAmt = rows.filter((r) => !(Number(r.amt) > 0));
+  if (missingAmt.length) throw new Error('Every Argent 2 vault needs a real amount / amountKas');
+  const payBody = async () => {
+    const live = hooks.getWallet?.() || w;
+    const payerLine = (typeof hooks.payerLabel === 'function' && hooks.payerLabel())
+      || (live?.name || 'Wallet') + ' · ' + (live?.address || '');
+    const kw = !!(walletIsKaswareChip(live) || kaswareSigning(live));
+    const lines = rows.map((r) => '<div class="kv"><span class="k">' + esc(r.type) + '</span><span class="v">' + esc(r.amt) + ' KAS</span></div>').join('');
+    const total = rows.reduce((a, r) => a + Number(r.amt), 0);
+    return {
+      kw,
+      html:
+        '<p class="muted" style="text-align:left;padding:0 0 8px;"><b>Argent 2 — one transaction, many vaults.</b> Keys stay here. Argent 1 (compileVault) is unchanged.</p>'
+        + '<div class="kv kv-stack"><span class="k">WALLET</span><span class="v">' + esc(payerLine) + (kw ? ' · KasWare' : '') + '</span></div>'
+        + lines
+        + '<div class="kv"><span class="k">Total lock</span><span class="v">' + esc(String(total)) + ' KAS</span></div>'
+        + '<p class="muted" style="text-align:left;padding:8px 0 0;">Network fee once for the whole batch. SilverScript v1 N:M / spend-cap .sil is attached when that is the intent; silverc still compiles .sil.</p>'
+    };
+  };
+  let view = await payBody();
+  await showOverlay({
+    title: 'Argent 2 multi-lock',
+    origin,
+    approveLabel: view.kw ? 'Approve in KasWare' : 'Compile & lock all',
+    body: view.html,
+    onWalletChange: async () => {
+      view = await payBody();
+      if ($('dapp-body')) $('dapp-body').innerHTML = view.html;
+      const btn = $('dapp-approve');
+      if (btn) btn.textContent = view.kw ? 'Approve in KasWare' : 'Compile & lock all';
+    }
+  });
+  w = hooks.getWallet?.() || w;
+  if (typeof hooks.hydrateNativeKey === 'function') hooks.hydrateNativeKey(w);
+  const useKw = !!(view.kw || walletIsKaswareChip(w) || kaswareSigning(w));
+  if (useKw) {
+    if (typeof hooks.ensureKasware === 'function') await hooks.ensureKasware(w);
+    else if (!isKaswareInstalled()) throw new Error('KasWare is not in this browser');
+  } else if (typeof hooks.requirePin === 'function') {
+    await hooks.requirePin('Confirm Argent 2 multi-lock');
+  }
+  return hooks.compileVaults({ argent: 2, vaults: rows.map((r) => ({ ...r.spec, amountKas: r.amt, amount: r.amt, params: { ...(r.spec.params || {}), amountKas: r.amt } })) });
 }
 
 async function handleSendKas(req) {
@@ -843,6 +948,7 @@ async function dispatch(req) {
     return handleTradeKron(req);
   }
   if (method === 'compileVault' || method === 'lockVault') return handleCompileVault(req);
+  if (method === 'compileVaults' || method === 'lockVaults') return handleCompileVaults(req);
   if (method === 'sendKas' || method === 'sendKaspa') return handleSendKas(req);
   if (method === 'openWallet') return handleOpenWallet(req);
   throw new Error('Unknown method ' + method);

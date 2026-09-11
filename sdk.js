@@ -6,7 +6,7 @@
 */
 (function (root) {
   'use strict';
-  var SDK_VERSION = '169';
+  var SDK_VERSION = '170';
   if (root.kcc20 && root.kcc20.isKcc20 && String(root.kcc20.sdkVersion || '') === SDK_VERSION) return;
 
   function scriptOrigin() {
@@ -275,7 +275,7 @@
     connect: 1, requestAccounts: 1, signPskt: 1, signPsbt: 1, pushTx: 1, switchNetwork: 1,
     sendToken: 1, sendKcc20: 1, payToken: 1, payKcc20: 1, fundCredits: 1,
     buyKron: 1, buyToken: 1, sellKron: 1, sellToken: 1, tradeKron: 1, tradeToken: 1,
-    compileVault: 1, lockVault: 1, sendKas: 1, sendKaspa: 1, openWallet: 1
+    compileVault: 1, lockVault: 1, compileVaults: 1, lockVaults: 1, sendKas: 1, sendKaspa: 1, openWallet: 1
   };
 
   function closeAfterUse() {
@@ -481,6 +481,31 @@
     };
   }
 
+  function vaultRpcPayload(opts) {
+    var o = opts || {};
+    var params = {};
+    if (o.params && typeof o.params === 'object') {
+      Object.keys(o.params).forEach(function (k) { params[k] = o.params[k]; });
+    }
+    function pickAmt(v) {
+      if (v == null || v === '') return '';
+      if (typeof v === 'number' && v > 0) return String(v);
+      var m = String(v).trim().replace(/,/g, '').match(/(\d+(?:\.\d+)?)/);
+      return (m && Number(m[1]) > 0) ? m[1] : '';
+    }
+    var amt = pickAmt(o.amountKas) || pickAmt(o.amount) || pickAmt(o.kas) || pickAmt(params.amountKas) || pickAmt(params.amount) || pickAmt(params.kas);
+    if (amt) {
+      params.amountKas = amt;
+    }
+    return {
+      type: o.type || o.vaultType || o.preset || o.product || '',
+      message: o.message || o.text || o.prompt || '',
+      params: params,
+      amountKas: amt,
+      amount: amt
+    };
+  }
+
   var api = {
     isKcc20: true,
     sdkVersion: SDK_VERSION,
@@ -641,10 +666,22 @@
       return rpc(side === 'sell' ? 'sellKron' : 'buyKron', o).then(function (r) { closeAfterUse(); return r; });
     },
     compileVault: function (opts) {
-      return rpc('compileVault', opts || {}).then(function (r) { closeAfterUse(); return r; });
+      var o = opts || {};
+      if (o.vaults || o.intents || o.argent === 2) return api.compileVaults(o);
+      return rpc('compileVault', vaultRpcPayload(o)).then(function (r) { closeAfterUse(); return r; });
     },
     lockVault: function (opts) {
-      return rpc('compileVault', opts || {}).then(function (r) { closeAfterUse(); return r; });
+      var o = opts || {};
+      if (o.vaults || o.intents || o.argent === 2) return api.compileVaults(o);
+      return rpc('compileVault', vaultRpcPayload(o)).then(function (r) { closeAfterUse(); return r; });
+    },
+    compileVaults: function (opts) {
+      var o = opts || {};
+      var list = o.vaults || o.intents || o.items || [];
+      return rpc('compileVaults', { argent: 2, vaults: list.map(vaultRpcPayload) }).then(function (r) { closeAfterUse(); return r; });
+    },
+    lockVaults: function (opts) {
+      return api.compileVaults(opts);
     },
     sendKas: function (opts) {
       return rpc('sendKas', opts || {}).then(function (r) { closeAfterUse(); return r; });
@@ -719,6 +756,7 @@
       if (m === 'sellKron' || m === 'sellToken') return api.sellKron(p);
       if (m === 'tradeKron' || m === 'tradeToken') return api.tradeKron(p);
       if (m === 'compileVault' || m === 'lockVault') return api.compileVault(p);
+      if (m === 'compileVaults' || m === 'lockVaults') return api.compileVaults(p);
       if (m === 'sendKas' || m === 'sendKaspa') return api.sendKas(p);
       if (m === 'openWallet') return api.openWallet(p);
       return Promise.reject(new Error(m + ' is not supported by this KCC20 PWA build. Use connect / getTokenBalance / sendToken / buyKron / sendKaspa / openWallet.'));

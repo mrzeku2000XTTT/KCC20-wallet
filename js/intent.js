@@ -198,7 +198,33 @@ export function parseAddress(text) {
   return a;
 }
 
-const HARD_TYPES = { send: 1, sentinel: 1, escrow: 1, multisig: 1, recurring: 1, hashlock: 1, onramp: 1, xmss: 1, silverscript: 1, kcc20lock: 1 };
+const HARD_TYPES = { send: 1, sentinel: 1, escrow: 1, multisig: 1, recurring: 1, hashlock: 1, onramp: 1, xmss: 1, silverscript: 1, kcc20lock: 1, spendlimit: 1 };
+
+/** Pull a real KAS number from SDK / dApp payloads (top-level or params). */
+export function collectKasAmount(src, depth) {
+  if (src == null) return '';
+  const d = depth || 0;
+  if (d > 4) return '';
+  if (typeof src === 'number' && Number.isFinite(src) && src > 0) return String(src);
+  if (typeof src === 'string') {
+    const t = src.trim().replace(/,/g, '');
+    if (!t || /^an amount$/i.test(t)) return '';
+    const m = t.match(/(\d+(?:\.\d+)?)\s*(kas|kaspa)?\b/i);
+    if (m && Number(m[1]) > 0) return m[1];
+    return '';
+  }
+  if (typeof src !== 'object') return '';
+  const keys = ['amountKas', 'amount', 'kas', 'kasAmount', 'value', 'lockKas', 'lockAmount', 'fundKas'];
+  for (let i = 0; i < keys.length; i++) {
+    const v = collectKasAmount(src[keys[i]], d + 1);
+    if (v) return v;
+  }
+  if (src.params) {
+    const v = collectKasAmount(src.params, d + 1);
+    if (v) return v;
+  }
+  return '';
+}
 
 export function normalizeVaultType(raw) {
   const s = String(raw || '').toLowerCase().replace(/[_/]+/g, ' ').replace(/['’]/g, '').replace(/-/g, ' ').replace(/\s+/g, ' ').trim();
@@ -206,6 +232,7 @@ export function normalizeVaultType(raw) {
   const exact = {
     send: 'send', pay: 'send', transfer: 'send',
     timelock: 'timelock', 'time lock': 'timelock', 'time capsule': 'timelock', capsule: 'timelock', lock: 'timelock',
+    seniorguardian: 'sentinel', 'senior guardian': 'sentinel', guardian: 'sentinel', grandpa: 'sentinel', grandmother: 'sentinel',
     life: 'life', rent: 'life',
     escrow: 'escrow', 'hold for buyer': 'escrow',
     multisig: 'multisig', 'multi sig': 'multisig', 'two keys': 'multisig', '2 of 2': 'multisig', '2of2': 'multisig',
@@ -217,10 +244,11 @@ export function normalizeVaultType(raw) {
     onramp: 'onramp', 'on ramp': 'onramp', 'card sale': 'onramp', cardsale: 'onramp', 'debit card': 'onramp',
     xmss: 'xmss', 'xmss vault': 'xmss', pqs: 'xmss', pq: 'xmss',
     'post quantum': 'xmss', 'quantum safe': 'xmss', 'quantum vault': 'xmss',
-    silverscript: 'silverscript', silverc: 'silverscript', 'silver script': 'silverscript'
+    silverscript: 'silverscript', silverc: 'silverscript', 'silver script': 'silverscript',
+    spendlimit: 'spendlimit', 'spend limit': 'spendlimit', weekly: 'spendlimit', allowance: 'spendlimit', cap: 'spendlimit', budget: 'spendlimit'
   };
   if (exact[s]) return exact[s];
-  if (/dead\s*mans?|deadmanswitch|sentinel|\bdms\b|\bheir\b|check\s*in/.test(s)) return 'sentinel';
+  if (/dead\s*mans?|deadmanswitch|sentinel|\bdms\b|\bheir\b|check\s*in|senior\s*guardian|\bguardian\b/.test(s)) return 'sentinel';
   if (/time\s*capsule|time\s*lock/.test(s)) return 'timelock';
   if (/multi\s*sig|2\s*of\s*2/.test(s)) return 'multisig';
   if (/escrow/.test(s)) return 'escrow';
@@ -228,6 +256,7 @@ export function normalizeVaultType(raw) {
   if (/hash\s*lock|htlc/.test(s)) return 'hashlock';
   if (/xmss|\bpqs\b|\bpq\b|post\s*quantum|quantum\s*safe/.test(s)) return 'xmss';
   if (/silver\s*script|silverc|\.sil\b/.test(s)) return 'silverscript';
+  if (/spend\s*limit|weekly\s*cap|allowance|budget\s*cap/.test(s)) return 'spendlimit';
   if (/recurring|x402/.test(s)) return 'recurring';
   if (/kcc20\s*freeze|freeze tokens/.test(s)) return 'kcc20lock';
   return s.replace(/\s+/g, '');
@@ -248,6 +277,7 @@ function detectType(text, prev) {
   if (/\b(xmss|pqs|pq|post-?quantum|quantum[-\s]?safe|quantum\s+vault|public kit)\b/.test(t)
     || /"redeem_script_hex"|master_root_hex/i.test(t)) return 'xmss';
   if (/\b(silverscript|silverc|sil\s*abi|\.sil\b|kcc-?01)\b/.test(t) || /"schema_version"\s*:\s*1/.test(t)) return 'silverscript';
+  if (/\b(spend\s*limit|weekly\s*(cap|limit|budget)|allowance\s*cap)\b/.test(t)) return 'spendlimit';
   if (/\b(recurring|subscription|x402)\b/.test(t)) return 'recurring';
   if (/\b(hash\s*lock|htlc|hash vault)\b/.test(t)) return 'hashlock';
   if (/\b(send|pay|transfer)\b/.test(t) && parseAddress(t)) return 'send';
@@ -344,6 +374,19 @@ export function parseIntent(text, prev = null) {
       params.durationLabel = '5 minutes';
     }
   }
+  if (type === 'spendlimit') {
+    if (!params.capKas && params.payKas) params.capKas = params.payKas;
+    if (!params.capKas && params.amountKas) params.capKas = params.amountKas;
+    if (!params.period) params.period = /daily|day/.test(raw) ? 'daily' : (/monthly|month/.test(raw) ? 'monthly' : 'weekly');
+    if (!params.lockMinutes && !params.lockDays) {
+      const days = params.period === 'daily' ? 1 : (params.period === 'monthly' ? 30 : 7);
+      params.lockDays = days;
+      params.lockMinutes = days * 1440;
+      params.durationLabel = days + ' days';
+    }
+    if (prev?.params?.artifact) params.artifact = prev.params.artifact;
+    if (prev?.params?.capKas && !params.capKas) params.capKas = prev.params.capKas;
+  }
   if (type === 'silverscript') {
     if (prev?.params?.artifact) params.artifact = prev.params.artifact;
     if (!params.artifact) {
@@ -387,9 +430,12 @@ export function parseIntent(text, prev = null) {
     if (!params.amountKas) missing.push('amount in KAS');
     if (params.kitPrivate) missing.push('the PUBLIC XMSS kit (.public.json), not a private key file');
     else if (!params.kit) missing.push('XMSS public kit JSON from xmss_keygen.py');
+  } else if (type === 'spendlimit') {
+    if (!params.amountKas) missing.push('amount in KAS (the pot to lock)');
+    if (!params.capKas) missing.push('spend cap in KAS per window (e.g. capKas: 10 weekly)');
   } else if (type === 'silverscript') {
     if (!params.amountKas) missing.push('amount in KAS');
-    if (!params.artifact) missing.push('silverc JSON artifact (schema_version 1). Compile .sil with silverc — Argent does not compile .sil');
+    if (!params.artifact) missing.push('silverc JSON artifact (schema_version 1). Compile .sil with silverc v1.0.0 — Argent does not compile .sil');
   } else if (type === 'changenow') {
     if (tokenAmt) {
       params.amountToken = tokenAmt.amount;
@@ -442,7 +488,12 @@ export function describeIntent(intent) {
   if (intent.type === 'xmss') {
     return `PQS XMSS vault: lock ${amt} in the post-quantum script from this repo. Keys stay offline. Spend later with xmss_sign.py witness.`;
   }
-  if (intent.type === 'silverscript') return `SilverScript: lock ${amt} into silverc bytecode (P2SH). Spend with a KCC-01 entry. Argent does not compile .sil.`;
+  if (intent.type === 'silverscript') return `SilverScript v1: lock ${amt} into silverc bytecode (P2SH). Spend with a KCC-01 entry. Argent does not compile .sil.`;
+  if (intent.type === 'spendlimit') {
+    const cap = p.capKas != null ? p.capKas + ' KAS' : (p.payKas != null ? p.payKas + ' KAS' : 'a cap');
+    const per = p.period || p.durationLabel || 'weekly';
+    return `Spend cap: lock ${amt}, spend at most ${cap} per ${per}. SilverScript v1 stateful window (or a ${per} envelope until silverc artifact is attached).`;
+  }
   if (intent.type === 'changenow') return `ChangeNOW floating swap: send ${p.amountToken || p.amountKas || 'an amount'} ${p.from || p.tick || 'USDC'} — KAS pays out to this wallet.`;
   return `${intent.type}: ${amt}`;
 }

@@ -4,131 +4,238 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Kaspa Browser</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@1,600;1,700&family=DM+Sans:wght@400;500;600&display=swap" rel="stylesheet">
   <style>
-    :root { --tea:#70C7BA; --bg:#0C0D10; --bar:#14161C; --line:#282C37; --ink:#F3F4F6; --mute:#9aa3ad; }
+    :root {
+      --tea:#70C7BA; --cyan:#49A89A; --bg:#0F111A; --bar:#14161C; --card:#161822;
+      --line:#282C37; --ink:#F3F4F6; --mute:#8b93a0; --violet:#8B5CF6;
+    }
     * { box-sizing: border-box; }
-    html, body { margin:0; height:100%; background:var(--bg); color:var(--ink); font:14px/1.4 -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif; }
-    .chrome { display:flex; flex-direction:column; height:100%; }
-    .bar { display:flex; gap:6px; align-items:center; padding:8px; background:var(--bar); border-bottom:1px solid var(--line); }
-    .bar button { height:32px; min-width:32px; border:0; border-radius:8px; background:#1c2028; color:var(--ink); cursor:pointer; }
-    .bar input { flex:1; min-width:0; height:32px; border-radius:999px; border:1px solid var(--line); background:#0C0D10; color:var(--ink); padding:0 12px; outline:none; }
-    .bar input:focus { border-color:var(--tea); }
-    .go { background:var(--tea) !important; color:#062014 !important; font-weight:800; padding:0 12px; }
-    .chips { display:flex; gap:6px; padding:8px; overflow-x:auto; background:var(--bar); }
-    .chips button { flex-shrink:0; height:28px; padding:0 10px; border-radius:999px; border:1px solid var(--line); background:transparent; color:var(--mute); font-size:12px; cursor:pointer; }
-    iframe { flex:1; width:100%; border:0; background:#111; }
-    .note { padding:8px 12px; font-size:11px; color:var(--mute); background:var(--bar); }
-    .note a { color:var(--tea); }
-    .block {
-      flex:1; display:none; align-items:center; justify-content:center; padding:28px 20px; text-align:center;
+    html, body { margin:0; height:100%; background:var(--bg); color:var(--ink); font-family:"DM Sans",-apple-system,sans-serif; }
+    .app { display:flex; flex-direction:column; height:100%; }
+    .top {
+      display:flex; align-items:center; gap:8px; padding:10px 12px 6px;
     }
+    .icon-btn {
+      width:36px; height:36px; border:0; border-radius:10px; background:transparent; color:var(--ink); cursor:pointer; font-size:16px;
+    }
+    .search {
+      flex:1; display:flex; align-items:center; gap:8px; height:40px; padding:0 12px;
+      border-radius:999px; background:#1a1d27; border:1px solid var(--line);
+    }
+    .search input {
+      flex:1; min-width:0; border:0; background:transparent; color:var(--ink); outline:none; font-size:13px;
+    }
+    .search input::placeholder { color:#6b7280; }
+    .dial {
+      display:flex; gap:14px; overflow-x:auto; padding:12px 16px 8px;
+      scrollbar-width:none;
+    }
+    .dial::-webkit-scrollbar { display:none; }
+    .dial-item { flex:0 0 auto; width:72px; text-align:center; background:none; border:0; color:var(--ink); cursor:pointer; padding:0; }
+    .orb {
+      width:56px; height:56px; margin:0 auto 6px; border-radius:50%;
+      display:grid; place-items:center; font-weight:800; font-size:18px;
+      background:radial-gradient(circle at 30% 25%, #9ff0e4, var(--tea) 55%, #2a8f82);
+      color:#062014;
+    }
+    .orb.violet { background:radial-gradient(circle at 30% 25%, #c4b5fd, var(--violet) 55%, #4c1d95); color:#fff; }
+    .dial-item span { display:block; font-size:11px; color:var(--mute); }
+    .tabs { display:flex; gap:8px; padding:8px 16px; overflow-x:auto; }
+    .tabs button {
+      flex-shrink:0; height:30px; padding:0 12px; border-radius:999px; border:0;
+      background:#1a1d27; color:var(--mute); font-size:12px; font-weight:600; cursor:pointer;
+    }
+    .tabs button.on { background:var(--tea); color:#062014; }
+    .feed { flex:1; overflow:auto; padding:4px 12px 72px; }
+    .card {
+      background:var(--card); border:1px solid var(--line); border-radius:16px;
+      padding:14px 14px 12px; margin-bottom:10px; cursor:pointer; text-align:left; width:100%; color:inherit;
+    }
+    .card .meta { display:flex; justify-content:space-between; font-size:11px; color:var(--mute); margin-bottom:8px; }
+    .card h3 {
+      margin:0 0 6px; font-family:"Cormorant Garamond",Georgia,serif;
+      font-style:italic; font-weight:700; font-size:18px; line-height:1.25; letter-spacing:-.2px;
+    }
+    .card p { margin:0; color:var(--mute); font-size:12px; line-height:1.4; }
+    .card .by { margin-top:8px; font-size:11px; color:#6b7280; }
+    .web { display:none; flex-direction:column; flex:1; min-height:0; }
+    .web.on { display:flex; }
+    .home { display:flex; flex-direction:column; flex:1; min-height:0; }
+    .home.hide { display:none; }
+    .web-bar { display:flex; gap:6px; padding:6px 8px; background:var(--bar); }
+    .web-bar input { flex:1; height:32px; border-radius:999px; border:1px solid var(--line); background:#0C0D10; color:var(--ink); padding:0 12px; }
+    iframe { flex:1; border:0; background:#111; }
+    .block { display:none; flex:1; align-items:center; justify-content:center; padding:24px; text-align:center; }
     .block.on { display:flex; }
-    .block h2 { margin:0 0 8px; font-size:20px; }
-    .block p { color:var(--mute); margin:0 0 16px; max-width:28rem; }
-    .open {
-      display:inline-block; height:40px; line-height:40px; padding:0 18px; border-radius:999px;
-      background:var(--tea); color:#062014; font-weight:800; text-decoration:none;
+    .open { display:inline-block; margin-top:12px; padding:10px 16px; border-radius:999px; background:var(--tea); color:#062014; font-weight:800; text-decoration:none; }
+    .dock {
+      position:sticky; bottom:0; display:flex; justify-content:space-around;
+      padding:8px 12px calc(8px + env(safe-area-inset-bottom)); background:var(--bar); border-top:1px solid var(--line);
     }
-    iframe.hide { display:none; }
+    .dock button { background:none; border:0; color:var(--mute); font-size:18px; cursor:pointer; }
+    .dock button.on { color:var(--tea); }
+    .muted { color:var(--mute); font-size:12px; padding:12px; text-align:center; }
   </style>
 </head>
 <body>
-  <div class="chrome">
-    <div class="bar">
-      <button type="button" id="back" title="Back">‹</button>
-      <button type="button" id="reload" title="Reload">↻</button>
-      <input id="url" type="text" inputmode="url" placeholder="kaspa.org or search" value="https://kaspa.org">
-      <button type="button" class="go" id="go">Go</button>
-    </div>
-    <div class="chips">
-      <button type="button" data-href="https://kaspa.org">kaspa.org</button>
-      <button type="button" data-href="https://kas.fyi">kas.fyi</button>
-      <button type="button" data-href="https://explorer.kaspa.org">explorer</button>
-      <button type="button" data-href="https://kcc-20-wallet.vercel.app/about.html">KCC20 Wallet</button>
-      <button type="button" data-search="1">Search</button>
-    </div>
-    <iframe id="view" title="Kaspa Browser" src="https://kaspa.org" referrerpolicy="no-referrer-when-downgrade" allow="clipboard-write"></iframe>
-    <div class="block" id="block">
-      <div>
-        <h2 id="block-title">This site blocks in-wallet view</h2>
-        <p id="block-copy">DuckDuckGo and many search engines refuse iframes. Open them in a full tab — same as KaspaBrowser’s real WebView.</p>
-        <a class="open" id="block-open" href="#" target="_blank" rel="noopener">Open in new tab</a>
+  <div class="app">
+    <div class="home" id="home">
+      <div class="top">
+        <button class="icon-btn" id="home-btn" title="Home">⌂</button>
+        <div class="search">
+          <input id="q" placeholder="Search or type kaspa...." autocomplete="off">
+          <span style="color:var(--tea)">✦</span>
+        </div>
+        <button class="icon-btn" id="plus" title="New">+</button>
+      </div>
+      <div class="dial" id="dial"></div>
+      <div class="tabs" id="tabs"></div>
+      <div class="feed" id="feed"><p class="muted">Loading Kaspa feed…</p></div>
+      <div class="dock">
+        <button class="on" type="button" id="tab-web">🌐</button>
+        <button type="button" title="Mesh (Android only)">✺</button>
+        <button type="button" title="Settings" id="tab-set">⚙</button>
       </div>
     </div>
-    <div class="note">Chrome inspired by <a href="https://github.com/Curious-being99/Kaspa-browser-" target="_blank" rel="noopener">KaspaBrowser</a>. HTTPS only. Search opens a new tab (DuckDuckGo blocks iframes). Keys stay in KCC20 Wallet.</div>
+    <div class="web" id="web">
+      <div class="web-bar">
+        <button class="icon-btn" id="back">‹</button>
+        <input id="url">
+        <button class="icon-btn" id="close-web">⌂</button>
+      </div>
+      <iframe id="view" title="page"></iframe>
+      <div class="block" id="block">
+        <div>
+          <h2 id="block-title">Blocked in-wallet</h2>
+          <p id="block-copy" class="muted">This site refuses iframes. Open it in a new tab like the Android WebView would.</p>
+          <a class="open" id="block-open" href="#" target="_blank" rel="noopener">Open in new tab</a>
+        </div>
+      </div>
+    </div>
   </div>
   <script>
     (function () {
+      var DIAL = [
+        { label: 'Kaspa.org', href: 'https://kaspa.org', cls: '' },
+        { label: 'mykai.dev', href: 'https://mykai.dev', cls: '' },
+        { label: 'Kaspa.com', href: 'https://kaspa.com', cls: '' },
+        { label: 'Kaspa.stream', href: 'https://kaspa.stream', cls: 'violet' }
+      ];
+      var TABS = ['All', 'X', 'YouTube', 'News', 'Reddit'];
+      var FRAME_BLOCK = /(^|\.)(duckduckgo|google|bing|facebook|instagram|youtube|twitter|x\.com|reddit|discord)\./i;
+      var FALLBACK = [
+        { title: 'Cool kaspa apps you use?', desc: 'I want to explore kaspa ecosystem so I would like to hear about apps on kaspa you use.', url: 'https://www.reddit.com/r/kaspa/', category: 'Reddit', author: 'u/Joy_Boy_12', ago: '4h ago' },
+        { title: "Inside Kaspa's Toccata Hard Fork and Its Bet on Becoming a Smart Contract Platform", desc: 'Inside Kaspa’s Toccata Hard Fork and Its Bet on Becoming a Smart Contract Platform — Cryptonews.net', url: 'https://cryptonews.net', category: 'News', author: 'Cryptonews.net', ago: '6h ago' }
+      ];
+      var items = FALLBACK.slice();
+      var filter = 'All';
+      var home = document.getElementById('home');
+      var web = document.getElementById('web');
       var view = document.getElementById('view');
-      var input = document.getElementById('url');
       var block = document.getElementById('block');
-      var blockOpen = document.getElementById('block-open');
-      var hist = ['https://kaspa.org'];
-      var FRAME_BLOCK = /(^|\.)(duckduckgo|google|bing|yahoo|yandex|facebook|instagram|youtube|twitter|x\.com|tiktok|linkedin|reddit)\./i;
+      var q = document.getElementById('q');
+      var urlIn = document.getElementById('url');
 
+      document.getElementById('dial').innerHTML = DIAL.map(function (d) {
+        var letter = d.label.charAt(0);
+        return '<button class="dial-item" data-href="' + d.href + '"><div class="orb ' + d.cls + '">' + letter + '</div><span>' + d.label + '</span></button>';
+      }).join('');
+      document.getElementById('tabs').innerHTML = TABS.map(function (t, i) {
+        return '<button type="button" data-tab="' + t + '" class="' + (i ? '' : 'on') + '">' + t + '</button>';
+      }).join('');
+
+      function hostOf(href) { try { return new URL(href).hostname; } catch (e) { return ''; } }
       function httpsOnly(raw) {
         var t = String(raw || '').trim();
-        if (!t) return 'https://kaspa.org';
+        if (!t) return '';
         if (/^https:\/\//i.test(t)) return t;
         if (/^http:\/\//i.test(t)) return 'https://' + t.slice(7);
         if (/^[a-z0-9.-]+\.[a-z]{2,}([/:?#].*)?$/i.test(t)) return 'https://' + t;
-        return 'search:' + t;
+        return 'https://duckduckgo.com/?q=' + encodeURIComponent(t);
       }
-      function hostOf(href) {
-        try { return new URL(href).hostname; } catch (e) { return ''; }
+      function showHome() {
+        web.classList.remove('on');
+        home.classList.remove('hide');
       }
-      function searchUrl(q) {
-        return 'https://duckduckgo.com/?q=' + encodeURIComponent(q);
-      }
-      function showFrame(href) {
-        block.classList.remove('on');
-        view.classList.remove('hide');
-        view.src = href;
-      }
-      function showBlocked(href, why) {
-        view.classList.add('hide');
-        view.src = 'about:blank';
-        block.classList.add('on');
-        document.getElementById('block-title').textContent = hostOf(href) || 'Blocked in-wallet';
-        document.getElementById('block-copy').textContent = why || 'This site refuses to load in an iframe. Open it in a new tab.';
-        blockOpen.href = href;
-      }
-      function go(u) {
-        var href = httpsOnly(u);
-        if (href.indexOf('search:') === 0) {
-          var q = href.slice(7);
-          href = searchUrl(q);
-          input.value = href;
-          showBlocked(href, 'Search engines block iframes. KaspaBrowser uses a real WebView; here we open DuckDuckGo in a new tab.');
-          return;
-        }
-        input.value = href;
+      function openHref(href) {
+        href = httpsOnly(href);
+        if (!href) return;
+        home.classList.add('hide');
+        web.classList.add('on');
+        urlIn.value = href;
         if (FRAME_BLOCK.test(hostOf(href))) {
-          showBlocked(href, hostOf(href) + ' sent X-Frame-Options / CSP and will not render inside the wallet.');
+          view.style.display = 'none';
+          block.classList.add('on');
+          document.getElementById('block-title').textContent = hostOf(href);
+          document.getElementById('block-open').href = href;
         } else {
-          showFrame(href);
+          block.classList.remove('on');
+          view.style.display = 'block';
+          view.src = href;
         }
-        if (hist[hist.length - 1] !== href) hist.push(href);
       }
-      document.getElementById('go').onclick = function () { go(input.value); };
-      document.getElementById('reload').onclick = function () {
-        if (block.classList.contains('on')) return;
-        view.src = input.value;
-      };
-      document.getElementById('back').onclick = function () {
-        if (hist.length > 1) { hist.pop(); go(hist.pop()); }
-      };
-      input.addEventListener('keydown', function (e) {
-        if (e.key === 'Enter') go(input.value);
+      function paint() {
+        var list = items.filter(function (it) {
+          if (filter === 'All') return true;
+          if (filter === 'X') return /x|twitter/i.test(it.category);
+          return it.category.toLowerCase() === filter.toLowerCase();
+        });
+        var el = document.getElementById('feed');
+        if (!list.length) { el.innerHTML = '<p class="muted">No posts in this filter.</p>'; return; }
+        el.innerHTML = list.map(function (it) {
+          return '<button class="card" data-href="' + it.url + '"><div class="meta"><span>' + (it.category || '') + '</span><span>' + (it.ago || '') + '</span></div><h3>' + it.title + '</h3><p>' + (it.desc || '') + '</p><div class="by">by ' + (it.author || it.category) + '</div></button>';
+        }).join('');
+        el.querySelectorAll('[data-href]').forEach(function (b) {
+          b.onclick = function () { openHref(b.getAttribute('data-href')); };
+        });
+      }
+      function rss(url, category) {
+        return fetch('https://api.rss2json.com/v1/api.json?rss_url=' + encodeURIComponent(url))
+          .then(function (r) { return r.json(); })
+          .then(function (j) {
+            return (j.items || []).slice(0, 8).map(function (it) {
+              return {
+                title: it.title || '',
+                desc: (it.description || '').replace(/<[^>]+>/g, '').slice(0, 160),
+                url: it.link || url,
+                category: category,
+                author: it.author || category,
+                ago: (it.pubDate || '').slice(0, 16)
+              };
+            });
+          }).catch(function () { return []; });
+      }
+      Promise.all([
+        rss('https://www.reddit.com/r/kaspa/.rss', 'Reddit'),
+        rss('https://kaspa.org/feed/', 'News'),
+        rss('https://kaspanews.com/feed/', 'News')
+      ]).then(function (chunks) {
+        var got = [].concat.apply([], chunks);
+        if (got.length) items = got.concat(FALLBACK);
+        paint();
       });
-      document.querySelectorAll('.chips [data-href]').forEach(function (b) {
-        b.onclick = function () { go(b.getAttribute('data-href')); };
-      });
-      document.querySelector('.chips [data-search]').onclick = function () {
-        var q = input.value.trim();
-        if (!q || /^https?:/i.test(q) || FRAME_BLOCK.test(hostOf(httpsOnly(q)))) q = 'kaspa';
-        go(q);
+
+      document.getElementById('dial').onclick = function (e) {
+        var b = e.target.closest('[data-href]');
+        if (b) openHref(b.getAttribute('data-href'));
       };
+      document.getElementById('tabs').onclick = function (e) {
+        var b = e.target.closest('[data-tab]');
+        if (!b) return;
+        filter = b.getAttribute('data-tab');
+        document.querySelectorAll('#tabs button').forEach(function (x) { x.classList.toggle('on', x === b); });
+        paint();
+      };
+      q.addEventListener('keydown', function (e) {
+        if (e.key === 'Enter') openHref(q.value);
+      });
+      document.getElementById('home-btn').onclick = showHome;
+      document.getElementById('close-web').onclick = showHome;
+      document.getElementById('back').onclick = showHome;
+      document.getElementById('tab-web').onclick = showHome;
+      paint();
     })();
   </script>
 </body>

@@ -121,7 +121,8 @@
       <div class="sheet">
         <h2>Settings & privacy</h2>
         <div class="row"><span>HTTPS only</span><button type="button" id="set-https">On</button></div>
-        <div class="row"><span>Search</span><button type="button" id="set-search">DuckDuckGo (new tab)</button></div>
+        <div class="row"><span>Real iframe (proxy)</span><button type="button" id="set-proxy">On</button></div>
+        <div class="row"><span>Search</span><button type="button" id="set-search">DuckDuckGo</button></div>
         <div class="row"><span>Clear history</span><button type="button" id="set-clear">Clear</button></div>
         <h3 style="font-size:13px;color:var(--mute);margin:16px 0 8px">KaspaBrowser Android (always latest)</h3>
         <p class="muted" id="rel-meta">Checking GitHub Releases…</p>
@@ -201,6 +202,7 @@
       var history = store.get('kb_hist', []);
       var bookmarks = store.get('kb_bm', []);
       var httpsOnlyOn = store.get('kb_https', true);
+      var useProxy = store.get('kb_proxy', true);
       var latest = store.get('kb_release', null);
       var RELEASES = 'https://github.com/Curious-being99/Kaspa-browser-/releases';
       var API = 'https://api.github.com/repos/Curious-being99/Kaspa-browser-/releases/latest';
@@ -278,24 +280,36 @@
         var t = tabs.find(function (x) { return x.id === tabId; });
         if (t) { t.url = href; t.title = title || hostOf(href); store.set('kb_tabs', tabs); paintTabBadge(); }
       }
+      function frameSrc(href) {
+        if (!useProxy) return href;
+        return '/api/browse?url=' + encodeURIComponent(href);
+      }
       function openHref(href) {
         href = httpsOnly(href);
         if (!href) return;
         $('url').value = href;
         $('q').value = href;
         show('web');
-        if (FRAME_BLOCK.test(hostOf(href))) {
+        $('block').classList.remove('on');
+        $('view').style.display = 'block';
+        if (useProxy) {
+          $('view').src = frameSrc(href);
+        } else if (FRAME_BLOCK.test(hostOf(href))) {
           $('view').style.display = 'none';
           $('block').classList.add('on');
           $('block-title').textContent = hostOf(href);
           $('block-open').href = href;
         } else {
-          $('block').classList.remove('on');
-          $('view').style.display = 'block';
           $('view').src = href;
         }
         remember(href);
       }
+      window.addEventListener('message', function (e) {
+        var d = e.data;
+        if (!d || d.type !== 'kb-nav' || !d.url) return;
+        $('url').value = d.url;
+        remember(d.url);
+      });
       function paintDial() {
         $('dial').innerHTML = DIAL.map(function (d) {
           return '<button class="dial-item" data-href="' + d.href + '"><div class="orb ' + d.cls + '">' + d.label.charAt(0) + '</div><span>' + d.label + '</span></button>';
@@ -425,6 +439,12 @@
         store.set('kb_https', httpsOnlyOn);
         $('set-https').textContent = httpsOnlyOn ? 'On' : 'Off';
       };
+      $('set-proxy').onclick = function () {
+        useProxy = !useProxy;
+        store.set('kb_proxy', useProxy);
+        $('set-proxy').textContent = useProxy ? 'On' : 'Off';
+      };
+      $('set-proxy').textContent = useProxy ? 'On' : 'Off';
       $('set-clear').onclick = function () {
         history = []; store.set('kb_hist', []); paintLibrary();
       };

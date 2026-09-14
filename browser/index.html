@@ -57,6 +57,11 @@
     .menu button:hover { background:#1c202c; }
     .overlay { position:absolute; inset:0; background:rgba(0,0,0,.45); display:none; z-index:15; }
     .overlay.on { display:block; }
+    .yt-grid { display:none; flex:1; overflow:auto; padding:10px; gap:10px; }
+    .yt-grid.on { display:grid; grid-template-columns:repeat(auto-fill,minmax(160px,1fr)); }
+    .yt-grid button { background:var(--card); border:1px solid var(--line); border-radius:12px; padding:0; color:inherit; cursor:pointer; text-align:left; overflow:hidden; }
+    .yt-grid img { width:100%; aspect-ratio:16/9; object-fit:cover; display:block; }
+    .yt-grid span { display:block; padding:8px; font-size:12px; }
     .rel { margin:0 12px 8px; padding:10px 12px; border-radius:12px; border:1px solid var(--line); background:var(--card); font-size:12px; color:var(--mute); display:none; }
     .rel.on { display:block; }
     .rel b { color:var(--tea); }
@@ -99,7 +104,8 @@
         <input id="url">
         <button class="icon-btn" id="btn-reload">↻</button>
       </div>
-      <iframe id="view" title="page" referrerpolicy="no-referrer" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; fullscreen" sandbox="allow-scripts allow-forms allow-same-origin allow-popups allow-popups-to-escape-sandbox allow-presentation"></iframe>
+      <iframe id="view" title="page" referrerpolicy="origin" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; fullscreen"></iframe>
+      <div class="yt-grid" id="yt-grid"></div>
       <div class="block" id="block">
         <div>
           <h2 id="block-title">Blocked in-wallet</h2>
@@ -281,24 +287,73 @@
         var t = tabs.find(function (x) { return x.id === tabId; });
         if (t) { t.url = href; t.title = title || hostOf(href); store.set('kb_tabs', tabs); paintTabBadge(); }
       }
-      function youtubeFrame(href) {
+      function extractVideoId(input) {
+        var s = String(input || '');
+        var patterns = [
+          /(?:youtube\.com\/watch\?v=)([^&\n?#]+)/,
+          /(?:youtu\.be\/)([^&\n?#]+)/,
+          /(?:youtube\.com\/embed\/)([^&\n?#]+)/,
+          /(?:youtube\.com\/shorts\/)([^&\n?#]+)/,
+          /(?:youtube\.com\/v\/)([^&\n?#]+)/,
+          /(?:youtube\.com\/watch\?.*[?&]v=)([^&\n?#]+)/
+        ];
+        for (var i = 0; i < patterns.length; i++) {
+          var m = s.match(patterns[i]);
+          if (m && m[1] && /^[\w-]{11}$/.test(m[1])) return m[1];
+        }
+        return null;
+      }
+      function youtubeEmbed(id) {
+        var origin = encodeURIComponent(location.origin);
+        return 'https://www.youtube.com/embed/' + encodeURIComponent(id) + '?autoplay=1&rel=0&origin=' + origin;
+      }
+      function youtubeHandle(href) {
         try {
           var u = new URL(href);
-          if (!/(^|\.)youtube\.com$|(^|\.)youtube-nocookie\.com$|^youtu\.be$/.test(u.hostname)) return null;
-          var id = u.searchParams.get('v');
-          if (!id && /(youtu\.be)$/.test(u.hostname)) id = u.pathname.replace(/^\//, '').split('/')[0];
-          if (id && /^[\w-]{6,}$/.test(id)) {
-            return 'https://www.youtube-nocookie.com/embed/' + encodeURIComponent(id) + '?rel=0';
-          }
-          var ch = (u.pathname.match(/@([^/]+)/) || [])[1]
-            || (u.pathname.match(/\/(?:channel|c|user)\/([^/]+)/) || [])[1]
-            || 'Kaspa';
-          return 'https://www.youtube-nocookie.com/embed?listType=search&list=' + encodeURIComponent(ch);
+          if (!/youtube\.com$/.test(u.hostname)) return null;
+          var h = (u.pathname.match(/@([^/]+)/) || [])[1];
+          if (h) return h;
+          return (u.pathname.match(/\/(?:channel|c|user)\/([^/]+)/) || [])[1] || null;
         } catch (e) { return null; }
       }
+      function showYtGrid(videos) {
+        var g = $('yt-grid');
+        $('view').style.display = 'none';
+        $('block').classList.remove('on');
+        g.classList.add('on');
+        g.innerHTML = videos.map(function (v) {
+          return '<button type="button" data-yt="' + v.id + '"><img src="https://img.youtube.com/vi/' + v.id + '/mqdefault.jpg" alt=""><span>' + v.title + '</span></button>';
+        }).join('') || '<p class="muted">No videos found.</p>';
+      }
+      function playYt(id, href) {
+        $('yt-grid').classList.remove('on');
+        $('block').classList.remove('on');
+        $('view').style.display = 'block';
+        $('view').removeAttribute('sandbox');
+        $('view').referrerPolicy = 'origin';
+        $('view').src = youtubeEmbed(id);
+        remember(href || ('https://www.youtube.com/watch?v=' + id), 'YouTube');
+      }
+      function openYoutube(href) {
+        var id = extractVideoId(href);
+        if (id) { playYt(id, href); return; }
+        var handle = youtubeHandle(href);
+        var rss = handle
+          ? 'https://www.youtube.com/feeds/videos.xml?user=' + encodeURIComponent(handle.replace(/^@/, ''))
+          : 'https://www.youtube.com/feeds/videos.xml?user=KaspaCurrency';
+        $('yt-grid').classList.remove('on');
+        $('view').style.display = 'none';
+        var rss2 = 'https://api.rss2json.com/v1/api.json?rss_url=' + encodeURIComponent(rss);
+        fetch(rss2).then(function (r) { return r.json(); }).then(function (j) {
+          var vids = (j.items || []).map(function (it) {
+            var vid = extractVideoId(it.link || '') || (it.guid || '').split(':').pop();
+            return vid ? { id: vid, title: it.title || 'Video' } : null;
+          }).filter(Boolean);
+          if (vids.length) showYtGrid(vids);
+          else playYt('TvXjYyZikYc', href);
+        }).catch(function () { playYt('TvXjYyZikYc', href); });
+      }
       function frameSrc(href) {
-        var yt = youtubeFrame(href);
-        if (yt) return yt;
         if (useProxy || FRAME_BLOCK.test(hostOf(href))) {
           return '/api/browse?url=' + encodeURIComponent(href);
         }
@@ -311,9 +366,15 @@
         $('q').value = href;
         show('web');
         $('block').classList.remove('on');
+        if (/youtube\.com|youtu\.be/.test(hostOf(href))) {
+          openYoutube(href);
+          remember(href, 'YouTube');
+          return;
+        }
+        $('yt-grid').classList.remove('on');
         $('view').style.display = 'block';
         var src = frameSrc(href);
-        if (!src.startsWith('/api/browse') && !src.includes('youtube-nocookie.com') && FRAME_BLOCK.test(hostOf(href))) {
+        if (!src.startsWith('/api/browse') && FRAME_BLOCK.test(hostOf(href))) {
           src = '/api/browse?url=' + encodeURIComponent(href);
         }
         $('view').src = src;
@@ -388,6 +449,8 @@
       paintDial(); paintFilters(); paintFeed(); paintMesh(); paintTabBadge();
 
       document.addEventListener('click', function (e) {
+        var yt = e.target.closest('[data-yt]');
+        if (yt) { e.preventDefault(); playYt(yt.getAttribute('data-yt')); return; }
         var hrefBtn = e.target.closest('[data-href]');
         if (hrefBtn && !e.target.closest('.menu')) { e.preventDefault(); openHref(hrefBtn.getAttribute('data-href')); }
       });

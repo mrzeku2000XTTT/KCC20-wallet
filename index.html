@@ -632,7 +632,7 @@
           <button type="button" class="trade-x" id="browser-close">Close</button>
           <h2>Kaspa Browser</h2>
         </div>
-        <iframe id="browser-frame" class="ttt-frame" title="Kaspa Browser" src="browser/index.html?v=242" allow="clipboard-write; fullscreen"></iframe>
+        <iframe id="browser-frame" class="ttt-frame" title="Kaspa Browser" src="browser/index.html?v=243" allow="clipboard-write; fullscreen"></iframe>
       </div>
 
       <div class="build-screen hidden" id="build-screen" aria-hidden="true">
@@ -927,7 +927,7 @@
   <script type="module">
     import('./js/iframeVault.js?v=122').then(function (mod) {
       return (mod.restoreIframeVault ? mod.restoreIframeVault() : Promise.resolve()).then(function () {
-        return import('./js/app.js?v=242');
+        return import('./js/app.js?v=243');
       });
     }).catch(function (err) {
       console.error(err);

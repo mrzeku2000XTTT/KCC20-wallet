@@ -4,238 +4,367 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Kaspa Browser</title>
-  <link rel="preconnect" href="https://fonts.googleapis.com">
   <link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@1,600;1,700&family=DM+Sans:wght@400;500;600&display=swap" rel="stylesheet">
   <style>
-    :root {
-      --tea:#70C7BA; --cyan:#49A89A; --bg:#0F111A; --bar:#14161C; --card:#161822;
-      --line:#282C37; --ink:#F3F4F6; --mute:#8b93a0; --violet:#8B5CF6;
-    }
+    :root { --tea:#70C7BA; --bg:#0F111A; --bar:#14161C; --card:#161822; --line:#282C37; --ink:#F3F4F6; --mute:#8b93a0; --violet:#8B5CF6; }
     * { box-sizing: border-box; }
-    html, body { margin:0; height:100%; background:var(--bg); color:var(--ink); font-family:"DM Sans",-apple-system,sans-serif; }
+    html, body { margin:0; height:100%; background:var(--bg); color:var(--ink); font-family:"DM Sans",sans-serif; }
     .app { display:flex; flex-direction:column; height:100%; }
-    .top {
-      display:flex; align-items:center; gap:8px; padding:10px 12px 6px;
-    }
-    .icon-btn {
-      width:36px; height:36px; border:0; border-radius:10px; background:transparent; color:var(--ink); cursor:pointer; font-size:16px;
-    }
-    .search {
-      flex:1; display:flex; align-items:center; gap:8px; height:40px; padding:0 12px;
-      border-radius:999px; background:#1a1d27; border:1px solid var(--line);
-    }
-    .search input {
-      flex:1; min-width:0; border:0; background:transparent; color:var(--ink); outline:none; font-size:13px;
-    }
-    .search input::placeholder { color:#6b7280; }
-    .dial {
-      display:flex; gap:14px; overflow-x:auto; padding:12px 16px 8px;
-      scrollbar-width:none;
-    }
+    .top { display:flex; align-items:center; gap:6px; padding:10px 10px 6px; }
+    .icon-btn { width:36px; height:36px; border:0; border-radius:10px; background:transparent; color:var(--ink); cursor:pointer; font-size:16px; }
+    .search { flex:1; display:flex; align-items:center; gap:8px; height:40px; padding:0 12px; border-radius:999px; background:#1a1d27; border:1px solid var(--line); }
+    .search input { flex:1; min-width:0; border:0; background:transparent; color:var(--ink); outline:none; font-size:13px; }
+    .tab-badge { min-width:22px; height:22px; border:1.2px solid var(--ink); border-radius:5px; font-size:10px; font-weight:800; background:transparent; color:var(--ink); cursor:pointer; }
+    .dial { display:flex; gap:14px; overflow-x:auto; padding:12px 16px 8px; scrollbar-width:none; }
     .dial::-webkit-scrollbar { display:none; }
     .dial-item { flex:0 0 auto; width:72px; text-align:center; background:none; border:0; color:var(--ink); cursor:pointer; padding:0; }
-    .orb {
-      width:56px; height:56px; margin:0 auto 6px; border-radius:50%;
-      display:grid; place-items:center; font-weight:800; font-size:18px;
-      background:radial-gradient(circle at 30% 25%, #9ff0e4, var(--tea) 55%, #2a8f82);
-      color:#062014;
-    }
+    .orb { width:56px; height:56px; margin:0 auto 6px; border-radius:50%; display:grid; place-items:center; font-weight:800; font-size:16px; background:radial-gradient(circle at 30% 25%, #9ff0e4, var(--tea) 55%, #2a8f82); color:#062014; }
     .orb.violet { background:radial-gradient(circle at 30% 25%, #c4b5fd, var(--violet) 55%, #4c1d95); color:#fff; }
+    .orb.cyan { background:radial-gradient(circle at 30% 25%, #a5f3fc, #35B1B1 55%, #155e75); color:#fff; }
     .dial-item span { display:block; font-size:11px; color:var(--mute); }
     .tabs { display:flex; gap:8px; padding:8px 16px; overflow-x:auto; }
-    .tabs button {
-      flex-shrink:0; height:30px; padding:0 12px; border-radius:999px; border:0;
-      background:#1a1d27; color:var(--mute); font-size:12px; font-weight:600; cursor:pointer;
-    }
-    .tabs button.on { background:var(--tea); color:#062014; }
-    .feed { flex:1; overflow:auto; padding:4px 12px 72px; }
-    .card {
-      background:var(--card); border:1px solid var(--line); border-radius:16px;
-      padding:14px 14px 12px; margin-bottom:10px; cursor:pointer; text-align:left; width:100%; color:inherit;
-    }
+    .tabs button { flex-shrink:0; height:30px; padding:0 12px; border-radius:8px; border:1px solid var(--line); background:#1a1d27; color:var(--mute); font-size:12px; font-weight:600; cursor:pointer; }
+    .tabs button.on { background:var(--tea); color:#062014; border-color:var(--tea); }
+    .feed { flex:1; overflow:auto; padding:4px 12px 8px; }
+    .card { background:var(--card); border:1px solid var(--line); border-radius:16px; padding:14px; margin-bottom:10px; cursor:pointer; text-align:left; width:100%; color:inherit; }
     .card .meta { display:flex; justify-content:space-between; font-size:11px; color:var(--mute); margin-bottom:8px; }
-    .card h3 {
-      margin:0 0 6px; font-family:"Cormorant Garamond",Georgia,serif;
-      font-style:italic; font-weight:700; font-size:18px; line-height:1.25; letter-spacing:-.2px;
-    }
+    .card h3 { margin:0 0 6px; font-family:"Cormorant Garamond",Georgia,serif; font-style:italic; font-weight:700; font-size:18px; line-height:1.25; }
     .card p { margin:0; color:var(--mute); font-size:12px; line-height:1.4; }
     .card .by { margin-top:8px; font-size:11px; color:#6b7280; }
-    .web { display:none; flex-direction:column; flex:1; min-height:0; }
-    .web.on { display:flex; }
-    .home { display:flex; flex-direction:column; flex:1; min-height:0; }
-    .home.hide { display:none; }
+    .panel { display:none; flex-direction:column; flex:1; min-height:0; }
+    .panel.on { display:flex; }
     .web-bar { display:flex; gap:6px; padding:6px 8px; background:var(--bar); }
     .web-bar input { flex:1; height:32px; border-radius:999px; border:1px solid var(--line); background:#0C0D10; color:var(--ink); padding:0 12px; }
     iframe { flex:1; border:0; background:#111; }
     .block { display:none; flex:1; align-items:center; justify-content:center; padding:24px; text-align:center; }
     .block.on { display:flex; }
     .open { display:inline-block; margin-top:12px; padding:10px 16px; border-radius:999px; background:var(--tea); color:#062014; font-weight:800; text-decoration:none; }
-    .dock {
-      position:sticky; bottom:0; display:flex; justify-content:space-around;
-      padding:8px 12px calc(8px + env(safe-area-inset-bottom)); background:var(--bar); border-top:1px solid var(--line);
-    }
-    .dock button { background:none; border:0; color:var(--mute); font-size:18px; cursor:pointer; }
+    .dock { display:flex; justify-content:space-around; padding:8px 12px calc(10px + env(safe-area-inset-bottom)); background:var(--bar); border-top:1px solid var(--line); }
+    .dock button { background:none; border:0; color:var(--mute); font-size:20px; cursor:pointer; }
     .dock button.on { color:var(--tea); }
     .muted { color:var(--mute); font-size:12px; padding:12px; text-align:center; }
+    .sheet { padding:16px; overflow:auto; flex:1; }
+    .sheet h2 { margin:0 0 8px; font-size:18px; }
+    .row { display:flex; justify-content:space-between; align-items:center; padding:12px 0; border-bottom:1px solid var(--line); font-size:14px; }
+    .row button, .ghost { height:32px; padding:0 12px; border-radius:8px; border:1px solid var(--line); background:#1a1d27; color:var(--ink); cursor:pointer; }
+    .list-btn { display:block; width:100%; text-align:left; background:var(--card); border:1px solid var(--line); border-radius:12px; padding:12px; margin-bottom:8px; color:inherit; cursor:pointer; }
+    .menu {
+      position:absolute; right:10px; top:48px; z-index:20; width:220px;
+      background:#161822; border:1px solid var(--line); border-radius:12px; padding:6px; display:none;
+    }
+    .menu.on { display:block; }
+    .menu button { display:block; width:100%; text-align:left; background:none; border:0; color:var(--ink); padding:10px 12px; border-radius:8px; cursor:pointer; font-size:13px; }
+    .menu button:hover { background:#1c202c; }
+    .overlay { position:absolute; inset:0; background:rgba(0,0,0,.45); display:none; z-index:15; }
+    .overlay.on { display:block; }
   </style>
 </head>
 <body>
-  <div class="app">
-    <div class="home" id="home">
-      <div class="top">
-        <button class="icon-btn" id="home-btn" title="Home">⌂</button>
-        <div class="search">
-          <input id="q" placeholder="Search or type kaspa...." autocomplete="off">
-          <span style="color:var(--tea)">✦</span>
-        </div>
-        <button class="icon-btn" id="plus" title="New">+</button>
+  <div class="app" id="app">
+    <div class="top">
+      <button class="icon-btn" id="btn-home" title="Home">⌂</button>
+      <div class="search">
+        <input id="q" placeholder="Search or type kaspa...." autocomplete="off">
+        <button class="icon-btn" id="btn-go" title="Go" style="width:28px;height:28px;color:var(--tea)">✦</button>
       </div>
-      <div class="dial" id="dial"></div>
-      <div class="tabs" id="tabs"></div>
-      <div class="feed" id="feed"><p class="muted">Loading Kaspa feed…</p></div>
-      <div class="dock">
-        <button class="on" type="button" id="tab-web">🌐</button>
-        <button type="button" title="Mesh (Android only)">✺</button>
-        <button type="button" title="Settings" id="tab-set">⚙</button>
-      </div>
+      <button class="icon-btn" id="btn-plus" title="New tab">+</button>
+      <button class="tab-badge" id="btn-tabs" title="Tabs">1</button>
+      <button class="icon-btn" id="btn-menu" title="Menu">☰</button>
     </div>
-    <div class="web" id="web">
+    <div class="overlay" id="overlay"></div>
+    <div class="menu" id="menu">
+      <button type="button" data-act="new">New tab</button>
+      <button type="button" data-act="share">Share page</button>
+      <button type="button" data-act="bookmark">Bookmark</button>
+      <button type="button" data-act="library">Library</button>
+      <button type="button" data-act="mesh">Network (Mesh)</button>
+      <button type="button" data-act="settings">Settings</button>
+      <button type="button" data-act="apk">Android APK</button>
+    </div>
+
+    <section class="panel on" id="panel-home">
+      <div class="dial" id="dial"></div>
+      <div class="tabs" id="filters"></div>
+      <div class="feed" id="feed"><p class="muted">Loading Kaspa feed…</p></div>
+    </section>
+
+    <section class="panel" id="panel-web">
       <div class="web-bar">
-        <button class="icon-btn" id="back">‹</button>
+        <button class="icon-btn" id="btn-back">‹</button>
         <input id="url">
-        <button class="icon-btn" id="close-web">⌂</button>
+        <button class="icon-btn" id="btn-reload">↻</button>
       </div>
       <iframe id="view" title="page"></iframe>
       <div class="block" id="block">
         <div>
           <h2 id="block-title">Blocked in-wallet</h2>
-          <p id="block-copy" class="muted">This site refuses iframes. Open it in a new tab like the Android WebView would.</p>
+          <p class="muted" id="block-copy">This site refuses iframes. Open it in a new tab — same as the Android WebView.</p>
           <a class="open" id="block-open" href="#" target="_blank" rel="noopener">Open in new tab</a>
         </div>
       </div>
+    </section>
+
+    <section class="panel" id="panel-mesh">
+      <div class="sheet">
+        <h2>Network · Mesh Radar</h2>
+        <p class="muted">NSD / local-node mesh is Android-only in KaspaBrowser. Here are the same .kas / mesh-adjacent gateways the APK speed-dials.</p>
+        <div id="mesh-list"></div>
+      </div>
+    </section>
+
+    <section class="panel" id="panel-settings">
+      <div class="sheet">
+        <h2>Settings & privacy</h2>
+        <div class="row"><span>HTTPS only</span><button type="button" id="set-https">On</button></div>
+        <div class="row"><span>Search</span><button type="button" id="set-search">DuckDuckGo (new tab)</button></div>
+        <div class="row"><span>Clear history</span><button type="button" id="set-clear">Clear</button></div>
+        <p class="muted">Clone of <a href="https://github.com/Curious-being99/Kaspa-browser-" style="color:var(--tea)">Curious-being99/Kaspa-browser-</a> (Apache-2.0) as an in-wallet chrome. Keys stay in KCC20 Wallet. APK: GitHub Releases.</p>
+      </div>
+    </section>
+
+    <section class="panel" id="panel-library">
+      <div class="sheet">
+        <h2>Library</h2>
+        <h3 style="font-size:13px;color:var(--mute)">Bookmarks</h3>
+        <div id="bookmarks"></div>
+        <h3 style="font-size:13px;color:var(--mute)">History</h3>
+        <div id="history"></div>
+      </div>
+    </section>
+
+    <section class="panel" id="panel-tabs">
+      <div class="sheet">
+        <h2>Tabs</h2>
+        <div id="tab-list"></div>
+      </div>
+    </section>
+
+    <div class="dock">
+      <button type="button" class="on" id="dock-home" title="Home">🌐</button>
+      <button type="button" id="dock-mesh" title="Mesh">✺</button>
+      <button type="button" id="dock-settings" title="Settings">⚙</button>
     </div>
   </div>
   <script>
     (function () {
       var DIAL = [
-        { label: 'Kaspa.org', href: 'https://kaspa.org', cls: '' },
-        { label: 'mykai.dev', href: 'https://mykai.dev', cls: '' },
-        { label: 'Kaspa.com', href: 'https://kaspa.com', cls: '' },
-        { label: 'Kaspa.stream', href: 'https://kaspa.stream', cls: 'violet' }
+        { label:'Kaspa.org', href:'https://kaspa.org', cls:'' },
+        { label:'mykai.dev', href:'https://mykai.dev', cls:'' },
+        { label:'Kaspa.com', href:'https://kaspa.com', cls:'' },
+        { label:'Kaspa.stream', href:'https://kaspa.stream', cls:'violet' },
+        { label:'igralabs.com', href:'https://igralabs.com', cls:'' },
+        { label:'Kaskad.live', href:'https://kaskad.live', cls:'' },
+        { label:'KaChat', href:'https://linktr.ee/kachat_', cls:'' },
+        { label:'mykai', href:'https://mykai.app', cls:'' },
+        { label:'Kasplay', href:'https://kasplay.fun/', cls:'cyan' }
       ];
-      var TABS = ['All', 'X', 'YouTube', 'News', 'Reddit'];
-      var FRAME_BLOCK = /(^|\.)(duckduckgo|google|bing|facebook|instagram|youtube|twitter|x\.com|reddit|discord)\./i;
+      var CATS = ['All','X','YouTube','News','Reddit','GitHub'];
+      var FRAME_BLOCK = /(^|\.)(duckduckgo|google|bing|facebook|instagram|youtube|twitter|x\.com|reddit|discord|github)\./i;
+      var MESH = [
+        { t:'kaspa.org', u:'https://kaspa.org', d:'.kas ecosystem' },
+        { t:'kaskad.live', u:'https://kaskad.live', d:'decentralized network' },
+        { t:'mykai.dev', u:'https://mykai.dev', d:'Kai cloud' },
+        { t:'kaspa.stream', u:'https://kaspa.stream', d:'BlockDAG explorer' },
+        { t:'kaspa.com', u:'https://kaspa.com', d:'markets' }
+      ];
       var FALLBACK = [
-        { title: 'Cool kaspa apps you use?', desc: 'I want to explore kaspa ecosystem so I would like to hear about apps on kaspa you use.', url: 'https://www.reddit.com/r/kaspa/', category: 'Reddit', author: 'u/Joy_Boy_12', ago: '4h ago' },
-        { title: "Inside Kaspa's Toccata Hard Fork and Its Bet on Becoming a Smart Contract Platform", desc: 'Inside Kaspa’s Toccata Hard Fork and Its Bet on Becoming a Smart Contract Platform — Cryptonews.net', url: 'https://cryptonews.net', category: 'News', author: 'Cryptonews.net', ago: '6h ago' }
+        { title:'Cool kaspa apps you use?', desc:'Explore the Kaspa ecosystem — which apps do you actually use?', url:'https://www.reddit.com/r/kaspa/', category:'Reddit', author:'u/Joy_Boy_12', ago:'4h ago' },
+        { title:"Inside Kaspa's Toccata Hard Fork", desc:'Kaspa’s bet on becoming a smart-contract platform.', url:'https://cryptonews.net', category:'News', author:'Cryptonews.net', ago:'6h ago' },
+        { title:'Kaspa on X', desc:'Official KaspaCurrency updates.', url:'https://x.com/KaspaCurrency', category:'X', author:'@KaspaCurrency', ago:'2h ago' },
+        { title:'Kaspa YouTube', desc:'Official Kaspa videos and talks.', url:'https://www.youtube.com/@KaspaCurrency', category:'YouTube', author:'Kaspa', ago:'1d ago' },
+        { title:'rusty-kaspa', desc:'kaspanet/rusty-kaspa — node engine.', url:'https://github.com/kaspanet/rusty-kaspa', category:'GitHub', author:'kaspanet', ago:'3h ago' }
       ];
+      var store = {
+        get: function (k, d) { try { return JSON.parse(localStorage.getItem(k)) || d; } catch (e) { return d; } },
+        set: function (k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch (e) {} }
+      };
       var items = FALLBACK.slice();
       var filter = 'All';
-      var home = document.getElementById('home');
-      var web = document.getElementById('web');
-      var view = document.getElementById('view');
-      var block = document.getElementById('block');
-      var q = document.getElementById('q');
-      var urlIn = document.getElementById('url');
+      var tabs = store.get('kb_tabs', [{ id:1, title:'Home', url:'' }]);
+      var tabId = tabs[0].id;
+      var history = store.get('kb_hist', []);
+      var bookmarks = store.get('kb_bm', []);
+      var httpsOnlyOn = store.get('kb_https', true);
 
-      document.getElementById('dial').innerHTML = DIAL.map(function (d) {
-        var letter = d.label.charAt(0);
-        return '<button class="dial-item" data-href="' + d.href + '"><div class="orb ' + d.cls + '">' + letter + '</div><span>' + d.label + '</span></button>';
-      }).join('');
-      document.getElementById('tabs').innerHTML = TABS.map(function (t, i) {
-        return '<button type="button" data-tab="' + t + '" class="' + (i ? '' : 'on') + '">' + t + '</button>';
-      }).join('');
-
+      var $ = function (id) { return document.getElementById(id); };
+      var panels = ['home','web','mesh','settings','library','tabs'];
+      function show(name) {
+        panels.forEach(function (p) { $('panel-' + p).classList.toggle('on', p === name); });
+        $('dock-home').classList.toggle('on', name === 'home' || name === 'web');
+        $('dock-mesh').classList.toggle('on', name === 'mesh');
+        $('dock-settings').classList.toggle('on', name === 'settings');
+        closeMenu();
+        if (name === 'library') paintLibrary();
+        if (name === 'tabs') paintTabs();
+      }
+      function closeMenu() { $('menu').classList.remove('on'); $('overlay').classList.remove('on'); }
       function hostOf(href) { try { return new URL(href).hostname; } catch (e) { return ''; } }
       function httpsOnly(raw) {
         var t = String(raw || '').trim();
         if (!t) return '';
         if (/^https:\/\//i.test(t)) return t;
-        if (/^http:\/\//i.test(t)) return 'https://' + t.slice(7);
+        if (/^http:\/\//i.test(t)) return httpsOnlyOn ? ('https://' + t.slice(7)) : t;
         if (/^[a-z0-9.-]+\.[a-z]{2,}([/:?#].*)?$/i.test(t)) return 'https://' + t;
         return 'https://duckduckgo.com/?q=' + encodeURIComponent(t);
       }
-      function showHome() {
-        web.classList.remove('on');
-        home.classList.remove('hide');
+      function remember(href, title) {
+        if (!href) return;
+        history.unshift({ href: href, title: title || hostOf(href), at: Date.now() });
+        history = history.slice(0, 40);
+        store.set('kb_hist', history);
+        var t = tabs.find(function (x) { return x.id === tabId; });
+        if (t) { t.url = href; t.title = title || hostOf(href); store.set('kb_tabs', tabs); paintTabBadge(); }
       }
       function openHref(href) {
         href = httpsOnly(href);
         if (!href) return;
-        home.classList.add('hide');
-        web.classList.add('on');
-        urlIn.value = href;
+        $('url').value = href;
+        $('q').value = href;
+        show('web');
         if (FRAME_BLOCK.test(hostOf(href))) {
-          view.style.display = 'none';
-          block.classList.add('on');
-          document.getElementById('block-title').textContent = hostOf(href);
-          document.getElementById('block-open').href = href;
+          $('view').style.display = 'none';
+          $('block').classList.add('on');
+          $('block-title').textContent = hostOf(href);
+          $('block-open').href = href;
         } else {
-          block.classList.remove('on');
-          view.style.display = 'block';
-          view.src = href;
+          $('block').classList.remove('on');
+          $('view').style.display = 'block';
+          $('view').src = href;
         }
+        remember(href);
       }
-      function paint() {
+      function paintDial() {
+        $('dial').innerHTML = DIAL.map(function (d) {
+          return '<button class="dial-item" data-href="' + d.href + '"><div class="orb ' + d.cls + '">' + d.label.charAt(0) + '</div><span>' + d.label + '</span></button>';
+        }).join('');
+      }
+      function paintFilters() {
+        $('filters').innerHTML = CATS.map(function (t) {
+          return '<button type="button" data-tab="' + t + '" class="' + (t === filter ? 'on' : '') + '">' + t + '</button>';
+        }).join('');
+      }
+      function paintFeed() {
         var list = items.filter(function (it) {
           if (filter === 'All') return true;
-          if (filter === 'X') return /x|twitter/i.test(it.category);
+          if (filter === 'X') return /^x$/i.test(it.category);
           return it.category.toLowerCase() === filter.toLowerCase();
         });
-        var el = document.getElementById('feed');
-        if (!list.length) { el.innerHTML = '<p class="muted">No posts in this filter.</p>'; return; }
-        el.innerHTML = list.map(function (it) {
-          return '<button class="card" data-href="' + it.url + '"><div class="meta"><span>' + (it.category || '') + '</span><span>' + (it.ago || '') + '</span></div><h3>' + it.title + '</h3><p>' + (it.desc || '') + '</p><div class="by">by ' + (it.author || it.category) + '</div></button>';
+        if (!list.length) { $('feed').innerHTML = '<p class="muted">No posts in ' + filter + ' yet. Pull another tab or retry.</p>'; return; }
+        $('feed').innerHTML = list.map(function (it) {
+          return '<button class="card" data-href="' + it.url + '"><div class="meta"><span>' + it.category + '</span><span>' + (it.ago || '') + '</span></div><h3>' + it.title + '</h3><p>' + (it.desc || '') + '</p><div class="by">by ' + (it.author || it.category) + '</div></button>';
         }).join('');
-        el.querySelectorAll('[data-href]').forEach(function (b) {
-          b.onclick = function () { openHref(b.getAttribute('data-href')); };
-        });
+      }
+      function paintLibrary() {
+        $('bookmarks').innerHTML = bookmarks.length ? bookmarks.map(function (b) {
+          return '<button class="list-btn" data-href="' + b.href + '">' + (b.title || b.href) + '</button>';
+        }).join('') : '<p class="muted">No bookmarks yet.</p>';
+        $('history').innerHTML = history.length ? history.map(function (b) {
+          return '<button class="list-btn" data-href="' + b.href + '">' + (b.title || b.href) + '</button>';
+        }).join('') : '<p class="muted">No history yet.</p>';
+      }
+      function paintTabs() {
+        $('tab-list').innerHTML = tabs.map(function (t) {
+          return '<button class="list-btn" data-tabid="' + t.id + '">' + (t.title || 'Home') + (t.url ? '<br><span class="muted">' + t.url + '</span>' : '') + '</button>';
+        }).join('') + '<button class="list-btn" id="tab-new">+ New tab</button>';
+      }
+      function paintTabBadge() { $('btn-tabs').textContent = String(tabs.length); }
+      function paintMesh() {
+        $('mesh-list').innerHTML = MESH.map(function (m) {
+          return '<button class="list-btn" data-href="' + m.u + '"><b>' + m.t + '</b><br><span class="muted">' + m.d + '</span></button>';
+        }).join('');
       }
       function rss(url, category) {
         return fetch('https://api.rss2json.com/v1/api.json?rss_url=' + encodeURIComponent(url))
           .then(function (r) { return r.json(); })
           .then(function (j) {
-            return (j.items || []).slice(0, 8).map(function (it) {
-              return {
-                title: it.title || '',
-                desc: (it.description || '').replace(/<[^>]+>/g, '').slice(0, 160),
-                url: it.link || url,
-                category: category,
-                author: it.author || category,
-                ago: (it.pubDate || '').slice(0, 16)
-              };
+            return (j.items || []).slice(0, 6).map(function (it) {
+              return { title: it.title || '', desc: (it.description || '').replace(/<[^>]+>/g, '').slice(0, 160), url: it.link || url, category: category, author: it.author || category, ago: (it.pubDate || '').slice(5, 16) };
             });
           }).catch(function () { return []; });
       }
       Promise.all([
         rss('https://www.reddit.com/r/kaspa/.rss', 'Reddit'),
         rss('https://kaspa.org/feed/', 'News'),
-        rss('https://kaspanews.com/feed/', 'News')
+        rss('https://kaspanews.com/feed/', 'News'),
+        rss('https://github.com/kaspanet/rusty-kaspa/commits/master.atom', 'GitHub')
       ]).then(function (chunks) {
         var got = [].concat.apply([], chunks);
         if (got.length) items = got.concat(FALLBACK);
-        paint();
+        paintFeed();
       });
 
-      document.getElementById('dial').onclick = function (e) {
-        var b = e.target.closest('[data-href]');
-        if (b) openHref(b.getAttribute('data-href'));
-      };
-      document.getElementById('tabs').onclick = function (e) {
+      paintDial(); paintFilters(); paintFeed(); paintMesh(); paintTabBadge();
+
+      document.addEventListener('click', function (e) {
+        var hrefBtn = e.target.closest('[data-href]');
+        if (hrefBtn && !e.target.closest('.menu')) { e.preventDefault(); openHref(hrefBtn.getAttribute('data-href')); }
+      });
+      $('filters').onclick = function (e) {
         var b = e.target.closest('[data-tab]');
         if (!b) return;
         filter = b.getAttribute('data-tab');
-        document.querySelectorAll('#tabs button').forEach(function (x) { x.classList.toggle('on', x === b); });
-        paint();
+        paintFilters(); paintFeed();
       };
-      q.addEventListener('keydown', function (e) {
-        if (e.key === 'Enter') openHref(q.value);
-      });
-      document.getElementById('home-btn').onclick = showHome;
-      document.getElementById('close-web').onclick = showHome;
-      document.getElementById('back').onclick = showHome;
-      document.getElementById('tab-web').onclick = showHome;
-      paint();
+      $('btn-home').onclick = function () { show('home'); };
+      $('btn-go').onclick = function () { openHref($('q').value); };
+      $('q').addEventListener('keydown', function (e) { if (e.key === 'Enter') openHref($('q').value); });
+      $('url').addEventListener('keydown', function (e) { if (e.key === 'Enter') openHref($('url').value); });
+      $('btn-back').onclick = function () { show('home'); };
+      $('btn-reload').onclick = function () { if ($('block').classList.contains('on')) return; $('view').src = $('url').value; };
+      $('btn-plus').onclick = function () {
+        tabId = Date.now();
+        tabs.push({ id: tabId, title: 'Home', url: '' });
+        store.set('kb_tabs', tabs);
+        paintTabBadge();
+        show('home');
+      };
+      $('btn-tabs').onclick = function () { show('tabs'); };
+      $('panel-tabs').onclick = function (e) {
+        if (e.target.id === 'tab-new' || e.target.closest('#tab-new')) { $('btn-plus').click(); return; }
+        var b = e.target.closest('[data-tabid]');
+        if (!b) return;
+        tabId = Number(b.getAttribute('data-tabid'));
+        var t = tabs.find(function (x) { return x.id === tabId; });
+        if (t && t.url) openHref(t.url); else show('home');
+      };
+      $('btn-menu').onclick = function (e) {
+        e.stopPropagation();
+        $('menu').classList.toggle('on');
+        $('overlay').classList.toggle('on', $('menu').classList.contains('on'));
+      };
+      $('overlay').onclick = closeMenu;
+      $('menu').onclick = function (e) {
+        var act = e.target.getAttribute('data-act');
+        if (!act) return;
+        closeMenu();
+        if (act === 'new') $('btn-plus').click();
+        if (act === 'share') {
+          var u = $('url').value || location.href;
+          if (navigator.share) navigator.share({ title: 'Kaspa Browser', url: u }).catch(function () {});
+          else navigator.clipboard.writeText(u);
+        }
+        if (act === 'bookmark') {
+          var u = $('url').value || 'https://kaspa.org';
+          bookmarks.unshift({ href: u, title: hostOf(u) });
+          store.set('kb_bm', bookmarks);
+          show('library');
+        }
+        if (act === 'library') show('library');
+        if (act === 'mesh') show('mesh');
+        if (act === 'settings') show('settings');
+        if (act === 'apk') window.open('https://github.com/Curious-being99/Kaspa-browser-/releases', '_blank', 'noopener');
+      };
+      $('dock-home').onclick = function () { show('home'); };
+      $('dock-mesh').onclick = function () { show('mesh'); };
+      $('dock-settings').onclick = function () { show('settings'); };
+      $('set-https').onclick = function () {
+        httpsOnlyOn = !httpsOnlyOn;
+        store.set('kb_https', httpsOnlyOn);
+        $('set-https').textContent = httpsOnlyOn ? 'On' : 'Off';
+      };
+      $('set-clear').onclick = function () {
+        history = []; store.set('kb_hist', []); paintLibrary();
+      };
     })();
   </script>
 </body>

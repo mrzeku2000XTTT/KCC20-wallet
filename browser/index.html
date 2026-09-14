@@ -57,6 +57,10 @@
     .menu button:hover { background:#1c202c; }
     .overlay { position:absolute; inset:0; background:rgba(0,0,0,.45); display:none; z-index:15; }
     .overlay.on { display:block; }
+    .rel { margin:0 12px 8px; padding:10px 12px; border-radius:12px; border:1px solid var(--line); background:var(--card); font-size:12px; color:var(--mute); display:none; }
+    .rel.on { display:block; }
+    .rel b { color:var(--tea); }
+    .rel a { color:var(--tea); font-weight:700; }
   </style>
 </head>
 <body>
@@ -83,6 +87,7 @@
     </div>
 
     <section class="panel on" id="panel-home">
+      <div class="rel" id="rel-banner"></div>
       <div class="dial" id="dial"></div>
       <div class="tabs" id="filters"></div>
       <div class="feed" id="feed"><p class="muted">Loading Kaspa feed…</p></div>
@@ -118,7 +123,18 @@
         <div class="row"><span>HTTPS only</span><button type="button" id="set-https">On</button></div>
         <div class="row"><span>Search</span><button type="button" id="set-search">DuckDuckGo (new tab)</button></div>
         <div class="row"><span>Clear history</span><button type="button" id="set-clear">Clear</button></div>
-        <p class="muted">Clone of <a href="https://github.com/Curious-being99/Kaspa-browser-" style="color:var(--tea)">Curious-being99/Kaspa-browser-</a> (Apache-2.0) as an in-wallet chrome. Keys stay in KCC20 Wallet. APK: GitHub Releases.</p>
+        <h3 style="font-size:13px;color:var(--mute);margin:16px 0 8px">KaspaBrowser Android (always latest)</h3>
+        <p class="muted" id="rel-meta">Checking GitHub Releases…</p>
+        <p class="muted" id="rel-notes" style="white-space:pre-wrap"></p>
+        <div class="row">
+          <span>Latest APK</span>
+          <button type="button" id="set-apk">Download</button>
+        </div>
+        <div class="row">
+          <span>All releases</span>
+          <button type="button" id="set-rel">Open</button>
+        </div>
+        <p class="muted">Live from <a href="https://github.com/Curious-being99/Kaspa-browser-/releases" style="color:var(--tea)">Curious-being99/Kaspa-browser-</a> (Apache-2.0). This in-wallet chrome checks GitHub on every open. Keys stay in KCC20 Wallet.</p>
       </div>
     </section>
 
@@ -185,6 +201,53 @@
       var history = store.get('kb_hist', []);
       var bookmarks = store.get('kb_bm', []);
       var httpsOnlyOn = store.get('kb_https', true);
+      var latest = store.get('kb_release', null);
+      var RELEASES = 'https://github.com/Curious-being99/Kaspa-browser-/releases';
+      var API = 'https://api.github.com/repos/Curious-being99/Kaspa-browser-/releases/latest';
+
+      function apkUrl(rel) {
+        if (!rel) return RELEASES;
+        var assets = rel.assets || [];
+        var apk = assets.find(function (a) { return /\.apk$/i.test(a.name || ''); });
+        return (apk && apk.browser_download_url) || rel.html_url || RELEASES;
+      }
+      function paintRelease(rel) {
+        if (!rel) return;
+        latest = rel;
+        var tag = rel.tag_name || rel.name || 'latest';
+        var when = (rel.published_at || '').slice(0, 10);
+        var notes = String(rel.body || '').replace(/\r/g, '').slice(0, 280);
+        var url = apkUrl(rel);
+        var banner = $('rel-banner');
+        banner.classList.add('on');
+        banner.innerHTML = '<b>KaspaBrowser ' + tag + '</b> · ' + when + ' · <a href="' + url + '" target="_blank" rel="noopener">Download APK</a> · <a href="' + RELEASES + '" target="_blank" rel="noopener">Releases</a>';
+        $('rel-meta').textContent = (rel.name || tag) + (when ? (' · ' + when) : '');
+        $('rel-notes').textContent = notes;
+      }
+      function fetchLatest(force) {
+        var cached = store.get('kb_release', null);
+        var at = store.get('kb_release_at', 0);
+        if (!force && cached && Date.now() - at < 10 * 60 * 1000) {
+          paintRelease(cached);
+          return;
+        }
+        fetch(API, { headers: { Accept: 'application/vnd.github+json' } })
+          .then(function (r) { if (!r.ok) throw new Error('github ' + r.status); return r.json(); })
+          .then(function (rel) {
+            store.set('kb_release', rel);
+            store.set('kb_release_at', Date.now());
+            paintRelease(rel);
+          })
+          .catch(function () {
+            if (cached) paintRelease(cached);
+            else {
+              $('rel-banner').classList.add('on');
+              $('rel-banner').innerHTML = '<a href="' + RELEASES + '" target="_blank" rel="noopener">KaspaBrowser Releases</a> (could not reach GitHub API)';
+              $('rel-meta').textContent = 'Open GitHub Releases for the current APK.';
+            }
+          });
+      }
+      fetchLatest(true);
 
       var $ = function (id) { return document.getElementById(id); };
       var panels = ['home','web','mesh','settings','library','tabs'];
@@ -352,7 +415,7 @@
         if (act === 'library') show('library');
         if (act === 'mesh') show('mesh');
         if (act === 'settings') show('settings');
-        if (act === 'apk') window.open('https://github.com/Curious-being99/Kaspa-browser-/releases', '_blank', 'noopener');
+        if (act === 'apk') window.open(apkUrl(latest), '_blank', 'noopener');
       };
       $('dock-home').onclick = function () { show('home'); };
       $('dock-mesh').onclick = function () { show('mesh'); };
@@ -365,6 +428,8 @@
       $('set-clear').onclick = function () {
         history = []; store.set('kb_hist', []); paintLibrary();
       };
+      $('set-apk').onclick = function () { window.open(apkUrl(latest), '_blank', 'noopener'); };
+      $('set-rel').onclick = function () { window.open(RELEASES, '_blank', 'noopener'); };
     })();
   </script>
 </body>

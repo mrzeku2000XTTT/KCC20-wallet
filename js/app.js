@@ -67,7 +67,7 @@ import {
   ksocialFeeKas
 } from './ksocial.js?v=207';
 
-export const BUILD = '235';
+export const BUILD = '236';
 const DESK_ID_KEY = 'kcc20_desk_id_v1';
 const DESK_VAULT_KEY = 'kcc20_desk_vault_v1';
 
@@ -3382,6 +3382,10 @@ function showBuildApp(name) {
     openKbuild({ fromApps: true });
     return;
   }
+  if (view === 'browser') {
+    openKaspaBrowser({ fromApps: true });
+    return;
+  }
   ['home', 'studio', 'truth', 'ksocial'].forEach(v => {
     $('app-' + v)?.classList.toggle('hidden', v !== view);
   });
@@ -3895,6 +3899,8 @@ function openTtt(opts = {}) {
   $('kasdistro-screen')?.setAttribute('aria-hidden', 'true');
   $('kbuild-screen')?.classList.add('hidden');
   $('kbuild-screen')?.setAttribute('aria-hidden', 'true');
+  $('browser-screen')?.classList.add('hidden');
+  $('browser-screen')?.setAttribute('aria-hidden', 'true');
   $('ttt-screen')?.classList.remove('hidden');
   $('ttt-screen')?.setAttribute('aria-hidden', 'false');
   $('tabbar')?.classList.remove('show');
@@ -3916,6 +3922,8 @@ function openKasdistro(opts = {}) {
   $('ttt-screen')?.setAttribute('aria-hidden', 'true');
   $('kbuild-screen')?.classList.add('hidden');
   $('kbuild-screen')?.setAttribute('aria-hidden', 'true');
+  $('browser-screen')?.classList.add('hidden');
+  $('browser-screen')?.setAttribute('aria-hidden', 'true');
   $('kasdistro-screen')?.classList.remove('hidden');
   $('kasdistro-screen')?.setAttribute('aria-hidden', 'false');
   $('tabbar')?.classList.remove('show');
@@ -3930,8 +3938,26 @@ function openKbuild(opts = {}) {
   $('ttt-screen')?.setAttribute('aria-hidden', 'true');
   $('kasdistro-screen')?.classList.add('hidden');
   $('kasdistro-screen')?.setAttribute('aria-hidden', 'true');
+  $('browser-screen')?.classList.add('hidden');
+  $('browser-screen')?.setAttribute('aria-hidden', 'true');
   $('kbuild-screen')?.classList.remove('hidden');
   $('kbuild-screen')?.setAttribute('aria-hidden', 'false');
+  $('tabbar')?.classList.remove('show');
+}
+
+function openKaspaBrowser(opts = {}) {
+  haptic();
+  openKaspaBrowser.fromApps = !!(opts.fromApps || appsScreenOpen());
+  const frame = $('browser-frame');
+  if (frame && !frame.getAttribute('src')) frame.src = 'browser/index.html';
+  $('ttt-screen')?.classList.add('hidden');
+  $('ttt-screen')?.setAttribute('aria-hidden', 'true');
+  $('kasdistro-screen')?.classList.add('hidden');
+  $('kasdistro-screen')?.setAttribute('aria-hidden', 'true');
+  $('kbuild-screen')?.classList.add('hidden');
+  $('kbuild-screen')?.setAttribute('aria-hidden', 'true');
+  $('browser-screen')?.classList.remove('hidden');
+  $('browser-screen')?.setAttribute('aria-hidden', 'false');
   $('tabbar')?.classList.remove('show');
 }
 
@@ -4138,6 +4164,17 @@ function closeKbuild() {
   $('kbuild-screen')?.setAttribute('aria-hidden', 'true');
   if (openKbuild.fromApps) {
     openKbuild.fromApps = false;
+    openApps();
+    return;
+  }
+  if (wallet && sessionOpen()) $('tabbar')?.classList.add('show');
+}
+
+function closeKaspaBrowser() {
+  $('browser-screen')?.classList.add('hidden');
+  $('browser-screen')?.setAttribute('aria-hidden', 'true');
+  if (openKaspaBrowser.fromApps) {
+    openKaspaBrowser.fromApps = false;
     openApps();
     return;
   }
@@ -11586,6 +11623,7 @@ function bind() {
   click('ttt-close', closeTtt);
   click('kasdistro-close', closeKasdistro);
   click('kbuild-close', closeKbuild);
+  click('browser-close', closeKaspaBrowser);
   click('ttt-fund', openTttFund);
   click('ttt-sweep', () => openTreasurySweep().catch(e => toast(errText(e))));
   click('build-close', closeBuildRoadmap);

@@ -1,0 +1,75 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Kaspa Browser</title>
+  <style>
+    :root { --tea:#70C7BA; --bg:#0C0D10; --bar:#14161C; --line:#282C37; --ink:#F3F4F6; --mute:#9aa3ad; }
+    * { box-sizing: border-box; }
+    html, body { margin:0; height:100%; background:var(--bg); color:var(--ink); font:14px/1.4 -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif; }
+    .chrome { display:flex; flex-direction:column; height:100%; }
+    .bar { display:flex; gap:6px; align-items:center; padding:8px; background:var(--bar); border-bottom:1px solid var(--line); }
+    .bar button { height:32px; min-width:32px; border:0; border-radius:8px; background:#1c2028; color:var(--ink); cursor:pointer; }
+    .bar input { flex:1; min-width:0; height:32px; border-radius:999px; border:1px solid var(--line); background:#0C0D10; color:var(--ink); padding:0 12px; outline:none; }
+    .bar input:focus { border-color:var(--tea); }
+    .go { background:var(--tea) !important; color:#062014 !important; font-weight:800; padding:0 12px; }
+    .chips { display:flex; gap:6px; padding:8px; overflow-x:auto; background:var(--bar); }
+    .chips button { flex-shrink:0; height:28px; padding:0 10px; border-radius:999px; border:1px solid var(--line); background:transparent; color:var(--mute); font-size:12px; cursor:pointer; }
+    iframe { flex:1; width:100%; border:0; background:#fff; }
+    .note { padding:8px 12px; font-size:11px; color:var(--mute); background:var(--bar); }
+    .note a { color:var(--tea); }
+  </style>
+</head>
+<body>
+  <div class="chrome">
+    <div class="bar">
+      <button type="button" id="back" title="Back">‹</button>
+      <button type="button" id="reload" title="Reload">↻</button>
+      <input id="url" type="url" inputmode="url" placeholder="kaspa.org or search" value="https://kaspa.org">
+      <button type="button" class="go" id="go">Go</button>
+    </div>
+    <div class="chips">
+      <button type="button" data-href="https://kaspa.org">kaspa.org</button>
+      <button type="button" data-href="https://kas.fyi">kas.fyi</button>
+      <button type="button" data-href="https://explorer.kaspa.org">explorer</button>
+      <button type="button" data-href="https://kcc-20-wallet.vercel.app/about.html">KCC20 Wallet</button>
+      <button type="button" data-href="https://duckduckgo.com">DuckDuckGo</button>
+    </div>
+    <iframe id="view" title="Kaspa Browser" src="https://kaspa.org" referrerpolicy="no-referrer-when-downgrade" allow="clipboard-write"></iframe>
+    <div class="note">In-wallet chrome inspired by <a href="https://github.com/Curious-being99/Kaspa-browser-" target="_blank" rel="noopener">KaspaBrowser</a> (Android). HTTPS only. Keys stay in KCC20 Wallet — sites that block iframes won’t render here.</div>
+  </div>
+  <script>
+    (function () {
+      var view = document.getElementById('view');
+      var input = document.getElementById('url');
+      var hist = ['https://kaspa.org'];
+      function httpsOnly(raw) {
+        var t = String(raw || '').trim();
+        if (!t) return 'https://kaspa.org';
+        if (/^https:\/\//i.test(t)) return t;
+        if (/^http:\/\//i.test(t)) return 'https://' + t.slice(7);
+        if (/^[a-z0-9.-]+\.[a-z]{2,}(\/.*)?$/i.test(t)) return 'https://' + t;
+        return 'https://duckduckgo.com/?q=' + encodeURIComponent(t);
+      }
+      function go(u) {
+        var href = httpsOnly(u);
+        input.value = href;
+        view.src = href;
+        if (hist[hist.length - 1] !== href) hist.push(href);
+      }
+      document.getElementById('go').onclick = function () { go(input.value); };
+      document.getElementById('reload').onclick = function () { view.src = input.value; };
+      document.getElementById('back').onclick = function () {
+        if (hist.length > 1) { hist.pop(); go(hist.pop()); }
+      };
+      input.addEventListener('keydown', function (e) {
+        if (e.key === 'Enter') go(input.value);
+      });
+      document.querySelectorAll('.chips [data-href]').forEach(function (b) {
+        b.onclick = function () { go(b.getAttribute('data-href')); };
+      });
+    })();
+  </script>
+</body>
+</html>

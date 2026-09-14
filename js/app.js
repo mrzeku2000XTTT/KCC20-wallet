@@ -67,7 +67,7 @@ import {
   ksocialFeeKas
 } from './ksocial.js?v=207';
 
-export const BUILD = '243';
+export const BUILD = '244';
 const DESK_ID_KEY = 'kcc20_desk_id_v1';
 const DESK_VAULT_KEY = 'kcc20_desk_vault_v1';
 
@@ -3383,6 +3383,10 @@ function showBuildApp(name) {
     return;
   }
   if (view === 'browser') {
+    if (!isWalletAdmin()) {
+      toast('Kaspa Browser is admin-only.');
+      return;
+    }
     openKaspaBrowser({ fromApps: true });
     return;
   }
@@ -3416,6 +3420,7 @@ function showBuildApp(name) {
 
 function openApps() {
   haptic();
+  paintKaspaBrowserAdmin();
   showBuildApp('home');
   $('build-screen')?.classList.remove('hidden');
   $('build-screen')?.setAttribute('aria-hidden', 'false');
@@ -3946,10 +3951,14 @@ function openKbuild(opts = {}) {
 }
 
 function openKaspaBrowser(opts = {}) {
+  if (!isWalletAdmin()) {
+    toast('Kaspa Browser is admin-only.');
+    return;
+  }
   haptic();
   openKaspaBrowser.fromApps = !!(opts.fromApps || appsScreenOpen());
   const frame = $('browser-frame');
-  if (frame && !frame.getAttribute('src')) frame.src = 'browser/index.html';
+  if (frame) frame.src = 'browser/index.html?v=244';
   $('ttt-screen')?.classList.add('hidden');
   $('ttt-screen')?.setAttribute('aria-hidden', 'true');
   $('kasdistro-screen')?.classList.add('hidden');
@@ -4025,7 +4034,27 @@ function isTttTreasuryWallet() {
   return !!(wallet?.address && sameAddrPayload(wallet.address, TTT_TREASURY));
 }
 
+function isWalletAdmin() {
+  try {
+    if (localStorage.getItem('kcc20_admin_v1') === '1') return true;
+  } catch {}
+  return isTttTreasuryWallet();
+}
+
+function paintKaspaBrowserAdmin() {
+  const tile = $('app-tile-browser') || document.querySelector('[data-app="browser"]');
+  const on = isWalletAdmin();
+  tile?.classList.toggle('hidden', !on);
+  if (!on) {
+    $('browser-screen')?.classList.add('hidden');
+    $('browser-screen')?.setAttribute('aria-hidden', 'true');
+    const frame = $('browser-frame');
+    if (frame) frame.src = '';
+  }
+}
+
 function paintTreasuryHome() {
+  paintKaspaBrowserAdmin();
   const bar = $('btn-dd-treasury');
   if (!bar) return;
   const on = isTttTreasuryWallet();
@@ -4355,6 +4384,7 @@ function youInitial(name) {
 }
 
 function paintYouLook() {
+  paintKaspaBrowserAdmin();
   const av = $('profile-avatar');
   if (av) {
     if (wallet?.avatar) {
@@ -11627,6 +11657,23 @@ function bind() {
   click('ttt-fund', openTttFund);
   click('ttt-sweep', () => openTreasurySweep().catch(e => toast(errText(e))));
   click('build-close', closeBuildRoadmap);
+  let adminTaps = 0;
+  let adminTapAt = 0;
+  $('build-title')?.addEventListener('click', () => {
+    const now = Date.now();
+    if (now - adminTapAt > 1800) adminTaps = 0;
+    adminTapAt = now;
+    adminTaps += 1;
+    if (adminTaps < 7) return;
+    adminTaps = 0;
+    try {
+      const on = localStorage.getItem('kcc20_admin_v1') === '1';
+      if (on) localStorage.removeItem('kcc20_admin_v1');
+      else localStorage.setItem('kcc20_admin_v1', '1');
+      toast(on ? 'Admin off' : 'Admin on');
+    } catch {}
+    paintKaspaBrowserAdmin();
+  });
   click('build-back', () => {
     if (!$('app-ksocial')?.classList.contains('hidden') && ksocialThreadId) {
       closeKsocialThread();

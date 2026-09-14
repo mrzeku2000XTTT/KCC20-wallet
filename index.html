@@ -632,7 +632,7 @@
           <button type="button" class="trade-x" id="browser-close">Close</button>
           <h2>Kaspa Browser</h2>
         </div>
-        <iframe id="browser-frame" class="ttt-frame" title="Kaspa Browser" src="browser/index.html?v=243" allow="clipboard-write; fullscreen"></iframe>
+        <iframe id="browser-frame" class="ttt-frame" title="Kaspa Browser" src="" allow="clipboard-write; fullscreen"></iframe>
       </div>
 
       <div class="build-screen hidden" id="build-screen" aria-hidden="true">
@@ -644,7 +644,7 @@
         </div>
 
         <div id="app-home" class="app-home">
-          <p class="build-lede">Open an app. TTT first. Kaspa Browser is an in-wallet chrome (from KaspaBrowser). KBUILD drafts SilverScript v1 covenants++. KasDistro pays many kaspa:q addresses. K Social is the Kaspa L1 feed — in this wallet, no new tab.</p>
+          <p class="build-lede">Open an app. TTT first. KBUILD drafts SilverScript v1 covenants++. KasDistro pays many kaspa:q addresses. K Social is the Kaspa L1 feed — in this wallet, no new tab.</p>
           <div class="app-grid">
             <button type="button" class="app-tile" data-app="ttt">
               <span class="app-ico app-ico-img"><img src="assets/ttt.png" alt=""></span>
@@ -656,7 +656,7 @@
               <b>KBUILD</b>
               <span>Vibe economic builder · SilverScript v1 covenants++</span>
             </button>
-            <button type="button" class="app-tile" data-app="browser">
+            <button type="button" class="app-tile admin-only hidden" data-app="browser" id="app-tile-browser">
               <span class="app-ico">◎</span>
               <b>Kaspa Browser</b>
               <span>In-wallet chrome · kaspa.org · HTTPS</span>
@@ -927,7 +927,7 @@
   <script type="module">
     import('./js/iframeVault.js?v=122').then(function (mod) {
       return (mod.restoreIframeVault ? mod.restoreIframeVault() : Promise.resolve()).then(function () {
-        return import('./js/app.js?v=243');
+        return import('./js/app.js?v=244');
       });
     }).catch(function (err) {
       console.error(err);

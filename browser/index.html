@@ -99,7 +99,7 @@
         <input id="url">
         <button class="icon-btn" id="btn-reload">↻</button>
       </div>
-      <iframe id="view" title="page"></iframe>
+      <iframe id="view" title="page" referrerpolicy="no-referrer" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; fullscreen" sandbox="allow-scripts allow-forms allow-same-origin allow-popups allow-popups-to-escape-sandbox allow-presentation"></iframe>
       <div class="block" id="block">
         <div>
           <h2 id="block-title">Blocked in-wallet</h2>
@@ -203,6 +203,7 @@
       var bookmarks = store.get('kb_bm', []);
       var httpsOnlyOn = store.get('kb_https', true);
       var useProxy = store.get('kb_proxy', true);
+      if (useProxy !== false) useProxy = true;
       var latest = store.get('kb_release', null);
       var RELEASES = 'https://github.com/Curious-being99/Kaspa-browser-/releases';
       var API = 'https://api.github.com/repos/Curious-being99/Kaspa-browser-/releases/latest';
@@ -280,9 +281,28 @@
         var t = tabs.find(function (x) { return x.id === tabId; });
         if (t) { t.url = href; t.title = title || hostOf(href); store.set('kb_tabs', tabs); paintTabBadge(); }
       }
+      function youtubeFrame(href) {
+        try {
+          var u = new URL(href);
+          if (!/(^|\.)youtube\.com$|(^|\.)youtube-nocookie\.com$|^youtu\.be$/.test(u.hostname)) return null;
+          var id = u.searchParams.get('v');
+          if (!id && /(youtu\.be)$/.test(u.hostname)) id = u.pathname.replace(/^\//, '').split('/')[0];
+          if (id && /^[\w-]{6,}$/.test(id)) {
+            return 'https://www.youtube-nocookie.com/embed/' + encodeURIComponent(id) + '?rel=0';
+          }
+          var ch = (u.pathname.match(/@([^/]+)/) || [])[1]
+            || (u.pathname.match(/\/(?:channel|c|user)\/([^/]+)/) || [])[1]
+            || 'Kaspa';
+          return 'https://www.youtube-nocookie.com/embed?listType=search&list=' + encodeURIComponent(ch);
+        } catch (e) { return null; }
+      }
       function frameSrc(href) {
-        if (!useProxy) return href;
-        return '/api/browse?url=' + encodeURIComponent(href);
+        var yt = youtubeFrame(href);
+        if (yt) return yt;
+        if (useProxy || FRAME_BLOCK.test(hostOf(href))) {
+          return '/api/browse?url=' + encodeURIComponent(href);
+        }
+        return href;
       }
       function openHref(href) {
         href = httpsOnly(href);
@@ -292,16 +312,11 @@
         show('web');
         $('block').classList.remove('on');
         $('view').style.display = 'block';
-        if (useProxy) {
-          $('view').src = frameSrc(href);
-        } else if (FRAME_BLOCK.test(hostOf(href))) {
-          $('view').style.display = 'none';
-          $('block').classList.add('on');
-          $('block-title').textContent = hostOf(href);
-          $('block-open').href = href;
-        } else {
-          $('view').src = href;
+        var src = frameSrc(href);
+        if (!src.startsWith('/api/browse') && !src.includes('youtube-nocookie.com') && FRAME_BLOCK.test(hostOf(href))) {
+          src = '/api/browse?url=' + encodeURIComponent(href);
         }
+        $('view').src = src;
         remember(href);
       }
       window.addEventListener('message', function (e) {

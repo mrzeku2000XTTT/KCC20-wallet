@@ -21,26 +21,46 @@ function absUrl(href, base) {
   try { return new URL(href, base).href; } catch { return ''; }
 }
 
-function inject(html, pageUrl) {
-  const origin = (() => { try { return new URL(pageUrl).origin + '/'; } catch { return pageUrl; } })();
-  const boot = `<base href="${origin.replace(/"/g, '&quot;')}">
-<script>
+function wrapNav(abs) {
+  if (!abs || /^(javascript:|data:|mailto:|#)/i.test(abs)) return abs;
+  if (abs.includes('/api/browse?url=')) return abs;
+  return '/api/browse?url=' + encodeURIComponent(abs);
+}
+
+function rewriteHtml(html, pageUrl) {
+  html = html.replace(/\s(href|action)=["']([^"']+)["']/gi, (_, attr, u) => {
+    if (/^(#|javascript:|mailto:|tel:|data:)/i.test(u)) return ` ${attr}="${u}"`;
+    const abs = absUrl(u, pageUrl);
+    if (!abs) return ` ${attr}="${u}"`;
+    if (/\.(css|js|mjs|png|jpe?g|gif|webp|svg|ico|woff2?|ttf)(\?|$)/i.test(abs)) {
+      return ` ${attr}="${abs}"`;
+    }
+    return ` ${attr}="${wrapNav(abs)}"`;
+  });
+  html = html.replace(/\s(src)=["']([^"']+)["']/gi, (_, attr, u) => {
+    if (/^(#|data:|javascript:|blob:)/i.test(u)) return ` ${attr}="${u}"`;
+    const abs = absUrl(u, pageUrl);
+    return ` ${attr}="${abs || u}"`;
+  });
+  const boot = `<script>
 (function(){
   var P='/api/browse?url=';
   function wrap(u){
     try {
-      var abs=new URL(u, location.href).href;
-      if (abs.indexOf('/api/browse')>=0) return abs;
+      var abs=new URL(u, ${JSON.stringify(pageUrl)}).href;
+      if (abs.indexOf(P)>=0) return abs;
       if (!/^https?:/i.test(abs)) return u;
       return P+encodeURIComponent(abs);
     } catch(e){ return u; }
   }
   document.addEventListener('click', function(e){
     var a=e.target.closest && e.target.closest('a');
-    if(!a || !a.href) return;
-    if (a.target==='_blank') return;
-    var w=wrap(a.getAttribute('href')||a.href);
-    if (w && w.indexOf(P)===0){ e.preventDefault(); location.href=w; }
+    if(!a) return;
+    var raw=a.getAttribute('href'); if(!raw) return;
+    if (/^(#|javascript:|mailto:)/i.test(raw)) return;
+    e.preventDefault();
+    e.stopPropagation();
+    location.href=wrap(raw);
   }, true);
   try { parent.postMessage({type:'kb-nav', url:${JSON.stringify(pageUrl)}}, '*'); } catch(e){}
 })();
@@ -84,7 +104,7 @@ export default async function handler(req, res) {
       let html = await up.text();
       if (html.length > 1_500_000) html = html.slice(0, 1_500_000);
       res.setHeader('Content-Type', 'text/html; charset=utf-8');
-      res.status(up.ok ? 200 : up.status).send(inject(html, finalUrl));
+      res.status(up.ok ? 200 : up.status).send(rewriteHtml(html, finalUrl));
       return;
     }
     const buf = Buffer.from(await up.arrayBuffer());

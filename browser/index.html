@@ -16,9 +16,20 @@
     .go { background:var(--tea) !important; color:#062014 !important; font-weight:800; padding:0 12px; }
     .chips { display:flex; gap:6px; padding:8px; overflow-x:auto; background:var(--bar); }
     .chips button { flex-shrink:0; height:28px; padding:0 10px; border-radius:999px; border:1px solid var(--line); background:transparent; color:var(--mute); font-size:12px; cursor:pointer; }
-    iframe { flex:1; width:100%; border:0; background:#fff; }
+    iframe { flex:1; width:100%; border:0; background:#111; }
     .note { padding:8px 12px; font-size:11px; color:var(--mute); background:var(--bar); }
     .note a { color:var(--tea); }
+    .block {
+      flex:1; display:none; align-items:center; justify-content:center; padding:28px 20px; text-align:center;
+    }
+    .block.on { display:flex; }
+    .block h2 { margin:0 0 8px; font-size:20px; }
+    .block p { color:var(--mute); margin:0 0 16px; max-width:28rem; }
+    .open {
+      display:inline-block; height:40px; line-height:40px; padding:0 18px; border-radius:999px;
+      background:var(--tea); color:#062014; font-weight:800; text-decoration:none;
+    }
+    iframe.hide { display:none; }
   </style>
 </head>
 <body>
@@ -26,7 +37,7 @@
     <div class="bar">
       <button type="button" id="back" title="Back">‹</button>
       <button type="button" id="reload" title="Reload">↻</button>
-      <input id="url" type="url" inputmode="url" placeholder="kaspa.org or search" value="https://kaspa.org">
+      <input id="url" type="text" inputmode="url" placeholder="kaspa.org or search" value="https://kaspa.org">
       <button type="button" class="go" id="go">Go</button>
     </div>
     <div class="chips">
@@ -34,32 +45,76 @@
       <button type="button" data-href="https://kas.fyi">kas.fyi</button>
       <button type="button" data-href="https://explorer.kaspa.org">explorer</button>
       <button type="button" data-href="https://kcc-20-wallet.vercel.app/about.html">KCC20 Wallet</button>
-      <button type="button" data-href="https://duckduckgo.com">DuckDuckGo</button>
+      <button type="button" data-search="1">Search</button>
     </div>
     <iframe id="view" title="Kaspa Browser" src="https://kaspa.org" referrerpolicy="no-referrer-when-downgrade" allow="clipboard-write"></iframe>
-    <div class="note">In-wallet chrome inspired by <a href="https://github.com/Curious-being99/Kaspa-browser-" target="_blank" rel="noopener">KaspaBrowser</a> (Android). HTTPS only. Keys stay in KCC20 Wallet — sites that block iframes won’t render here.</div>
+    <div class="block" id="block">
+      <div>
+        <h2 id="block-title">This site blocks in-wallet view</h2>
+        <p id="block-copy">DuckDuckGo and many search engines refuse iframes. Open them in a full tab — same as KaspaBrowser’s real WebView.</p>
+        <a class="open" id="block-open" href="#" target="_blank" rel="noopener">Open in new tab</a>
+      </div>
+    </div>
+    <div class="note">Chrome inspired by <a href="https://github.com/Curious-being99/Kaspa-browser-" target="_blank" rel="noopener">KaspaBrowser</a>. HTTPS only. Search opens a new tab (DuckDuckGo blocks iframes). Keys stay in KCC20 Wallet.</div>
   </div>
   <script>
     (function () {
       var view = document.getElementById('view');
       var input = document.getElementById('url');
+      var block = document.getElementById('block');
+      var blockOpen = document.getElementById('block-open');
       var hist = ['https://kaspa.org'];
+      var FRAME_BLOCK = /(^|\.)(duckduckgo|google|bing|yahoo|yandex|facebook|instagram|youtube|twitter|x\.com|tiktok|linkedin|reddit)\./i;
+
       function httpsOnly(raw) {
         var t = String(raw || '').trim();
         if (!t) return 'https://kaspa.org';
         if (/^https:\/\//i.test(t)) return t;
         if (/^http:\/\//i.test(t)) return 'https://' + t.slice(7);
-        if (/^[a-z0-9.-]+\.[a-z]{2,}(\/.*)?$/i.test(t)) return 'https://' + t;
-        return 'https://duckduckgo.com/?q=' + encodeURIComponent(t);
+        if (/^[a-z0-9.-]+\.[a-z]{2,}([/:?#].*)?$/i.test(t)) return 'https://' + t;
+        return 'search:' + t;
+      }
+      function hostOf(href) {
+        try { return new URL(href).hostname; } catch (e) { return ''; }
+      }
+      function searchUrl(q) {
+        return 'https://duckduckgo.com/?q=' + encodeURIComponent(q);
+      }
+      function showFrame(href) {
+        block.classList.remove('on');
+        view.classList.remove('hide');
+        view.src = href;
+      }
+      function showBlocked(href, why) {
+        view.classList.add('hide');
+        view.src = 'about:blank';
+        block.classList.add('on');
+        document.getElementById('block-title').textContent = hostOf(href) || 'Blocked in-wallet';
+        document.getElementById('block-copy').textContent = why || 'This site refuses to load in an iframe. Open it in a new tab.';
+        blockOpen.href = href;
       }
       function go(u) {
         var href = httpsOnly(u);
+        if (href.indexOf('search:') === 0) {
+          var q = href.slice(7);
+          href = searchUrl(q);
+          input.value = href;
+          showBlocked(href, 'Search engines block iframes. KaspaBrowser uses a real WebView; here we open DuckDuckGo in a new tab.');
+          return;
+        }
         input.value = href;
-        view.src = href;
+        if (FRAME_BLOCK.test(hostOf(href))) {
+          showBlocked(href, hostOf(href) + ' sent X-Frame-Options / CSP and will not render inside the wallet.');
+        } else {
+          showFrame(href);
+        }
         if (hist[hist.length - 1] !== href) hist.push(href);
       }
       document.getElementById('go').onclick = function () { go(input.value); };
-      document.getElementById('reload').onclick = function () { view.src = input.value; };
+      document.getElementById('reload').onclick = function () {
+        if (block.classList.contains('on')) return;
+        view.src = input.value;
+      };
       document.getElementById('back').onclick = function () {
         if (hist.length > 1) { hist.pop(); go(hist.pop()); }
       };
@@ -69,6 +124,11 @@
       document.querySelectorAll('.chips [data-href]').forEach(function (b) {
         b.onclick = function () { go(b.getAttribute('data-href')); };
       });
+      document.querySelector('.chips [data-search]').onclick = function () {
+        var q = input.value.trim();
+        if (!q || /^https?:/i.test(q) || FRAME_BLOCK.test(hostOf(httpsOnly(q)))) q = 'kaspa';
+        go(q);
+      };
     })();
   </script>
 </body>

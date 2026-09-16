@@ -6,7 +6,7 @@
 */
 (function (root) {
   'use strict';
-  var SDK_VERSION = '170';
+  var SDK_VERSION = '171';
   if (root.kcc20 && root.kcc20.isKcc20 && String(root.kcc20.sdkVersion || '') === SDK_VERSION) return;
 
   function scriptOrigin() {
@@ -275,6 +275,7 @@
     connect: 1, requestAccounts: 1, signPskt: 1, signPsbt: 1, pushTx: 1, switchNetwork: 1,
     sendToken: 1, sendKcc20: 1, payToken: 1, payKcc20: 1, fundCredits: 1,
     buyKron: 1, buyToken: 1, sellKron: 1, sellToken: 1, tradeKron: 1, tradeToken: 1,
+    quoteKron: 1, quoteToken: 1,
     compileVault: 1, lockVault: 1, compileVaults: 1, lockVaults: 1, sendKas: 1, sendKaspa: 1, openWallet: 1
   };
 
@@ -403,6 +404,11 @@
       }).catch(function () {
         return { tick: tick, name: tick, decimals: 0, raw: '0', balance: '0', protocol: 'kcc20', address: addr };
       });
+    }
+    if (hasSession()) {
+      return Promise.reject(new Error(
+        method + ' is not silent. For KRON, call buyKron or tradeKron on a user click — SCORPION quotes on the Approve sheet. Do not call quoteKron after the connect popup has closed unless that call is also a user click (sdk.js v171+).'
+      ));
     }
     return Promise.reject(new Error('Connect KCC20 Wallet first'));
   }
@@ -652,6 +658,9 @@
       return rpc('sendToken', opts || {}).then(function (r) { closeAfterUse(); return r; });
     },
     quoteKron: function (opts) {
+      return rpc('quoteKron', opts || {});
+    },
+    quoteToken: function (opts) {
       return rpc('quoteKron', opts || {});
     },
     buyKron: function (opts) {

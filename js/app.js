@@ -23,8 +23,9 @@ import {
   compoundUtxos, sendKrc20, sendKcc20, loadKrc20Pending, lockKcc20Timelock, sweepKcc20Capsule,
   fetchOwnedUtxos, collectSpendableUtxos, nativeP2pkUtxos, buildSentinelChain, buildRecurringChain, buildHashlockCovenant,
   newHashlockSecret, checkinHop, currentHop, parseXmssKit, p2shFromRedeemHex, spendXmssVault,
+  spendSilverVault, isSilverScriptVault,
   disconnectRpc, buildDcaDrips, sendKasMany, releaseDcaDrip, cancelDcaDrip, isMassError
-} from './tx.js?v=223';
+} from './tx.js?v=224';
 import { bootDappConnect, pingTttDappFrame, pingKasdistroDappFrame, TTT_TREASURY } from './dappConnect.js?v=201';
 import { changenowEstimate, changenowCreate, changenowWidgetUrl, cnFrom } from './changenow.js?v=180';
 import { schedulePersistIframeVault, bootIframeVaultWatch } from './iframeVault.js?v=122';
@@ -67,7 +68,7 @@ import {
   ksocialFeeKas
 } from './ksocial.js?v=207';
 
-export const BUILD = '245';
+export const BUILD = '246';
 const DESK_ID_KEY = 'kcc20_desk_id_v1';
 const DESK_VAULT_KEY = 'kcc20_desk_vault_v1';
 
@@ -10873,11 +10874,15 @@ function openLockTimer(vault) {
   const hop = isHopVault(vault);
   const isHash = vault.type === 'hashlock' || vault.type === 'onramp';
   const isXmss = vault.type === 'xmss';
+  const isSilver = isSilverScriptVault(vault);
+  const isSearch = vault.type === 'searchvault' || (vault.params?.silEntries || []).includes('pay_search_fee');
   const iAmBuyer = isEscrow && wallet?.address === vault.params?.buyerAddress;
   const msigReady = isMsig && !!vaultCounterpartyKey(vault);
   const hopN = (vault.hops || []).length;
   const hopI = Number(vault.hopIndex || 0);
   let help = 'Sweep returns KAS to this wallet.';
+  if (isSearch) help = 'Search Kaspa vault (SilverScript v1). Pay search sends EXACTLY 0.001 KAS to the Search treasury and keeps the rest in this kaspa:p. Unlock remainder returns leftover KAS here. Do not use time-capsule Sweep — that is why script returned early.';
+  else if (isSilver) help = 'SilverScript P2SH. Unlock uses the silverc entry, not a time-capsule sweep. Paste the artifact JSON if Sweep failed.';
   if (kcc && locked) help = 'Still frozen. When the timer hits zero, Sweep returns the tokens plus leftover witness KAS.';
   else if (kcc) help = 'Lock has expired. Sweep now, or wait — auto-return is on.';
   else if (isLifeVault(vault) && (vault.unlockAnytime || vault.params?.unlockAnytime)) help = 'Control envelope. Sweep returns KAS whenever you confirm with PIN.';
@@ -10897,8 +10902,10 @@ function openLockTimer(vault) {
   else if (isEscrow) help = 'You are the seller. Refund returns the KAS to this wallet. Buyer can Release if their wallet is imported here.';
   else if (isMsig && !msigReady) help = '2-of-2: import the counterparty wallet on You, switch back here, then Sweep.';
   else if (isMsig) help = 'Both keys are on this device. Sweep signs 2-of-2 and returns KAS here.';
-  const sweepLabel = isEscrow ? (iAmBuyer ? 'Release to me' : 'Refund to me')
-    : (vault.type === 'dca' ? 'Return KAS now' : (isXmss ? 'Spend with witness' : (hop ? 'Timeout release' : (isHash && locked ? 'Claim with secret' : 'Sweep to wallet'))));
+  const sweepLabel = isSearch ? 'Unlock remainder'
+    : (isSilver ? 'Unlock (SilverScript)'
+    : (isEscrow ? (iAmBuyer ? 'Release to me' : 'Refund to me')
+    : (vault.type === 'dca' ? 'Return KAS now' : (isXmss ? 'Spend with witness' : (hop ? 'Timeout release' : (isHash && locked ? 'Claim with secret' : 'Sweep to wallet'))))));
   openSheet(vault.name || 'Time Capsule', `
     <div class="kv"><span class="k">Locked</span><span class="v">${tok ? esc(tok) : formatAmount(vaultLockedSompi(vault)) + ' KAS'}</span></div>
     ${kcc ? `<div class="kv"><span class="k">Witness dust</span><span class="v">${formatAmount(vault.fundedSompi || 0)} KAS</span></div>` : ''}
@@ -10915,9 +10922,11 @@ function openLockTimer(vault) {
     ${vault.payeeAddr ? `<div class="kv"><span class="k">Payee</span><span class="v">${esc(shortAddr(vault.payeeAddr, 10, 6))}</span></div>` : ''}
     ${isHash ? `<div class="field"><label>Secret</label><input id="v-secret" placeholder="32-byte hex" value="${esc(vault.params?.secretHex || '')}" spellcheck="false"></div>` : ''}
     ${isXmss ? `<div class="field"><label>Witness JSON</label><textarea id="v-witness" rows="6" placeholder='{"witness_hex":["…"]}' spellcheck="false"></textarea></div>` : ''}
+    ${isSilver ? `<div class="field"><label>silverc artifact JSON</label><textarea id="v-artifact" rows="5" placeholder='{"schema_version":1,"contracts":{...}}' spellcheck="false">${esc(typeof vault.params?.artifact === 'string' ? vault.params.artifact : (vault.params?.artifact ? JSON.stringify(vault.params.artifact) : ''))}</textarea></div>` : ''}
     <div class="kv"><span class="k">Address</span><span class="v">${esc(vault.address)}</span></div>
     <p class="muted" style="text-align:left;">${esc(help)}</p>
     ${canCheckinVault(vault) ? `<button class="btn btn-gold" id="v-checkin" style="margin-top:14px;">Check in</button>` : ''}
+    ${isSearch ? `<button class="btn btn-gold" id="v-searchfee" style="margin-top:14px;">Pay 0.001 KAS search</button>` : ''}
     ${vault.type === 'dca'
       ? `<button class="btn btn-gold" id="v-deldca" style="margin-top:10px;">Delete from this device</button>`
       : `<button class="btn ${canCheckinVault(vault) ? 'btn-glass' : 'btn-gold'}" id="v-unlock" style="margin-top:10px;" ${isMsig && !msigReady ? 'disabled' : ''}>${esc(sweepLabel)}</button>`}
@@ -10934,7 +10943,15 @@ function openLockTimer(vault) {
     unlockVault(vault, {
       escrowRelease: isEscrow && iAmBuyer,
       secretHex: $('v-secret')?.value.trim() || vault.params?.secretHex || '',
-      witness: $('v-witness')?.value || ''
+      witness: $('v-witness')?.value || '',
+      artifact: $('v-artifact')?.value.trim() || '',
+      silverEntry: isSilver ? 'unlock' : ''
+    }).catch(e => { setSheetStatus(errText(e), true); toast(errText(e)); });
+  });
+  $('v-searchfee')?.addEventListener('click', () => {
+    unlockVault(vault, {
+      artifact: $('v-artifact')?.value.trim() || '',
+      silverEntry: 'pay_search_fee'
     }).catch(e => { setSheetStatus(errText(e), true); toast(errText(e)); });
   });
   $('v-checkin')?.addEventListener('click', () => runCheckin(vault).catch(e => { setSheetStatus(errText(e), true); toast(errText(e)); }));
@@ -11003,8 +11020,19 @@ async function unlockVault(vault, opts = {}) {
     toast('Paste the witness JSON from xmss_sign.py first');
     return;
   }
+  if (opts.artifact) {
+    try {
+      const raw = String(opts.artifact).trim();
+      const parsed = raw.startsWith('{') ? JSON.parse(raw) : raw;
+      vault = { ...vault, params: { ...(vault.params || {}), artifact: parsed } };
+      updateVault(vault.address, { params: vault.params });
+    } catch (e) {
+      toast('Artifact JSON is not valid');
+      return;
+    }
+  }
   openSheet(kcc ? 'Unfreeze KCC20' : 'Sweep vault', `
-    <p class="muted" style="text-align:left;">${kcc ? 'Spending the CLTV witness and returning ' + esc(vault.tick || 'KCC20') + ' to this wallet.' : 'Returning KAS from this covenant to your wallet.'}</p>
+    <p class="muted" style="text-align:left;">${opts.silverEntry === 'pay_search_fee' ? 'Paying 0.001 KAS search fee to the Search treasury and recreating this vault.' : (isSilverScriptVault(vault) ? 'SilverScript unlock — remainder returns to this wallet.' : (kcc ? 'Spending the CLTV witness and returning ' + esc(vault.tick || 'KCC20') + ' to this wallet.' : 'Returning KAS from this covenant to your wallet.'))}</p>
     <div class="kv"><span class="k">From</span><span class="v">${esc(vault.address || '')}</span></div>
   `, { confirm: 'Sweeping…', cancel: false });
   const busy = $('sheet-ok');
@@ -11020,9 +11048,18 @@ async function unlockVault(vault, opts = {}) {
   if (!utxosV.length && !kcc) throw new Error('Nothing to sweep — this address has 0 UTXOs');
   setSheetStatus('Connecting to public node…');
   await pingPublicNode();
-  setSheetStatus(vault.type === 'xmss' ? 'Building XMSS witness spend…' : (kcc ? 'Signing SCRIPT_HASH witness + CLTV…' : 'Signing P2SH redeem…'));
+  setSheetStatus(vault.type === 'xmss' ? 'Building XMSS witness spend…' : (isSilverScriptVault(vault) ? 'Signing SilverScript entry…' : (kcc ? 'Signing SCRIPT_HASH witness + CLTV…' : 'Signing P2SH redeem…')));
   let result;
-  if (kcc) {
+  if (isSilverScriptVault(vault) || opts.silverEntry) {
+    const feeUtxos = await fetchOwnedUtxos(wallet);
+    result = await spendSilverVault({
+      wallet,
+      vault,
+      utxos: utxosV,
+      feeUtxos,
+      entry: opts.silverEntry || 'unlock'
+    });
+  } else if (kcc) {
     result = await sweepKcc20Capsule({ wallet, vault, utxos: utxosV, onStatus: (m) => setSheetStatus(m) });
   } else if (vault.type === 'xmss') {
     const feeUtxos = await fetchOwnedUtxos(wallet);

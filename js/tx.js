@@ -2,8 +2,9 @@
 import {
   hexToBytes, kaspaAddressFromScriptHash, validateKaspaAddress,
   validateAndCleanUtxo, deepCloneAndFreeze, kasToSompi,
-  kaspaRestBase, networkId
+  kaspaRestBase, networkId, kaspaAddressFromPubkey
 } from './crypto.js?v=90';
+import { parse as parseSilArtifact, encodeEntry, redeemHex as silRedeemHex } from './silverscript.js?v=186';
 import { kaswareSigning, sendKaspaWithKasware, sendKrc20WithKasware, signPsktWithKasware, fetchKaswareUtxos, repairSafeJson, kaswareEnabled, isKaswareInstalled, liveKaswareAccount } from './kasware.js?v=216';
 import * as kron from '../vendor/kron-sdk/index.js';
 
@@ -726,6 +727,125 @@ export async function newHashlockSecret() {
 }
 
 /** Same P2SH wrap as covenants/xmsslock/deploy_xmss_generic.mjs */
+export function isSilverScriptVault(vault) {
+  const t = String(vault?.type || '');
+  if (t === 'searchvault' || t === 'silverscript') return true;
+  if (/search\s*kaspa/i.test(vault?.name || '')) return true;
+  const entries = vault?.params?.silEntries || vault?.silEntries || [];
+  if (entries.includes('unlock') || entries.includes('pay_search_fee')) return true;
+  return !!(vault?.params?.artifact || vault?.params?.artifactJson || vault?.params?.silContract);
+}
+
+function toSig65(sigHex) {
+  let h = hexish(sigHex);
+  if (h.length === 128) h += '01';
+  if (h.length !== 130) throw new Error('Schnorr sig for SilverScript must be 65 bytes (got ' + (h.length / 2) + ')');
+  return h;
+}
+
+const SEARCH_FEE_SOMPI = 100000n;
+const SEARCH_MINER = 1000n;
+const SEARCH_TREASURY_PUB = '284bb3e4d46276c03d2ef6aaa0e0d62ec2698f939d1b55a8011d77fe5ca6f7ba';
+
+/** Spend SearchVault / generic silverc P2SH via KCC-01 encodeEntry (unlock or pay_search_fee). */
+export async function spendSilverVault({ wallet, vault, utxos, feeUtxos = [], entry = 'unlock' }) {
+  const artRaw = vault?.params?.artifact || vault?.params?.artifactJson;
+  if (!artRaw) {
+    throw new Error('This Search / SilverScript vault needs the silverc JSON artifact to spend. Paste it on the vault sheet (params.artifact). Sweep-as-capsule will fail: script returned early.');
+  }
+  const art = parseSilArtifact(artRaw);
+  const cName = vault.params?.silContract || vault.params?.contract || Object.keys(art.contracts || {})[0];
+  const redeemHex = hexish(vault.scriptHex || vault.redeemHex || silRedeemHex(art, cName));
+  if (!redeemHex) throw new Error('No redeem script on this vault');
+  const k = await loadKaspaSdk();
+  const cov = restUtxosToEntries(utxos, vault.address);
+  if (!cov.length) throw new Error('Nothing at this vault address');
+  const covAmt = cov.reduce((a, e) => a + e.amount, 0n);
+  const priv = privKeyFromWallet(k, wallet);
+  const { rpc, url } = await connectPublicNode();
+  const en = String(entry || 'unlock');
+
+  function wrapSig(tx, inputIndex) {
+    const sig = toSig65(k.createInputSignature(tx, inputIndex, priv, k.SighashType.All));
+    const enc = encodeEntry(art, cName, en, [sig]);
+    const redeemPush = hexish(k.payToScriptHashSignatureScript(redeemHex, new Uint8Array()));
+    return enc.hex + redeemPush;
+  }
+
+  let tx;
+  let scripts;
+  if (en === 'pay_search_fee') {
+    const change = covAmt - SEARCH_FEE_SOMPI - SEARCH_MINER;
+    if (change <= 0n) throw new Error('Vault too small for another 0.001 KAS search. Unlock the remainder instead.');
+    const feePub = String(vault.params?.feeRecipient || vault.params?.feeRecipientHex || SEARCH_TREASURY_PUB).replace(/^0x/i, '');
+    const feeAddr = kaspaAddressFromPubkey(hexToBytes(feePub.length === 66 ? feePub.slice(2) : feePub));
+    const extras = restUtxosToEntries(feeUtxos || [], wallet.address)
+      .filter(e => e.address === wallet.address)
+      .sort((a, b) => (a.amount < b.amount ? 1 : -1));
+    const extra = extras.find(e => e.amount >= 500_000n) || null;
+    const ins = extra ? [...cov, extra] : [...cov];
+    tx = k.createTransaction(
+      ins,
+      [
+        { address: feeAddr, amount: SEARCH_FEE_SOMPI },
+        { address: vault.address, amount: change }
+      ],
+      0n,
+      undefined,
+      1
+    );
+    tx.version = 1;
+    for (const inp of tx.inputs) {
+      inp.sequence = 0n;
+      inp.sigOpCount = 0;
+      inp.computeBudget = 80;
+    }
+    const silverScript = wrapSig(tx, 0);
+    tx.inputs[0].signatureScript = silverScript;
+    scripts = [silverScript];
+    if (extra) {
+      const feeSig = hexish(k.createInputSignature(tx, 1, priv, k.SighashType.All));
+      tx.inputs[1].signatureScript = feeSig;
+      tx.inputs[1].computeBudget = 10;
+      scripts.push(feeSig);
+    }
+  } else {
+    const fee = 450_000n;
+    if (covAmt <= fee) throw new Error('Vault too small to cover network fee on unlock');
+    tx = k.createTransaction(
+      cov,
+      [{ address: wallet.address, amount: covAmt - fee }],
+      0n,
+      undefined,
+      1
+    );
+    tx.version = 1;
+    for (const inp of tx.inputs) {
+      inp.sequence = 0n;
+      inp.sigOpCount = 0;
+      inp.computeBudget = 80;
+    }
+    const silverScript = wrapSig(tx, 0);
+    tx.inputs[0].signatureScript = silverScript;
+    scripts = [silverScript];
+  }
+  try { k.updateTransactionMass(networkId(), tx); } catch {}
+  const txId = await submitSignedRpc(k, rpc, url, tx, {
+    sigOpCount: 0,
+    computeBudget: 80,
+    lockTime: 0,
+    scripts
+  });
+  return {
+    txId,
+    amountKas: en === 'pay_search_fee' ? 0.001 : Number(covAmt - 450_000n) / 1e8,
+    feeKas: en === 'pay_search_fee' ? 0.00001 : 0.0045,
+    node: url,
+    entry: en,
+    nextAddress: en === 'pay_search_fee' ? vault.address : wallet.address
+  };
+}
+
 export async function p2shFromRedeemHex(redeemHex) {
   const k = await loadKaspaSdk();
   const hex = hexish(redeemHex);

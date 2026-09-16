@@ -1,0 +1,39 @@
+pragma silverscript ^1.0.0;
+
+// Search Kaspa metering vault — official SilverScript v1.0.0 (kaspanet/silverscript).
+// Each pay_search_fee spends this UTXO and MUST emit:
+//   outputs[0] = EXACTLY 100_000 sompi (0.001 KAS) to feeRecipient P2PK
+//   outputs[1] = remaining - MINER_FEE back to THIS same covenant scriptPubKey
+//   tx.outputs.length == 2  (no piggyback outputs)
+// No CLTV, no tx.time, no this.ageDaa. Replay is impossible: a UTXO spends once.
+// Owner must sign pay_search_fee so a stranger cannot burn prepaid searches.
+// unlock: owner takes the remainder to their P2PK (emergency exit).
+// Compile: silverc SearchVault.sil --constructor-args args.json
+// KCC20 Argent does NOT compile .sil — paste the artifact into compileVault type silverscript / searchvault.
+
+contract SearchVault(pubkey owner, pubkey feeRecipient) {
+    int constant FEE_SOMPI = 100000;
+    int constant MINER_FEE = 1000;
+
+    entry pay_search_fee(sig ownerSig) {
+        require(checkSig(ownerSig, owner));
+        require(tx.outputs.length == 2);
+
+        byte[36] feeSpk = new ScriptPubKeyP2PK(feeRecipient);
+        require(tx.outputs[0].scriptPubKey == byte[](feeSpk));
+        require(tx.outputs[0].value == FEE_SOMPI);
+
+        require(tx.outputs[1].scriptPubKey == this.activeScriptPubKey);
+        int inVal = tx.inputs[this.activeInputIndex].value;
+        int change = inVal - FEE_SOMPI - MINER_FEE;
+        require(change > 0);
+        require(tx.outputs[1].value == change);
+    }
+
+    entry unlock(sig ownerSig) {
+        require(checkSig(ownerSig, owner));
+        require(tx.outputs.length == 1);
+        byte[36] ownerSpk = new ScriptPubKeyP2PK(owner);
+        require(tx.outputs[0].scriptPubKey == byte[](ownerSpk));
+    }
+}

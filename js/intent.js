@@ -198,7 +198,7 @@ export function parseAddress(text) {
   return a;
 }
 
-const HARD_TYPES = { send: 1, sentinel: 1, escrow: 1, multisig: 1, recurring: 1, hashlock: 1, onramp: 1, xmss: 1, silverscript: 1, kcc20lock: 1, spendlimit: 1 };
+const HARD_TYPES = { send: 1, sentinel: 1, escrow: 1, multisig: 1, recurring: 1, hashlock: 1, onramp: 1, xmss: 1, silverscript: 1, kcc20lock: 1, spendlimit: 1, searchvault: 1 };
 
 /** Pull a real KAS number from SDK / dApp payloads (top-level or params). */
 export function collectKasAmount(src, depth) {
@@ -245,7 +245,8 @@ export function normalizeVaultType(raw) {
     xmss: 'xmss', 'xmss vault': 'xmss', pqs: 'xmss', pq: 'xmss',
     'post quantum': 'xmss', 'quantum safe': 'xmss', 'quantum vault': 'xmss',
     silverscript: 'silverscript', silverc: 'silverscript', 'silver script': 'silverscript',
-    spendlimit: 'spendlimit', 'spend limit': 'spendlimit', weekly: 'spendlimit', allowance: 'spendlimit', cap: 'spendlimit', budget: 'spendlimit'
+    spendlimit: 'spendlimit', 'spend limit': 'spendlimit', weekly: 'spendlimit', allowance: 'spendlimit', cap: 'spendlimit', budget: 'spendlimit',
+    searchvault: 'searchvault', 'search vault': 'searchvault', 'search kaspa': 'searchvault', searchfee: 'searchvault'
   };
   if (exact[s]) return exact[s];
   if (/dead\s*mans?|deadmanswitch|sentinel|\bdms\b|\bheir\b|check\s*in|senior\s*guardian|\bguardian\b/.test(s)) return 'sentinel';
@@ -256,6 +257,7 @@ export function normalizeVaultType(raw) {
   if (/hash\s*lock|htlc/.test(s)) return 'hashlock';
   if (/xmss|\bpqs\b|\bpq\b|post\s*quantum|quantum\s*safe/.test(s)) return 'xmss';
   if (/silver\s*script|silverc|\.sil\b/.test(s)) return 'silverscript';
+  if (/search\s*(kaspa|vault|fee)|pay_search_fee|0\.001\s*kas/.test(s)) return 'searchvault';
   if (/spend\s*limit|weekly\s*cap|allowance|budget\s*cap/.test(s)) return 'spendlimit';
   if (/recurring|x402/.test(s)) return 'recurring';
   if (/kcc20\s*freeze|freeze tokens/.test(s)) return 'kcc20lock';
@@ -277,6 +279,7 @@ function detectType(text, prev) {
   if (/\b(xmss|pqs|pq|post-?quantum|quantum[-\s]?safe|quantum\s+vault|public kit)\b/.test(t)
     || /"redeem_script_hex"|master_root_hex/i.test(t)) return 'xmss';
   if (/\b(silverscript|silverc|sil\s*abi|\.sil\b|kcc-?01)\b/.test(t) || /"schema_version"\s*:\s*1/.test(t)) return 'silverscript';
+  if (/\b(search\s*(kaspa|vault|fee)|pay_search_fee)\b/.test(t)) return 'searchvault';
   if (/\b(spend\s*limit|weekly\s*(cap|limit|budget)|allowance\s*cap)\b/.test(t)) return 'spendlimit';
   if (/\b(recurring|subscription|x402)\b/.test(t)) return 'recurring';
   if (/\b(hash\s*lock|htlc|hash vault)\b/.test(t)) return 'hashlock';
@@ -430,6 +433,8 @@ export function parseIntent(text, prev = null) {
     if (!params.amountKas) missing.push('amount in KAS');
     if (params.kitPrivate) missing.push('the PUBLIC XMSS kit (.public.json), not a private key file');
     else if (!params.kit) missing.push('XMSS public kit JSON from xmss_keygen.py');
+  } else if (type === 'searchvault') {
+    if (!params.amountKas) missing.push('amount in KAS (prepaid search pot)');
   } else if (type === 'spendlimit') {
     if (!params.amountKas) missing.push('amount in KAS (the pot to lock)');
     if (!params.capKas) missing.push('spend cap in KAS per window (e.g. capKas: 10 weekly)');
@@ -489,6 +494,9 @@ export function describeIntent(intent) {
     return `PQS XMSS vault: lock ${amt} in the post-quantum script from this repo. Keys stay offline. Spend later with xmss_sign.py witness.`;
   }
   if (intent.type === 'silverscript') return `SilverScript v1: lock ${amt} into silverc bytecode (P2SH). Spend with a KCC-01 entry. Argent does not compile .sil.`;
+  if (intent.type === 'searchvault') {
+    return `Search Kaspa vault: lock ${amt}. Each search pays exactly 0.001 KAS to the Search treasury and recreates this covenant. Owner-signed. No timelock. silverc v1 artifact to fund the real script.`;
+  }
   if (intent.type === 'spendlimit') {
     const cap = p.capKas != null ? p.capKas + ' KAS' : (p.payKas != null ? p.payKas + ' KAS' : 'a cap');
     const per = p.period || p.durationLabel || 'weekly';

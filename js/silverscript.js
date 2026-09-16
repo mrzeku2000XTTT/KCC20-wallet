@@ -287,6 +287,33 @@
   }
 
   var TEMPLATES = {
+    searchvault: {
+      id: 'searchvault',
+      title: 'Search Kaspa fee vault',
+      sil: 'pragma silverscript ^1.0.0;\n\n'
+        + 'contract SearchVault(pubkey owner, pubkey feeRecipient) {\n'
+        + '    int constant FEE_SOMPI = 100000;\n'
+        + '    int constant MINER_FEE = 1000;\n\n'
+        + '    entry pay_search_fee(sig ownerSig) {\n'
+        + '        require(checkSig(ownerSig, owner));\n'
+        + '        require(tx.outputs.length == 2);\n'
+        + '        byte[36] feeSpk = new ScriptPubKeyP2PK(feeRecipient);\n'
+        + '        require(tx.outputs[0].scriptPubKey == byte[](feeSpk));\n'
+        + '        require(tx.outputs[0].value == FEE_SOMPI);\n'
+        + '        require(tx.outputs[1].scriptPubKey == this.activeScriptPubKey);\n'
+        + '        int inVal = tx.inputs[this.activeInputIndex].value;\n'
+        + '        int change = inVal - FEE_SOMPI - MINER_FEE;\n'
+        + '        require(change > 0);\n'
+        + '        require(tx.outputs[1].value == change);\n'
+        + '    }\n\n'
+        + '    entry unlock(sig ownerSig) {\n'
+        + '        require(checkSig(ownerSig, owner));\n'
+        + '        require(tx.outputs.length == 1);\n'
+        + '        byte[36] ownerSpk = new ScriptPubKeyP2PK(owner);\n'
+        + '        require(tx.outputs[0].scriptPubKey == byte[](ownerSpk));\n'
+        + '    }\n'
+        + '}\n'
+    },
     spendlimit: {
       id: 'spendlimit',
       title: 'Weekly spend cap',
@@ -346,6 +373,7 @@
     var t = String(type || '').toLowerCase();
     var m = String(message || '').toLowerCase();
     var blob = t + ' ' + m;
+    if (/search\s*(kaspa|vault|fee)|0\.001\s*kas|pay_search_fee/.test(blob)) return TEMPLATES.searchvault;
     if (/spend\s*limit|weekly|allowance|cap\b|budget/.test(blob)) return TEMPLATES.spendlimit;
     if (/\bn\s*:\s*m\b|multi.?state|argent\s*2|parallel|batch vault/.test(blob)) return TEMPLATES.vaultnm;
     if (TEMPLATES[t]) return TEMPLATES[t];

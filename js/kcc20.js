@@ -131,6 +131,15 @@ export const VAULT_PRODUCTS = [
     blurb: 'Compile .sil with silverc v1.0.0 from kaspanet/silverscript. We P2SH-hash the bytecode (kaspa:p) and fund it. Spend uses KCC-01 dispatch. Keys stay in this wallet.'
   },
   {
+    id: 'searchvault',
+    group: 'alive',
+    name: 'Search Kaspa vault',
+    type: 'searchvault',
+    tag: '⌕',
+    why: 'Prepaid 0.001 KAS per Search Kaspa query. Covenant recreates itself. No timelock.',
+    blurb: 'Fund once. Each pay_search_fee (owner PIN) pays EXACTLY 100000 sompi to the Search treasury P2PK and keeps the rest in the same kaspa:p. Compile SearchVault.sil with silverc v1.0.0, then attach the artifact.'
+  },
+  {
     id: 'spendlimit',
     group: 'alive',
     name: 'Spend cap',

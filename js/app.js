@@ -11,9 +11,9 @@ import {
   fetchKcc20Portfolio, fetchKrc20Portfolio, fetchKcc20PortfolioMany, fetchKrc20PortfolioMany,
   fetchKronAddrTrades, fetchKronTokenUtxos, fetchKronAddrHoldings, KRON_IDX,
   krc20Logo, toTokenRaw, setVaultOwner, kcc20Identicon, VAULT_GROUPS, LIFE_KINDS, lifeKindMeta
-} from './kcc20.js?v=125';
-import { parseIntent, describeIntent, askFor, parseDurationField, interpretVaultChat, normalizeChat, normalizeVaultType, collectKasAmount } from './intent.js?v=126';
-import { parse as parseSilArtifact, redeemHex as silRedeemHex, matchSilverIntent } from './silverscript.js?v=185';
+} from './kcc20.js?v=126';
+import { parseIntent, describeIntent, askFor, parseDurationField, interpretVaultChat, normalizeChat, normalizeVaultType, collectKasAmount } from './intent.js?v=127';
+import { parse as parseSilArtifact, redeemHex as silRedeemHex, matchSilverIntent } from './silverscript.js?v=186';
 import { payloadFromAddress } from './script.js?v=90';
 import { explainTransaction, scorpionAnswer } from './scorpion.js?v=114';
 import {
@@ -67,7 +67,7 @@ import {
   ksocialFeeKas
 } from './ksocial.js?v=207';
 
-export const BUILD = '244';
+export const BUILD = '245';
 const DESK_ID_KEY = 'kcc20_desk_id_v1';
 const DESK_VAULT_KEY = 'kcc20_desk_vault_v1';
 
@@ -90,6 +90,7 @@ function productForIntent(intent) {
   if (t === 'sentinel') return VAULT_PRODUCTS.find(p => p.id === 'sentinel' || p.type === 'sentinel');
   if (t === 'onramp') return VAULT_PRODUCTS.find(p => p.id === 'onramp' || p.type === 'onramp');
   if (t === 'spendlimit') return VAULT_PRODUCTS.find(p => p.id === 'spendlimit' || p.type === 'spendlimit');
+  if (t === 'searchvault') return VAULT_PRODUCTS.find(p => p.id === 'searchvault' || p.type === 'searchvault');
   return VAULT_PRODUCTS.find(p => p.id === t)
     || VAULT_PRODUCTS.find(p => p.type === t)
     || { id: t, name: t, type: t };
@@ -1590,7 +1591,7 @@ function describeVaultIntent(spec) {
       if (hardParsed && mt !== parsedType && parsedType === 'sentinel') intent.type = 'sentinel';
       else intent.type = mt;
     }
-    if (intent && (intent.type === 'silverscript' || intent.type === 'spendlimit')) {
+    if (intent && (intent.type === 'silverscript' || intent.type === 'spendlimit' || intent.type === 'searchvault')) {
       const tpl = matchSilverIntent(intent.type, spec.message);
       if (tpl?.sil && !intent.params.sil) intent.params.sil = tpl.sil;
     }
@@ -1618,7 +1619,7 @@ function describeVaultIntent(spec) {
     intent.missing.push('buyer kaspa: address who can claim');
     intent.complete = false;
   }
-  if (intent.type === 'silverscript' || intent.type === 'spendlimit') {
+  if (intent.type === 'silverscript' || intent.type === 'spendlimit' || intent.type === 'searchvault') {
     const tpl = matchSilverIntent(intent.type, spec.message || spec.type);
     if (tpl?.sil && !intent.params.sil) intent.params.sil = tpl.sil;
   }
@@ -10601,7 +10602,7 @@ async function buildCovenant(p, explicit, opts = {}) {
       payload.kitHeight = kit.height;
       payload.masterRoot = kit.masterRoot;
       payload.scriptBytes = kit.scriptBytes;
-    } else if (p.type === 'silverscript' || (p.type === 'spendlimit' && (params.artifact || params.artifactJson || params.redeemHex))) {
+    } else if (p.type === 'silverscript' || ((p.type === 'spendlimit' || p.type === 'searchvault') && (params.artifact || params.artifactJson || params.redeemHex))) {
       const art = parseSilArtifact(params.artifact || params.artifactJson);
       const names = Object.keys(art.contracts || {});
       const cName = params.contract || names[0];
@@ -10610,6 +10611,11 @@ async function buildCovenant(p, explicit, opts = {}) {
       payload.silContract = cName;
       payload.silEntries = Object.keys(art.contracts[cName].entries || {});
       payload.redeemHex = redeem;
+    } else if (p.type === 'searchvault') {
+      const sil = matchSilverIntent('searchvault', 'search kaspa');
+      if (sil?.sil) payload.sil = sil.sil;
+      payload.searchFeeSompi = 100000;
+      throw new Error('Search Kaspa vault needs a silverc v1.0.0 artifact of SearchVault.sil (owner + feeRecipient pubkeys). Argent does not compile .sil. Source is in the intent (params.sil) and wallet/covenants/SearchVault.sil.');
     } else if (p.type === 'spendlimit') {
       const sil = matchSilverIntent('spendlimit', '') || matchSilverIntent(p.type, params.period);
       if (sil?.sil) payload.sil = sil.sil;

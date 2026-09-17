@@ -25,6 +25,11 @@
   var VERSION = '1.0.0';
   var SCHEMA = 1;
   var RELEASE = 'https://github.com/kaspanet/silverscript/releases/tag/v1.0.0';
+  // KCC-01 §6.1: blake3(UTF8("name(type,...)"))[0:4]. Vector: blake3("step(int,byte[4],bool,byte)")[0:4] = 2c49ed65.
+  var SEARCH_DISPATCH_TAGS = {
+    unlock: '3f64dcc7',
+    pay_search_fee: '128f4127'
+  };
   var OP_0 = 0x00;
   var OP_DATA_1 = 0x01;
   var OP_DATA_75 = 0x4b;
@@ -151,7 +156,7 @@
   }
 
   function pushArg(ty, value) {
-    var k = (ty && (ty.kind || ty.type)) || '';
+    var k = (typeof ty === 'string' ? ty : (ty && (ty.kind || ty.type))) || '';
     var v = unwrapValue(value);
     if (k === 'int' || k === 'temporal' || k === 'Int' || k === 'Temporal') return pushInt(v);
     if (k === 'bool' || k === 'Bool') return pushInt(v ? 1 : 0);
@@ -178,8 +183,44 @@
     return bytes;
   }
 
+  function normalizeContracts(a) {
+    if (Array.isArray(a.contracts)) {
+      var map = {};
+      a.contracts.forEach(function (c) {
+        if (!c) return;
+        var n = c.name || c.contract || '';
+        if (!n) err('artifact contract is missing a name');
+        map[n] = c;
+      });
+      a.contracts = map;
+    }
+    Object.keys(a.contracts || {}).forEach(function (n) {
+      var c = a.contracts[n];
+      if (!c) return;
+      if (Array.isArray(c.entries)) {
+        var em = {};
+        c.entries.forEach(function (e) {
+          if (e && e.name) em[e.name] = e;
+        });
+        c.entries = em;
+      }
+      Object.keys(c.entries || {}).forEach(function (en) {
+        var e = c.entries[en];
+        if (!e) return;
+        var tag = e.dispatch_tag;
+        if (tag && typeof tag !== 'string') e.dispatch_tag = hexOf(toBytes(tag, 'dispatch_tag'));
+        else if (typeof tag === 'string') e.dispatch_tag = tag.replace(/^0x/i, '').toLowerCase();
+        if (!e.dispatch_tag && SEARCH_DISPATCH_TAGS[en]) e.dispatch_tag = SEARCH_DISPATCH_TAGS[en];
+      });
+      if (c.compiled && !c.compiled.bytecode && (c.compiled.script_hex || c.compiled.scriptHex)) {
+        c.compiled.bytecode = c.compiled.script_hex || c.compiled.scriptHex;
+      }
+    });
+    return a;
+  }
+
   function parse(raw) {
-    var a = asObj(raw);
+    var a = normalizeContracts(asObj(raw));
     if (Number(a.schema_version) !== SCHEMA) {
       err('Sil ABI schema_version ' + a.schema_version + ' (this SDK speaks v' + SCHEMA + ' / Silverscript v1-rc1)');
     }
@@ -233,9 +274,45 @@
     }
     var chunks = [];
     for (var i = 0; i < params.length; i++) chunks.push(pushArg(params[i].type || params[i].ty, args[i]));
-    chunks.push(pushBytes(toBytes(e.dispatch_tag, 'dispatch_tag')));
+    var tagHex = String(e.dispatch_tag || SEARCH_DISPATCH_TAGS[entryName] || '');
+    var tag = toBytes(tagHex, 'dispatch_tag');
+    if (tag.length !== 4) err(c.name + '::' + entryName + ' dispatch_tag must be 4 bytes');
+    var tagPush = new Uint8Array(5);
+    tagPush[0] = 0x04;
+    tagPush.set(tag, 1);
+    chunks.push(tagPush);
     var script = concat.apply(null, chunks);
-    return { hex: hexOf(script), bytes: script, entry: entryName, contract: c.name, tag: String(e.dispatch_tag) };
+    return { hex: hexOf(script), bytes: script, entry: entryName, contract: c.name, tag: hexOf(tag) };
+  }
+
+  /** Schnorr input sig → 65 bytes (64 + sighash 0x01). Strips 0x, OP_DATA_65, and HexString wrappers. */
+  function toSig65(sigHex) {
+    var raw = sigHex;
+    if (raw instanceof Uint8Array) raw = hexOf(raw);
+    else if (raw && typeof raw !== 'string' && typeof raw.toHex === 'function') raw = raw.toHex();
+    var h = String(raw == null ? '' : raw).replace(/^0x/i, '').replace(/\s+/g, '').toLowerCase();
+    if (h.length === 132 && h.slice(0, 2) === '41') h = h.slice(2);
+    if (h.length === 134 && h.slice(0, 4) === '4c41') h = h.slice(4);
+    if (h.length === 132) {
+      var op = parseInt(h.slice(0, 2), 16);
+      if (op > 0 && op <= 75) h = h.slice(2);
+    }
+    if (h.length === 128) h += '01';
+    if (h.length === 132 && h.slice(130, 132) === '00' && h.slice(128, 130) === '01') h = h.slice(0, 130);
+    if (h.length !== 130) err('Schnorr sig for SilverScript must be 65 bytes (got ' + (h.length / 2) + ')');
+    return h;
+  }
+
+  /** KCC-01 invocation prefix: PushMinimal(sig65) || OP_DATA_4 || tag. Redeem is appended by the wallet. */
+  function encodeKcc01(sigHex, tagHex) {
+    var sig = toBytes(toSig65(sigHex), 'sig');
+    var tag = toBytes(String(tagHex || '').replace(/^0x/i, ''), 'dispatch_tag');
+    if (tag.length !== 4) err('KCC-01 dispatch_tag must be 4 bytes');
+    var tagPush = new Uint8Array(5);
+    tagPush[0] = 0x04;
+    tagPush.set(tag, 1);
+    var script = concat(pushBytes(sig), tagPush);
+    return { hex: hexOf(script), bytes: script, tag: hexOf(tag) };
   }
 
   function bytecodeOf(abi, contractName) {
@@ -415,7 +492,10 @@
     templates: TEMPLATES,
     matchSilverIntent: matchSilverIntent,
     pushInt: pushInt,
-    pushBytes: pushBytes
+    pushBytes: pushBytes,
+    encodeKcc01: encodeKcc01,
+    toSig65: toSig65,
+    SEARCH_DISPATCH_TAGS: SEARCH_DISPATCH_TAGS
   };
 });
 
@@ -427,6 +507,9 @@ export const compileVaultPayload = _sil.compileVaultPayload;
 export const matchSilverIntent = _sil.matchSilverIntent;
 export const silverTemplates = _sil.templates;
 export const summary = _sil.summary;
+export const encodeKcc01 = _sil.encodeKcc01;
+export const toSig65 = _sil.toSig65;
+export const SEARCH_DISPATCH_TAGS = _sil.SEARCH_DISPATCH_TAGS;
 export const facts = _sil.facts;
 export const contractOf = _sil.contract;
 export default _sil;

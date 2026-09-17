@@ -400,12 +400,12 @@
             </div>
             <div class="glass list" id="vault-mine"></div>
             <div class="glass vault-sweep">
-              <p class="muted" style="text-align:left;padding:0 0 10px;">This is for time-capsule <code>kaspa:p</code> vaults only. DD KKDAG cells are on Home — not here.</p>
+              <p class="muted" style="text-align:left;padding:0 0 10px;">Time capsules and Search Kaspa both use <code>kaspa:p</code>. Search Kaspa Unlock remainder returns leftover KAS with KCC-01 — not a time-lock dummy. DD KKDAG cells stay on Home.</p>
               <button class="btn btn-gold" id="btn-sweep-now" type="button">Sweep unlocked</button>
               <div class="field" style="margin:10px 0 0;">
                 <input id="sweep-addr" placeholder="kaspa:p… vault address" spellcheck="false" autocomplete="off">
               </div>
-              <button class="btn btn-glass" id="btn-sweep-addr" type="button" style="margin-top:8px;height:44px;">Sweep this vault</button>
+              <button class="btn btn-glass" id="btn-sweep-addr" type="button" style="margin-top:8px;height:44px;">Unlock / sweep this vault</button>
             </div>
           </div>
           <div id="vault-bridge-wrap" class="hidden">
@@ -927,7 +927,7 @@
   <script type="module">
     import('./js/iframeVault.js?v=122').then(function (mod) {
       return (mod.restoreIframeVault ? mod.restoreIframeVault() : Promise.resolve()).then(function () {
-        return import('./js/app.js?v=246');
+        return import('./js/app.js?v=247');
       });
     }).catch(function (err) {
       console.error(err);

@@ -13,7 +13,7 @@ import {
   krc20Logo, toTokenRaw, setVaultOwner, kcc20Identicon, VAULT_GROUPS, LIFE_KINDS, lifeKindMeta
 } from './kcc20.js?v=126';
 import { parseIntent, describeIntent, askFor, parseDurationField, interpretVaultChat, normalizeChat, normalizeVaultType, collectKasAmount } from './intent.js?v=127';
-import { parse as parseSilArtifact, redeemHex as silRedeemHex, matchSilverIntent } from './silverscript.js?v=186';
+import { parse as parseSilArtifact, redeemHex as silRedeemHex, matchSilverIntent } from './silverscript.js?v=187';
 import { payloadFromAddress } from './script.js?v=90';
 import { explainTransaction, scorpionAnswer } from './scorpion.js?v=114';
 import {
@@ -25,7 +25,7 @@ import {
   newHashlockSecret, checkinHop, currentHop, parseXmssKit, p2shFromRedeemHex, spendXmssVault,
   spendSilverVault, isSilverScriptVault,
   disconnectRpc, buildDcaDrips, sendKasMany, releaseDcaDrip, cancelDcaDrip, isMassError
-} from './tx.js?v=224';
+} from './tx.js?v=225';
 import { bootDappConnect, pingTttDappFrame, pingKasdistroDappFrame, TTT_TREASURY } from './dappConnect.js?v=201';
 import { changenowEstimate, changenowCreate, changenowWidgetUrl, cnFrom } from './changenow.js?v=180';
 import { schedulePersistIframeVault, bootIframeVaultWatch } from './iframeVault.js?v=122';
@@ -68,7 +68,7 @@ import {
   ksocialFeeKas
 } from './ksocial.js?v=207';
 
-export const BUILD = '246';
+export const BUILD = '247';
 const DESK_ID_KEY = 'kcc20_desk_id_v1';
 const DESK_VAULT_KEY = 'kcc20_desk_vault_v1';
 
@@ -189,8 +189,27 @@ function canCheckinVault(v) {
   return i < hops.length - 1 || (v.type === 'recurring' && i < hops.length);
 }
 
+function coerceSearchVault(vault) {
+  if (!vault) return vault;
+  if (!isSilverScriptVault(vault) && !/search/i.test(vault.name || '') && !/search/i.test(vault.type || '')) return vault;
+  const params = { ...(vault.params || {}) };
+  if (!params.silEntries || !params.silEntries.length) params.silEntries = ['unlock', 'pay_search_fee'];
+  const type = (vault.type === 'timelock' || !vault.type) ? 'searchvault' : vault.type;
+  return { ...vault, type, params };
+}
+
+function resolveVaultForSweep(addr) {
+  const a = String(addr || '').trim();
+  const known = loadVaults().find(v => v.address === a);
+  if (known) return coerceSearchVault(known);
+  return coerceSearchVault({ address: a, type: 'searchvault', name: 'Search Kaspa vault' });
+}
+
 function canSweepVault(v, daa) {
   if (!v?.address || v.status === 'swept' || v.status === 'unfunded') return false;
+  if (isSilverScriptVault(v) || v.type === 'searchvault' || v.type === 'silverscript') {
+    return Number(v.fundedSompi || 0) > 0;
+  }
   const now = daa || lastDaa;
   if (v.unlockAnytime || v.params?.unlockAnytime) return Number(v.fundedSompi || 0) > 0 || vaultLockedSompi(v) > 0;
   if (v.type === 'dca') return Number(v.fundedSompi || 0) > 0 || vaultLockedSompi(v) > 0;
@@ -2794,7 +2813,7 @@ function renderVault() {
           <button class="nav-btn ghost" data-vault="${esc(v.address || '')}">Info</button>
           ${showVaultHistory ? '' : (isDcaVault(v)
             ? `<button class="nav-btn" data-deldca="${esc(v.address || '')}">Delete</button>`
-            : `<button class="nav-btn" data-sweep="${esc(v.address || '')}">Sweep</button>`)}
+            : `<button class="nav-btn" data-sweep="${esc(v.address || '')}">${isSilverScriptVault(v) ? 'Unlock' : 'Sweep'}</button>`)}
         </div>
       </div>`).join('')
     : `<div class="empty vault-empty">${empty}</div>`;
@@ -10874,8 +10893,8 @@ function openLockTimer(vault) {
   const hop = isHopVault(vault);
   const isHash = vault.type === 'hashlock' || vault.type === 'onramp';
   const isXmss = vault.type === 'xmss';
-  const isSilver = isSilverScriptVault(vault);
-  const isSearch = vault.type === 'searchvault' || (vault.params?.silEntries || []).includes('pay_search_fee');
+  const isSilver = isSilverScriptVault(vault) || /search/i.test(vault.name || '') || /search/i.test(vault.type || '');
+  const isSearch = vault.type === 'searchvault' || isSilver || (vault.params?.silEntries || []).includes('pay_search_fee');
   const iAmBuyer = isEscrow && wallet?.address === vault.params?.buyerAddress;
   const msigReady = isMsig && !!vaultCounterpartyKey(vault);
   const hopN = (vault.hops || []).length;
@@ -10940,12 +10959,12 @@ function openLockTimer(vault) {
   $('v-deldca')?.addEventListener('click', () => { closeSheet(); deleteDcaVault(vault.address); });
   $('v-delalldca')?.addEventListener('click', () => { closeSheet(); stopDca(); });
   $('v-unlock')?.addEventListener('click', () => {
-    unlockVault(vault, {
+    unlockVault(coerceSearchVault(vault), {
       escrowRelease: isEscrow && iAmBuyer,
       secretHex: $('v-secret')?.value.trim() || vault.params?.secretHex || '',
       witness: $('v-witness')?.value || '',
       artifact: $('v-artifact')?.value.trim() || '',
-      silverEntry: isSilver ? 'unlock' : ''
+      silverEntry: (isSilver || isSearch) ? 'unlock' : ''
     }).catch(e => { setSheetStatus(errText(e), true); toast(errText(e)); });
   });
   $('v-searchfee')?.addEventListener('click', () => {
@@ -11009,8 +11028,10 @@ async function openVaultDetail(address) {
 }
 
 async function unlockVault(vault, opts = {}) {
+  vault = coerceSearchVault(vault);
   autoSweepTried.add(vault.address);
   const kcc = isKcc20Vault(vault);
+  const silver = isSilverScriptVault(vault) || !!opts.silverEntry;
   const extraPrivKey = vault.type === 'multisig' ? vaultCounterpartyKey(vault) : '';
   if (vault.type === 'multisig' && !extraPrivKey) {
     toast('Import the counterparty wallet first');
@@ -11024,21 +11045,32 @@ async function unlockVault(vault, opts = {}) {
     try {
       const raw = String(opts.artifact).trim();
       const parsed = raw.startsWith('{') ? JSON.parse(raw) : raw;
-      vault = { ...vault, params: { ...(vault.params || {}), artifact: parsed } };
-      updateVault(vault.address, { params: vault.params });
+      let redeem = '';
+      try { redeem = silRedeemHex(parsed); } catch {}
+      vault = {
+        ...vault,
+        scriptHex: vault.scriptHex || vault.redeemHex || redeem,
+        redeemHex: vault.redeemHex || vault.scriptHex || redeem,
+        params: { ...(vault.params || {}), artifact: parsed, redeemHex: redeem || vault.params?.redeemHex }
+      };
+      if (loadVaults().some(v => v.address === vault.address)) {
+        updateVault(vault.address, { scriptHex: vault.scriptHex, redeemHex: vault.redeemHex, params: vault.params, type: vault.type });
+      } else {
+        saveVault(vault);
+      }
     } catch (e) {
       toast('Artifact JSON is not valid');
       return;
     }
   }
-  openSheet(kcc ? 'Unfreeze KCC20' : 'Sweep vault', `
-    <p class="muted" style="text-align:left;">${opts.silverEntry === 'pay_search_fee' ? 'Paying 0.001 KAS search fee to the Search treasury and recreating this vault.' : (isSilverScriptVault(vault) ? 'SilverScript unlock — remainder returns to this wallet.' : (kcc ? 'Spending the CLTV witness and returning ' + esc(vault.tick || 'KCC20') + ' to this wallet.' : 'Returning KAS from this covenant to your wallet.'))}</p>
+  openSheet(opts.silverEntry === 'pay_search_fee' ? 'Pay search fee' : (silver ? 'Unlock remainder' : (kcc ? 'Unfreeze KCC20' : 'Sweep vault')), `
+    <p class="muted" style="text-align:left;">${opts.silverEntry === 'pay_search_fee' ? 'Paying 0.001 KAS search fee to the Search treasury and recreating this vault.' : (silver ? 'Search Kaspa / SilverScript unlock — KCC-01 dispatch, not a time-capsule sweep. Remainder returns to this wallet.' : (kcc ? 'Spending the CLTV witness and returning ' + esc(vault.tick || 'KCC20') + ' to this wallet.' : 'Returning KAS from this covenant to your wallet.'))}</p>
     <div class="kv"><span class="k">From</span><span class="v">${esc(vault.address || '')}</span></div>
-  `, { confirm: 'Sweeping…', cancel: false });
+  `, { confirm: silver ? 'Unlocking…' : 'Sweeping…', cancel: false });
   const busy = $('sheet-ok');
   if (busy) { busy.disabled = true; busy.dataset.busy = '1'; }
   try {
-    await requirePin(kcc ? 'Confirm unfreeze' : 'Confirm sweep');
+    await requirePin(kcc ? 'Confirm unfreeze' : (silver ? 'Confirm unlock' : 'Confirm sweep'));
   } catch (e) {
     if (errText(e) === 'cancelled') { closeSheet(); return; }
     throw e;
@@ -11048,9 +11080,9 @@ async function unlockVault(vault, opts = {}) {
   if (!utxosV.length && !kcc) throw new Error('Nothing to sweep — this address has 0 UTXOs');
   setSheetStatus('Connecting to public node…');
   await pingPublicNode();
-  setSheetStatus(vault.type === 'xmss' ? 'Building XMSS witness spend…' : (isSilverScriptVault(vault) ? 'Signing SilverScript entry…' : (kcc ? 'Signing SCRIPT_HASH witness + CLTV…' : 'Signing P2SH redeem…')));
+  setSheetStatus(vault.type === 'xmss' ? 'Building XMSS witness spend…' : (silver ? 'Signing Search Kaspa unlock…' : (kcc ? 'Signing SCRIPT_HASH witness + CLTV…' : 'Signing P2SH redeem…')));
   let result;
-  if (isSilverScriptVault(vault) || opts.silverEntry) {
+  if (silver) {
     const feeUtxos = await fetchOwnedUtxos(wallet);
     result = await spendSilverVault({
       wallet,
@@ -11076,12 +11108,30 @@ async function unlockVault(vault, opts = {}) {
       secretHex: opts.secretHex || vault.params?.secretHex || ''
     });
   }
-  updateVault(vault.address, { status: 'swept', unlockTxId: result.txId, fundedSompi: 0, tokenAmount: kcc ? '0' : vault.tokenAmount });
+  const paidSearch = result.entry === 'pay_search_fee';
+  if (paidSearch) {
+    updateVault(vault.address, {
+      status: 'locked',
+      unlockTxId: result.txId,
+      fundedSompi: Number(result.nextSompi || 0),
+      type: vault.type === 'timelock' ? 'searchvault' : vault.type,
+      params: vault.params
+    });
+  } else {
+    updateVault(vault.address, {
+      status: 'swept',
+      unlockTxId: result.txId,
+      fundedSompi: 0,
+      tokenAmount: kcc ? '0' : vault.tokenAmount,
+      type: silver && vault.type === 'timelock' ? 'searchvault' : vault.type,
+      params: vault.params
+    });
+  }
   if (kcc && result.tokenAmount) applyLocalTokenDelta(vault.tick, 'kcc20', result.tokenAmount);
   noteVaultActivity({
     vault,
-    label: kcc ? 'Unfrozen' : 'Unlocked',
-    dir: 'in',
+    label: paidSearch ? 'Search fee' : (kcc ? 'Unfrozen' : 'Unlocked'),
+    dir: paidSearch ? 'out' : 'in',
     tick: kcc ? vault.tick : 'KAS',
     protocol: kcc ? 'kcc20' : 'kas',
     amount: kcc ? (result.tokenAmount || vault.tokenAmount) : String(Math.round(Number(result.amountKas || 0) * 1e8)),
@@ -11089,14 +11139,18 @@ async function unlockVault(vault, opts = {}) {
     txId: result.txId || ''
   });
   afterTx();
-  openSheet('Swept', `
+  openSheet(paidSearch ? 'Search paid' : (silver ? 'Unlocked' : 'Swept'), `
     ${kcc && result.tokenAmount ? `<div class="kv"><span class="k">Returned</span><span class="v">${esc(formatTokenUnits(result.tokenAmount, vault.decimals))} ${esc(vault.tick)}</span></div>` : ''}
-    <div class="kv"><span class="k">${kcc ? 'Witness leftover' : 'Returned'}</span><span class="v">${esc(formatKas(result.amountKas))} KAS</span></div>
-    <div class="kv"><span class="k">Sweep fee</span><span class="v">${Number(result.feeKas || 0).toFixed(6)} KAS</span></div>
+    <div class="kv"><span class="k">${paidSearch ? 'Paid' : (kcc ? 'Witness leftover' : 'Returned')}</span><span class="v">${esc(formatKas(result.amountKas))} KAS</span></div>
+    <div class="kv"><span class="k">${silver ? 'Network fee' : 'Sweep fee'}</span><span class="v">${Number(result.feeKas || 0).toFixed(6)} KAS</span></div>
     ${txidBlock(result.txId)}
-    <p class="muted" style="text-align:left;">${kcc
+    <p class="muted" style="text-align:left;">${paidSearch
+      ? '0.001 KAS went to the Search treasury. The rest stays in this kaspa:p for the next query.'
+      : (kcc
       ? 'Tokens are ADDRESS-owned again on this wallet. The sweep fee came from the 0.2 KAS witness dust.'
-      : 'The sweep fee is the Toccata compute fee (usually 0.004–0.007 KAS), not a cut of the lock. You should get lock amount minus this fee.'}</p>
+      : (silver
+      ? 'Remainder is back in this wallet. Search Kaspa uses KCC-01 unlock, not a time-capsule dummy.'
+      : 'The sweep fee is the Toccata compute fee (usually 0.004–0.007 KAS), not a cut of the lock. You should get lock amount minus this fee.'))}</p>
   `, { confirm: 'Done', cancel: false, onConfirm: () => { closeSheet(); refreshAll(); } });
 }
 
@@ -11124,6 +11178,17 @@ async function sweepAllVaults() {
           protocol: 'kcc20',
           amount: result.tokenAmount || v.tokenAmount,
           decimals: v.decimals,
+          txId: result.txId || ''
+        });
+      } else if (isSilverScriptVault(v) || v.type === 'searchvault' || v.type === 'silverscript') {
+        const feeUtxos = await fetchOwnedUtxos(wallet);
+        const result = await spendSilverVault({ wallet, vault: coerceSearchVault(v), utxos: utxosV, feeUtxos, entry: 'unlock' });
+        updateVault(v.address, { status: 'swept', fundedSompi: 0, type: 'searchvault' });
+        noteVaultActivity({
+          vault: v,
+          label: 'Unlocked',
+          dir: 'in',
+          amount: String(Math.round(Number(result.amountKas || 0) * 1e8)),
           txId: result.txId || ''
         });
       } else {
@@ -11565,8 +11630,8 @@ function bind() {
   $('btn-sweep-addr')?.addEventListener('click', () => {
     const addr = $('sweep-addr')?.value.trim();
     if (!addr) { toast('Paste a kaspa:p… address'); return; }
-    const known = loadVaults().find(v => v.address === addr) || { address: addr, type: 'timelock', name: 'Vault' };
-    unlockVault(known).catch(err => toast(errText(err)));
+    const known = resolveVaultForSweep(addr);
+    unlockVault(known, { silverEntry: isSilverScriptVault(known) ? 'unlock' : '' }).catch(err => toast(errText(err)));
   });
   $('vault-seg')?.addEventListener('click', e => {
     const btn = e.target.closest('[data-vtab]');
@@ -11610,9 +11675,9 @@ function bind() {
     if (sweepBtn?.dataset.sweep) {
       e.preventDefault();
       e.stopPropagation();
-      const vault = loadVaults().find(v => v.address === sweepBtn.dataset.sweep);
+      const vault = coerceSearchVault(loadVaults().find(v => v.address === sweepBtn.dataset.sweep));
       if (!vault) { toast('Vault not found'); return; }
-      unlockVault(vault).catch(err => toast(errText(err)));
+      unlockVault(vault, { silverEntry: isSilverScriptVault(vault) ? 'unlock' : '' }).catch(err => toast(errText(err)));
       return;
     }
     const row = e.target.closest('[data-vault]');
@@ -11888,14 +11953,14 @@ function bind() {
     if (sweepBtn?.dataset.sweep) {
       e.preventDefault();
       e.stopPropagation();
-      const vault = loadVaults().find(v => v.address === sweepBtn.dataset.sweep);
+      const vault = coerceSearchVault(loadVaults().find(v => v.address === sweepBtn.dataset.sweep));
       if (!vault) { toast('Vault not found'); return; }
       if (isDdPayVault(vault)) {
         purgeDdPayVaults();
         renderVault();
         return;
       }
-      unlockVault(vault).catch(err => { toast(errText(err)); });
+      unlockVault(vault, { silverEntry: isSilverScriptVault(vault) ? 'unlock' : '' }).catch(err => { toast(errText(err)); });
       return;
     }
     const row = e.target.closest('[data-vault]');

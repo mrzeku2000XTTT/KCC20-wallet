@@ -4,7 +4,7 @@ import {
   validateAndCleanUtxo, deepCloneAndFreeze, kasToSompi,
   kaspaRestBase, networkId, kaspaAddressFromPubkey
 } from './crypto.js?v=90';
-import { parse as parseSilArtifact, encodeEntry, redeemHex as silRedeemHex } from './silverscript.js?v=186';
+import { parse as parseSilArtifact, encodeEntry, redeemHex as silRedeemHex, encodeKcc01, toSig65 as silToSig65, SEARCH_DISPATCH_TAGS } from './silverscript.js?v=187';
 import { kaswareSigning, sendKaspaWithKasware, sendKrc20WithKasware, signPsktWithKasware, fetchKaswareUtxos, repairSafeJson, kaswareEnabled, isKaswareInstalled, liveKaswareAccount } from './kasware.js?v=216';
 import * as kron from '../vendor/kron-sdk/index.js';
 
@@ -104,11 +104,10 @@ async function fetchJsonRetry(url, { tries = 3, timeout = 14000, label = 'Networ
 
 function hexish(v) {
   if (v == null) return '';
-  if (typeof v === 'string') return v.replace(/^0x/i, '');
   if (v instanceof Uint8Array) {
     return Array.from(v, b => b.toString(16).padStart(2, '0')).join('');
   }
-  return String(v);
+  return String(v).replace(/^0x/i, '').replace(/\s+/g, '');
 }
 
 function covenantRpc(cov) {
@@ -728,35 +727,52 @@ export async function newHashlockSecret() {
 
 /** Same P2SH wrap as covenants/xmsslock/deploy_xmss_generic.mjs */
 export function isSilverScriptVault(vault) {
-  const t = String(vault?.type || '');
+  if (!vault) return false;
+  const t = String(vault.type || '').toLowerCase();
   if (t === 'searchvault' || t === 'silverscript') return true;
-  if (/search\s*kaspa/i.test(vault?.name || '')) return true;
-  const entries = vault?.params?.silEntries || vault?.silEntries || [];
-  if (entries.includes('unlock') || entries.includes('pay_search_fee')) return true;
-  return !!(vault?.params?.artifact || vault?.params?.artifactJson || vault?.params?.silContract);
+  const blob = [vault.name, vault.type, vault.params?.silContract, vault.params?.sil, vault.params?.product].join(' ');
+  if (/search\s*(kaspa|vault|fee)|pay_search_fee|searchvault/i.test(blob)) return true;
+  const entries = vault.params?.silEntries || vault.silEntries || [];
+  if (Array.isArray(entries) && (entries.includes('pay_search_fee') || (entries.includes('unlock') && (vault.params?.artifact || vault.params?.silContract)))) return true;
+  if (vault.params?.artifact || vault.params?.artifactJson || vault.params?.silContract) return true;
+  if (Number(vault.params?.searchFeeSompi) === 100000) return true;
+  return false;
 }
 
 function toSig65(sigHex) {
-  let h = hexish(sigHex);
-  if (h.length === 128) h += '01';
-  if (h.length !== 130) throw new Error('Schnorr sig for SilverScript must be 65 bytes (got ' + (h.length / 2) + ')');
-  return h;
+  return silToSig65(sigHex);
 }
 
 const SEARCH_FEE_SOMPI = 100000n;
 const SEARCH_MINER = 1000n;
 const SEARCH_TREASURY_PUB = '284bb3e4d46276c03d2ef6aaa0e0d62ec2698f939d1b55a8011d77fe5ca6f7ba';
 
-/** Spend SearchVault / generic silverc P2SH via KCC-01 encodeEntry (unlock or pay_search_fee). */
+function searchDispatchTag(entry, art, cName) {
+  const en = String(entry || 'unlock');
+  if (art) {
+    try {
+      const c = art.contracts?.[cName] || art.contracts?.[Object.keys(art.contracts || {})[0]];
+      const tag = String(c?.entries?.[en]?.dispatch_tag || '');
+      if (/^[0-9a-f]{8}$/i.test(tag)) return tag.toLowerCase();
+    } catch {}
+  }
+  const fallback = SEARCH_DISPATCH_TAGS[en];
+  if (!fallback) throw new Error('No KCC-01 dispatch tag for entry `' + en + '`');
+  return fallback;
+}
+
+/** Spend SearchVault / generic silverc P2SH via KCC-01 (unlock or pay_search_fee). */
 export async function spendSilverVault({ wallet, vault, utxos, feeUtxos = [], entry = 'unlock' }) {
   const artRaw = vault?.params?.artifact || vault?.params?.artifactJson;
-  if (!artRaw) {
-    throw new Error('This Search / SilverScript vault needs the silverc JSON artifact to spend. Paste it on the vault sheet (params.artifact). Sweep-as-capsule will fail: script returned early.');
+  let art = null;
+  if (artRaw) {
+    try { art = parseSilArtifact(artRaw); } catch {}
   }
-  const art = parseSilArtifact(artRaw);
-  const cName = vault.params?.silContract || vault.params?.contract || Object.keys(art.contracts || {})[0];
-  const redeemHex = hexish(vault.scriptHex || vault.redeemHex || silRedeemHex(art, cName));
-  if (!redeemHex) throw new Error('No redeem script on this vault');
+  const cName = vault.params?.silContract || vault.params?.contract || (art ? Object.keys(art.contracts || {})[0] : 'SearchVault');
+  const redeemHex = hexish(vault.scriptHex || vault.redeemHex || vault.params?.redeemHex || (art ? silRedeemHex(art, cName) : ''));
+  if (!redeemHex) {
+    throw new Error('This Search Kaspa vault has no redeem script on this device. Paste the silverc JSON artifact used to fund it, then Unlock remainder. Sweep-as-capsule fails with: script returned early.');
+  }
   const k = await loadKaspaSdk();
   const cov = restUtxosToEntries(utxos, vault.address);
   if (!cov.length) throw new Error('Nothing at this vault address');
@@ -764,12 +780,16 @@ export async function spendSilverVault({ wallet, vault, utxos, feeUtxos = [], en
   const priv = privKeyFromWallet(k, wallet);
   const { rpc, url } = await connectPublicNode();
   const en = String(entry || 'unlock');
+  const tag = searchDispatchTag(en, art, cName);
 
   function wrapSig(tx, inputIndex) {
-    const sig = toSig65(k.createInputSignature(tx, inputIndex, priv, k.SighashType.All));
-    const enc = encodeEntry(art, cName, en, [sig]);
-    const redeemPush = hexish(k.payToScriptHashSignatureScript(redeemHex, new Uint8Array()));
-    return enc.hex + redeemPush;
+    const sig = toSig65(hexish(k.createInputSignature(tx, inputIndex, priv, k.SighashType.All)));
+    let prefix = '';
+    if (art) {
+      try { prefix = encodeEntry(art, cName, en, [sig]).hex; } catch { prefix = ''; }
+    }
+    if (!prefix) prefix = encodeKcc01(sig, tag).hex;
+    return prefix + pushHex(redeemHex);
   }
 
   let tx;
@@ -783,6 +803,7 @@ export async function spendSilverVault({ wallet, vault, utxos, feeUtxos = [], en
       .filter(e => e.address === wallet.address)
       .sort((a, b) => (a.amount < b.amount ? 1 : -1));
     const extra = extras.find(e => e.amount >= 500_000n) || null;
+    if (!extra) throw new Error('Pay search needs a ~0.005 KAS UTXO in this wallet for the network fee. Unlock remainder does not.');
     const ins = extra ? [...cov, extra] : [...cov];
     tx = k.createTransaction(
       ins,
@@ -798,7 +819,7 @@ export async function spendSilverVault({ wallet, vault, utxos, feeUtxos = [], en
     for (const inp of tx.inputs) {
       inp.sequence = 0n;
       inp.sigOpCount = 0;
-      inp.computeBudget = 80;
+      inp.computeBudget = 200;
     }
     const silverScript = wrapSig(tx, 0);
     tx.inputs[0].signatureScript = silverScript;
@@ -810,7 +831,7 @@ export async function spendSilverVault({ wallet, vault, utxos, feeUtxos = [], en
       scripts.push(feeSig);
     }
   } else {
-    const fee = 450_000n;
+    const fee = 600_000n;
     if (covAmt <= fee) throw new Error('Vault too small to cover network fee on unlock');
     tx = k.createTransaction(
       cov,
@@ -823,7 +844,7 @@ export async function spendSilverVault({ wallet, vault, utxos, feeUtxos = [], en
     for (const inp of tx.inputs) {
       inp.sequence = 0n;
       inp.sigOpCount = 0;
-      inp.computeBudget = 80;
+      inp.computeBudget = 200;
     }
     const silverScript = wrapSig(tx, 0);
     tx.inputs[0].signatureScript = silverScript;
@@ -832,17 +853,19 @@ export async function spendSilverVault({ wallet, vault, utxos, feeUtxos = [], en
   try { k.updateTransactionMass(networkId(), tx); } catch {}
   const txId = await submitSignedRpc(k, rpc, url, tx, {
     sigOpCount: 0,
-    computeBudget: 80,
+    computeBudget: 200,
     lockTime: 0,
     scripts
   });
+  const unlocked = en === 'pay_search_fee' ? 0n : (covAmt - 600_000n);
   return {
     txId,
-    amountKas: en === 'pay_search_fee' ? 0.001 : Number(covAmt - 450_000n) / 1e8,
-    feeKas: en === 'pay_search_fee' ? 0.00001 : 0.0045,
+    amountKas: en === 'pay_search_fee' ? 0.001 : Number(unlocked) / 1e8,
+    feeKas: en === 'pay_search_fee' ? Number((extra?.amount || 0n) + SEARCH_MINER) / 1e8 : 0.006,
     node: url,
     entry: en,
-    nextAddress: en === 'pay_search_fee' ? vault.address : wallet.address
+    nextAddress: en === 'pay_search_fee' ? vault.address : wallet.address,
+    nextSompi: en === 'pay_search_fee' ? String(covAmt - SEARCH_FEE_SOMPI - SEARCH_MINER) : '0'
   };
 }
 
@@ -2047,6 +2070,9 @@ export async function timeoutHop({ wallet, vault, utxos }) {
 
 export async function sweepVault({ wallet, vault, utxos, extraPrivKey, escrowRelease = false, secretHex = '', payoutAddr = '', extraOutputs = [] }) {
   const type = vault?.type || '';
+  if (isSilverScriptVault(vault) || type === 'searchvault' || type === 'silverscript') {
+    return spendSilverVault({ wallet, vault, utxos, entry: 'unlock' });
+  }
   if (type === 'dca') {
     const hop = currentHop(vault) || vault;
     const daaNow = await currentDaa().catch(() => 0);

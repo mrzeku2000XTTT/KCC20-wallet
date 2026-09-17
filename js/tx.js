@@ -794,8 +794,28 @@ export async function spendSilverVault({ wallet, vault, utxos, feeUtxos = [], en
 
   const SILVER_BUDGET = 200;
   const redeemBytes = Math.max(200, Math.floor(redeemHex.length / 2));
-  // Large KCC-01 redeem (this vault: compute mass 20883 → 0.020883 KAS). Do not cap at 0.006.
-  let fee = BigInt(Math.max(2_500_000, redeemBytes * 1200));
+  const vaultIns = Math.max(1, cov.length);
+  // Large KCC-01 redeem (this vault: compute mass 20883 → 0.020883 KAS per input). Do not cap at 0.006.
+  let fee = BigInt(Math.max(2_500_000, redeemBytes * 1200)) * BigInt(vaultIns);
+
+  function signVaultInputs(tx) {
+    const n = tx.inputs.length;
+    if (!n) throw new Error('Unlock built a transaction with 0 inputs');
+    for (let i = 0; i < n; i++) {
+      tx.inputs[i].sequence = 0n;
+      tx.inputs[i].sigOpCount = 0;
+      tx.inputs[i].computeBudget = SILVER_BUDGET;
+      tx.inputs[i].signatureScript = new Uint8Array();
+    }
+    const scripts = [];
+    for (let i = 0; i < n; i++) {
+      const s = hexish(wrapSig(tx, i));
+      if (s.length < 40) throw new Error('Search Kaspa input ' + i + ' did not produce a signature');
+      scripts.push(s);
+    }
+    for (let i = 0; i < n; i++) tx.inputs[i].signatureScript = scripts[i];
+    return scripts;
+  }
 
   function silverNeed(tx, floor = 400_000n) {
     let need = 0n;
@@ -848,25 +868,28 @@ export async function spendSilverVault({ wallet, vault, utxos, feeUtxos = [], en
   }
 
   if (en === 'pay_search_fee') {
-    const change = covAmt - SEARCH_FEE_SOMPI - SEARCH_MINER;
-    if (change <= 0n) throw new Error('Vault too small for another 0.001 KAS search. Unlock the remainder instead.');
     const feePub = String(vault.params?.feeRecipient || vault.params?.feeRecipientHex || SEARCH_TREASURY_PUB).replace(/^0x/i, '');
     const feeAddr = kaspaAddressFromPubkey(hexToBytes(feePub.length === 66 ? feePub.slice(2) : feePub));
+    const vaultIn = [...cov].sort((a, b) => (a.amount < b.amount ? 1 : -1))[0];
+    const oneAmt = vaultIn.amount;
+    const oneChange = oneAmt - SEARCH_FEE_SOMPI - SEARCH_MINER;
+    if (oneChange <= 0n) throw new Error('This UTXO is too small for another 0.001 KAS search. Unlock the remainder instead.');
     const extras = restUtxosToEntries(feeUtxos || [], wallet.address)
       .filter(e => e.address === wallet.address)
       .sort((a, b) => (a.amount < b.amount ? -1 : 1));
-    const extra = extras.find(e => e.amount >= fee && e.amount <= 10_000_000n)
-      || extras.find(e => e.amount >= fee)
+    const oneFee = BigInt(Math.max(2_500_000, redeemBytes * 1200));
+    const extra = extras.find(e => e.amount >= oneFee && e.amount <= 10_000_000n)
+      || extras.find(e => e.amount >= oneFee)
       || null;
     if (!extra) {
-      throw new Error('Pay search needs a ~' + (Number(fee) / 1e8).toFixed(3) + ' KAS UTXO in this wallet for the script fee. Unlock remainder pays the fee from the vault.');
+      throw new Error('Pay search needs a ~' + (Number(oneFee) / 1e8).toFixed(3) + ' KAS UTXO in this wallet for the script fee. Unlock remainder pays the fee from the vault.');
     }
-    const ins = [...cov, extra];
+    const ins = [vaultIn, extra];
     const tx = k.createTransaction(
       ins,
       [
         { address: feeAddr, amount: SEARCH_FEE_SOMPI },
-        { address: vault.address, amount: change }
+        { address: vault.address, amount: oneChange }
       ],
       0n,
       undefined,
@@ -877,13 +900,17 @@ export async function spendSilverVault({ wallet, vault, utxos, feeUtxos = [], en
       inp.sequence = 0n;
       inp.sigOpCount = 0;
       inp.computeBudget = SILVER_BUDGET;
+      inp.signatureScript = new Uint8Array();
     }
-    const silverScript = wrapSig(tx, 0);
+    const silverScript = hexish(wrapSig(tx, 0));
     tx.inputs[0].signatureScript = silverScript;
     const feeSig = hexish(k.createInputSignature(tx, 1, priv, k.SighashType.All));
     tx.inputs[1].signatureScript = feeSig;
     tx.inputs[1].computeBudget = 10;
+    if (tx.inputs.length !== 2) throw new Error('Pay search built ' + tx.inputs.length + ' inputs (need 2)');
     try { k.updateTransactionMass(networkId(), tx); } catch {}
+    tx.inputs[0].signatureScript = silverScript;
+    tx.inputs[1].signatureScript = feeSig;
     const paid = extra.amount + SEARCH_MINER;
     const result = await broadcast(tx, [silverScript, feeSig], paid, SEARCH_FEE_SOMPI, { entry: 'pay_search_fee' });
     return {
@@ -893,7 +920,7 @@ export async function spendSilverVault({ wallet, vault, utxos, feeUtxos = [], en
       node: url,
       entry: en,
       nextAddress: vault.address,
-      nextSompi: String(change)
+      nextSompi: String(oneChange)
     };
   }
 
@@ -909,15 +936,13 @@ export async function spendSilverVault({ wallet, vault, utxos, feeUtxos = [], en
       1
     );
     tx.version = 1;
-    for (const inp of tx.inputs) {
-      inp.sequence = 0n;
-      inp.sigOpCount = 0;
-      inp.computeBudget = SILVER_BUDGET;
-    }
-    const silverScript = wrapSig(tx, 0);
-    tx.inputs[0].signatureScript = silverScript;
+    const scripts = signVaultInputs(tx);
     try { k.updateTransactionMass(networkId(), tx); } catch {}
-    return { tx, scripts: [silverScript], fee: nextFee, sendAmt: covAmt - nextFee };
+    for (let i = 0; i < scripts.length; i++) tx.inputs[i].signatureScript = scripts[i];
+    if (tx.inputs.length !== scripts.length) {
+      throw new Error('Unlock signed ' + scripts.length + ' of ' + tx.inputs.length + ' inputs');
+    }
+    return { tx, scripts, fee: nextFee, sendAmt: covAmt - nextFee };
   }
 
   let built = assembleUnlock(fee);
@@ -1388,8 +1413,12 @@ async function submitSignedRpc(k, rpc, url, tx, { sigOpCount, computeBudget, loc
     inp.sigOpCount = opCount;
     if (version >= 1) inp.computeBudget = Number(live[i].computeBudget ?? computeBudget ?? 10);
   });
+  if (scripts && scripts.length !== obj.inputs.length) {
+    throw new Error('Refusing to broadcast — signed ' + scripts.length + ' of ' + obj.inputs.length + ' inputs');
+  }
   if (obj.inputs.some(inp => !inp.signatureScript || inp.signatureScript.length < 20)) {
-    throw new Error('Refusing to broadcast — an input is missing its signature');
+    const detail = obj.inputs.map((inp, i) => (i + 1) + '=' + (inp.signatureScript ? inp.signatureScript.length : 0)).join(' ');
+    throw new Error('Refusing to broadcast — an input is missing its signature (' + detail + ')');
   }
   const plain = JSON.parse(JSON.stringify(obj));
   try {

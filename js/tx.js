@@ -792,8 +792,61 @@ export async function spendSilverVault({ wallet, vault, utxos, feeUtxos = [], en
     return prefix + pushHex(redeemHex);
   }
 
-  let tx;
-  let scripts;
+  const SILVER_BUDGET = 200;
+  const redeemBytes = Math.max(200, Math.floor(redeemHex.length / 2));
+  // Large KCC-01 redeem (this vault: compute mass 20883 → 0.020883 KAS). Do not cap at 0.006.
+  let fee = BigInt(Math.max(2_500_000, redeemBytes * 1200));
+
+  function silverNeed(tx, floor = 400_000n) {
+    let need = 0n;
+    for (const net of [networkId(), 'mainnet']) {
+      try {
+        const f = k.calculateTransactionFee(net, tx, 1);
+        if (f != null && BigInt(f) > need) need = BigInt(f);
+      } catch {}
+      try {
+        const m = k.calculateTransactionMass(net, tx, 1);
+        if (m != null) {
+          const byMass = BigInt(m) * 100n;
+          if (byMass > need) need = byMass;
+        }
+      } catch {}
+      if (need > 0n) break;
+    }
+    if (need < floor) need = floor;
+    if (need > 80_000_000n) need = 80_000_000n;
+    return need + 100_000n;
+  }
+
+  async function broadcast(tx, scripts, paidFee, sendAmt, extraMeta) {
+    let lastErr = 'Unlock broadcast failed';
+    let cur = tx;
+    let curScripts = scripts;
+    let curFee = paidFee;
+    let curSend = sendAmt;
+    for (let i = 0; i < 5; i++) {
+      try {
+        const txId = await submitSignedRpc(k, rpc, url, cur, {
+          sigOpCount: 0,
+          computeBudget: SILVER_BUDGET,
+          lockTime: 0,
+          scripts: curScripts
+        });
+        return { txId, sendAmt: curSend, fee: curFee, ...extraMeta };
+      } catch (e) {
+        lastErr = errText(e);
+        const need = requiredFeeFromError(e);
+        if (!need || need <= curFee || extraMeta?.entry === 'pay_search_fee') throw e;
+        const next = extraMeta.rebuild(need + 100_000n);
+        cur = next.tx;
+        curScripts = next.scripts;
+        curFee = next.fee;
+        curSend = next.sendAmt;
+      }
+    }
+    throw new Error(lastErr);
+  }
+
   if (en === 'pay_search_fee') {
     const change = covAmt - SEARCH_FEE_SOMPI - SEARCH_MINER;
     if (change <= 0n) throw new Error('Vault too small for another 0.001 KAS search. Unlock the remainder instead.');
@@ -801,11 +854,15 @@ export async function spendSilverVault({ wallet, vault, utxos, feeUtxos = [], en
     const feeAddr = kaspaAddressFromPubkey(hexToBytes(feePub.length === 66 ? feePub.slice(2) : feePub));
     const extras = restUtxosToEntries(feeUtxos || [], wallet.address)
       .filter(e => e.address === wallet.address)
-      .sort((a, b) => (a.amount < b.amount ? 1 : -1));
-    const extra = extras.find(e => e.amount >= 500_000n) || null;
-    if (!extra) throw new Error('Pay search needs a ~0.005 KAS UTXO in this wallet for the network fee. Unlock remainder does not.');
-    const ins = extra ? [...cov, extra] : [...cov];
-    tx = k.createTransaction(
+      .sort((a, b) => (a.amount < b.amount ? -1 : 1));
+    const extra = extras.find(e => e.amount >= fee && e.amount <= 10_000_000n)
+      || extras.find(e => e.amount >= fee)
+      || null;
+    if (!extra) {
+      throw new Error('Pay search needs a ~' + (Number(fee) / 1e8).toFixed(3) + ' KAS UTXO in this wallet for the script fee. Unlock remainder pays the fee from the vault.');
+    }
+    const ins = [...cov, extra];
+    const tx = k.createTransaction(
       ins,
       [
         { address: feeAddr, amount: SEARCH_FEE_SOMPI },
@@ -819,23 +876,34 @@ export async function spendSilverVault({ wallet, vault, utxos, feeUtxos = [], en
     for (const inp of tx.inputs) {
       inp.sequence = 0n;
       inp.sigOpCount = 0;
-      inp.computeBudget = 200;
+      inp.computeBudget = SILVER_BUDGET;
     }
     const silverScript = wrapSig(tx, 0);
     tx.inputs[0].signatureScript = silverScript;
-    scripts = [silverScript];
-    if (extra) {
-      const feeSig = hexish(k.createInputSignature(tx, 1, priv, k.SighashType.All));
-      tx.inputs[1].signatureScript = feeSig;
-      tx.inputs[1].computeBudget = 10;
-      scripts.push(feeSig);
+    const feeSig = hexish(k.createInputSignature(tx, 1, priv, k.SighashType.All));
+    tx.inputs[1].signatureScript = feeSig;
+    tx.inputs[1].computeBudget = 10;
+    try { k.updateTransactionMass(networkId(), tx); } catch {}
+    const paid = extra.amount + SEARCH_MINER;
+    const result = await broadcast(tx, [silverScript, feeSig], paid, SEARCH_FEE_SOMPI, { entry: 'pay_search_fee' });
+    return {
+      txId: result.txId,
+      amountKas: 0.001,
+      feeKas: Number(paid) / 1e8,
+      node: url,
+      entry: en,
+      nextAddress: vault.address,
+      nextSompi: String(change)
+    };
+  }
+
+  function assembleUnlock(nextFee) {
+    if (covAmt <= nextFee) {
+      throw new Error('Vault too small to cover the Search Kaspa script fee (' + (Number(nextFee) / 1e8).toFixed(4) + ' KAS needed)');
     }
-  } else {
-    const fee = 600_000n;
-    if (covAmt <= fee) throw new Error('Vault too small to cover network fee on unlock');
-    tx = k.createTransaction(
+    const tx = k.createTransaction(
       cov,
-      [{ address: wallet.address, amount: covAmt - fee }],
+      [{ address: wallet.address, amount: covAmt - nextFee }],
       0n,
       undefined,
       1
@@ -844,28 +912,32 @@ export async function spendSilverVault({ wallet, vault, utxos, feeUtxos = [], en
     for (const inp of tx.inputs) {
       inp.sequence = 0n;
       inp.sigOpCount = 0;
-      inp.computeBudget = 200;
+      inp.computeBudget = SILVER_BUDGET;
     }
     const silverScript = wrapSig(tx, 0);
     tx.inputs[0].signatureScript = silverScript;
-    scripts = [silverScript];
+    try { k.updateTransactionMass(networkId(), tx); } catch {}
+    return { tx, scripts: [silverScript], fee: nextFee, sendAmt: covAmt - nextFee };
   }
-  try { k.updateTransactionMass(networkId(), tx); } catch {}
-  const txId = await submitSignedRpc(k, rpc, url, tx, {
-    sigOpCount: 0,
-    computeBudget: 200,
-    lockTime: 0,
-    scripts
+
+  let built = assembleUnlock(fee);
+  for (let round = 0; round < 5; round++) {
+    const need = silverNeed(built.tx);
+    if (need <= built.fee) break;
+    built = assembleUnlock(need);
+  }
+  const unlocked = await broadcast(built.tx, built.scripts, built.fee, built.sendAmt, {
+    entry: 'unlock',
+    rebuild: assembleUnlock
   });
-  const unlocked = en === 'pay_search_fee' ? 0n : (covAmt - 600_000n);
   return {
-    txId,
-    amountKas: en === 'pay_search_fee' ? 0.001 : Number(unlocked) / 1e8,
-    feeKas: en === 'pay_search_fee' ? Number((extra?.amount || 0n) + SEARCH_MINER) / 1e8 : 0.006,
+    txId: unlocked.txId,
+    amountKas: Number(unlocked.sendAmt) / 1e8,
+    feeKas: Number(unlocked.fee) / 1e8,
     node: url,
     entry: en,
-    nextAddress: en === 'pay_search_fee' ? vault.address : wallet.address,
-    nextSompi: en === 'pay_search_fee' ? String(covAmt - SEARCH_FEE_SOMPI - SEARCH_MINER) : '0'
+    nextAddress: wallet.address,
+    nextSompi: '0'
   };
 }
 

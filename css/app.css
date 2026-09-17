@@ -159,11 +159,90 @@ img { display: block; max-width: 100%; }
 
 .status {
   display: flex; align-items: center; justify-content: space-between;
-  padding: calc(12px + var(--safe-t)) 22px 8px;
+  gap: 8px;
+  padding: calc(12px + var(--safe-t)) 16px 8px;
   font-size: 13px; font-weight: 600; color: var(--label-2);
 }
-.status .clock { color: var(--label); letter-spacing: 0.4px; font-variant-numeric: tabular-nums; font-size: 12px; }
-.status-pips { display: flex; gap: 6px; align-items: center; }
+.status .clock { color: var(--label); letter-spacing: 0.4px; font-variant-numeric: tabular-nums; font-size: 12px; flex-shrink: 0; }
+.status-pips { display: flex; gap: 6px; align-items: center; flex-shrink: 0; }
+.connected-pill {
+  display: inline-flex; align-items: center; gap: 6px;
+  height: 22px; padding: 0 8px 0 7px;
+  border-radius: 999px;
+  border: 0.5px solid var(--hairline);
+  background: rgba(255,255,255,0.06);
+  color: var(--label-2);
+  font-size: 11px; font-weight: 750; letter-spacing: -0.15px;
+  margin: 0 auto;
+  transition: background 0.2s ease, color 0.2s ease, border-color 0.2s ease, transform 0.16s ease;
+}
+.connected-pill i {
+  width: 6px; height: 6px; border-radius: 50%;
+  background: var(--label-3);
+  flex-shrink: 0;
+  transition: background 0.2s ease, box-shadow 0.2s ease;
+}
+.connected-pill em {
+  min-width: 15px; height: 15px; padding: 0 4px;
+  border-radius: 8px;
+  background: rgba(255,255,255,0.1);
+  font-size: 10px; font-style: normal; font-weight: 800;
+  display: grid; place-items: center;
+}
+.connected-pill.on {
+  color: #30d158;
+  background: rgba(48,209,88,0.14);
+  border-color: rgba(48,209,88,0.32);
+}
+.connected-pill.on i {
+  background: #30d158;
+  box-shadow: 0 0 8px #30d158;
+}
+.connected-pill.on em { background: rgba(48,209,88,0.28); color: #d8ffd8; }
+.connected-pill.live i { animation: pulse 1.4s ease-in-out infinite; }
+.connected-pill.sm { height: 24px; margin: 0; flex-shrink: 0; }
+.connected-pill:active { transform: scale(0.96); }
+.dapp-head {
+  display: flex; align-items: center; justify-content: space-between;
+  gap: 10px; margin-bottom: 12px;
+}
+.dapp-head h3 { margin-bottom: 0; flex: 1; min-width: 0; }
+.conn-list {
+  display: flex; flex-direction: column; gap: 8px;
+  margin: 0 0 12px;
+}
+.conn-list.hidden { display: none !important; }
+.conn-row {
+  display: flex; align-items: center; gap: 10px;
+  padding: 10px;
+  border-radius: 14px;
+  background: rgba(255,255,255,0.05);
+  border: 0.5px solid var(--hairline);
+  animation: connIn 0.28s cubic-bezier(0.32, 0.72, 0, 1);
+}
+.conn-row.on {
+  border-color: rgba(48,209,88,0.4);
+  background: rgba(48,209,88,0.08);
+}
+@keyframes connIn { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: none; } }
+.conn-mark {
+  width: 32px; height: 32px; border-radius: 10px;
+  display: grid; place-items: center; flex-shrink: 0;
+  background: rgba(212,176,122,0.16); color: var(--gold-2);
+  font-weight: 800; font-size: 14px;
+}
+.conn-copy { min-width: 0; flex: 1; text-align: left; }
+.conn-copy b { display: block; font-size: 14px; font-weight: 700; }
+.conn-copy span, .conn-copy em {
+  display: block; font-size: 11px; color: var(--label-2);
+  font-style: normal; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.conn-x {
+  height: 28px; padding: 0 10px; border-radius: 9px; flex-shrink: 0;
+  background: rgba(255,69,58,0.12); color: var(--red);
+  font-size: 11px; font-weight: 750; border: 0;
+}
+.conn-x:active { transform: scale(0.96); }
 .status-pips i {
   display: block; width: 16px; height: 10px; border: 1.4px solid var(--label-2); border-radius: 3px; position: relative;
 }
@@ -994,6 +1073,11 @@ img { display: block; max-width: 100%; }
 .sheet-overlay.open { display: flex; pointer-events: auto; }
 #dapp-overlay { z-index: 89; }
 #dapp-origin { margin-top: 0; overflow-wrap: anywhere; word-break: break-word; }
+.dapp-head {
+  display: flex; align-items: center; justify-content: space-between;
+  gap: 10px; margin-bottom: 12px;
+}
+.dapp-head h3 { margin-bottom: 0 !important; flex: 1; min-width: 0; }
 .dapp-wallets {
   display: flex; flex-wrap: wrap; gap: 8px;
   margin: 8px 0 12px;

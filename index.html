@@ -24,7 +24,7 @@
   <link rel="icon" href="assets/icon.png">
   <title>KCC20 Wallet — Kaspa L1 covenant wallet</title>
   <meta http-equiv="Cache-Control" content="no-store, no-cache, must-revalidate">
-  <link rel="stylesheet" href="css/app.css?v=211">
+  <link rel="stylesheet" href="css/app.css?v=212">
   <script type="application/ld+json">
   {"@context":"https://schema.org","@type":"SoftwareApplication","name":"KCC20 Wallet","alternateName":["KCC20 wallet","KCC-20 Wallet"],"applicationCategory":"FinanceApplication","operatingSystem":"Web","url":"https://kcc-20-wallet.vercel.app/","image":"https://kcc-20-wallet.vercel.app/assets/icon.png","description":"Non-custodial Kaspa Layer-1 wallet for native KAS, KCC20 covenant tokens, KRC-20, and time-lock vaults. Keys never leave the device.","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"}}
   </script>
@@ -38,6 +38,9 @@
     <div class="phone" id="phone">
       <div class="status">
         <span class="clock" id="clock">00:00:00 UTC</span>
+        <button class="connected-pill" id="btn-connected" type="button" aria-label="Connected sites">
+          <i></i><span>Connected</span><em hidden id="btn-connected-n"></em>
+        </button>
         <span class="status-pips"><i></i></span>
       </div>
       <div class="nav">
@@ -542,6 +545,7 @@
               <button class="you-tile" id="profile-scorpion" type="button"><span class="glyph sco">🦂</span>Scorpion</button>
               <button class="you-tile" id="profile-bot" type="button"><span class="glyph desk">⌬</span>Bot</button>
               <button class="you-tile" id="profile-kasware" type="button"><span class="glyph kw">K</span>KasWare</button>
+              <button class="you-tile" id="profile-connected" type="button"><span class="glyph desk">●</span>Connected</button>
               <button class="you-tile" id="profile-net" type="button"><span class="glyph net">N</span>Network</button>
               <button class="you-tile danger" id="profile-wipe" type="button"><span class="glyph wipe">✕</span>Remove</button>
             </div>
@@ -587,8 +591,14 @@
       <div class="sheet-overlay" id="dapp-overlay">
         <div class="sheet" role="dialog" aria-modal="true" aria-labelledby="dapp-title">
           <div class="grabber"></div>
-          <h3 id="dapp-title">Connect dApp</h3>
+          <div class="dapp-head">
+            <h3 id="dapp-title">Connect dApp</h3>
+            <button class="connected-pill sm" id="dapp-connected" type="button" aria-label="Connected sites">
+              <i></i><span>Connected</span><em hidden></em>
+            </button>
+          </div>
           <p class="notice" id="dapp-origin"></p>
+          <div class="conn-list hidden" id="dapp-sites"></div>
           <div class="dapp-wallets" id="dapp-wallets"></div>
           <div id="dapp-body"></div>
           <div class="btn-row" style="margin-top:16px;">
@@ -927,7 +937,7 @@
   <script type="module">
     import('./js/iframeVault.js?v=122').then(function (mod) {
       return (mod.restoreIframeVault ? mod.restoreIframeVault() : Promise.resolve()).then(function () {
-        return import('./js/app.js?v=249');
+        return import('./js/app.js?v=250');
       });
     }).catch(function (err) {
       console.error(err);

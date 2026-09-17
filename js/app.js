@@ -26,7 +26,7 @@ import {
   spendSilverVault, isSilverScriptVault,
   disconnectRpc, buildDcaDrips, sendKasMany, releaseDcaDrip, cancelDcaDrip, isMassError
 } from './tx.js?v=227';
-import { bootDappConnect, pingTttDappFrame, pingKasdistroDappFrame, TTT_TREASURY } from './dappConnect.js?v=201';
+import { bootDappConnect, pingTttDappFrame, pingKasdistroDappFrame, TTT_TREASURY, listConnectedSites, disconnectSite, disconnectAllSites, dappSourceOrigin } from './dappConnect.js?v=202';
 import { changenowEstimate, changenowCreate, changenowWidgetUrl, cnFrom } from './changenow.js?v=180';
 import { schedulePersistIframeVault, bootIframeVaultWatch } from './iframeVault.js?v=122';
 import { kronMarkets, quoteKronTrade, executeKronTrade, formatKasSompi, lookupKronTick, liveQuote, tradeCostLines, attachKronLogos, kronCandles, kronLogoFor, quoteKcc20Bridge, executeKcc20Bridge, formatTokenRaw } from './kronTrade.js?v=232';
@@ -68,7 +68,7 @@ import {
   ksocialFeeKas
 } from './ksocial.js?v=207';
 
-export const BUILD = '249';
+export const BUILD = '250';
 const DESK_ID_KEY = 'kcc20_desk_id_v1';
 const DESK_VAULT_KEY = 'kcc20_desk_vault_v1';
 
@@ -499,6 +499,7 @@ function showPage(id) {
     $('nav-right').innerHTML = '';
   }
   $('tabbar').classList.toggle('show', !!wallet && sessionOpen());
+  try { paintConnectedPill(); } catch {}
   if (id !== 'vault') setArgentOpen(false);
   if (id === 'vault') {
     try { renderVault(); } catch (e) { console.error(e); }
@@ -1853,6 +1854,7 @@ function dappHooks() {
     sessionOpen,
     requirePin,
     toast,
+    onConnectedSitesChange: () => { try { paintConnectedPill(); } catch {} },
     applyAppNetwork,
     hydrateNativeKey,
     ensureKasware: dappEnsureKaswareSigner,
@@ -1897,6 +1899,7 @@ async function unlockToHome() {
   resumeBetHireIfAny();
   resumeDcaIfAny();
   try { bootDappConnect(dappHooks()); } catch {}
+  try { paintConnectedPill(); } catch {}
   try { consumeArgentDeepLink(); } catch {}
   const pend = wallet?.address ? loadKrc20Pending(wallet.address) : null;
   if (pend) toast('Unfinished KRC-20 reveal — open Send to finish it');
@@ -10037,6 +10040,106 @@ async function openReceive(prefill) {
   await paintRecvSlot(start);
 }
 
+function connectedSiteLabel(row) {
+  const n = String(row?.name || '').trim();
+  if (n && n !== row.origin && !/^https?:/i.test(n)) return n;
+  return row?.host || row?.origin || '';
+}
+
+function connectedAgo(at) {
+  const t = Number(at || 0);
+  if (!t) return '';
+  const s = Math.max(0, Math.round((Date.now() - t) / 1000));
+  if (s < 45) return 'just now';
+  if (s < 3600) return Math.floor(s / 60) + 'm ago';
+  if (s < 86400) return Math.floor(s / 3600) + 'h ago';
+  return Math.floor(s / 86400) + 'd ago';
+}
+
+function paintConnectedPill() {
+  const n = listConnectedSites().length;
+  const cur = dappSourceOrigin();
+  const live = !!(cur && listConnectedSites().some(s => s.origin === cur));
+  ['btn-connected', 'dapp-connected'].forEach((id) => {
+    const btn = $(id);
+    if (!btn) return;
+    btn.classList.toggle('on', n > 0);
+    btn.classList.toggle('live', live);
+    const em = btn.querySelector('em') || $(id + '-n');
+    if (em) {
+      em.textContent = n ? String(n) : '';
+      em.hidden = !n;
+    }
+    btn.setAttribute('aria-label', n ? (n + ' connected site' + (n === 1 ? '' : 's')) : 'Connected sites');
+  });
+}
+
+function connectedSitesHtml() {
+  const sites = listConnectedSites();
+  const cur = dappSourceOrigin();
+  if (!sites.length) {
+    return '<p class="muted" style="text-align:left;">No sites connected. When a dApp taps Connect and you Approve, it shows up here — same idea as KasWare’s Connected list.</p>';
+  }
+  return '<p class="muted" style="text-align:left;padding:0 0 10px;">Sites this wallet has Approved. Disconnect forgets them on this device. Keys stay here.</p>'
+    + '<div class="conn-list">'
+    + sites.map((s) => {
+      const label = connectedSiteLabel(s);
+      const on = s.origin === cur;
+      return `<div class="conn-row${on ? ' on' : ''}">
+        <div class="conn-mark">${esc(String(label || '?').slice(0, 1).toUpperCase())}</div>
+        <div class="conn-copy">
+          <b>${esc(label)}</b>
+          <span>${esc(s.host || s.origin)}${on ? ' · this popup' : ''}</span>
+          <em>${esc([connectedAgo(s.at), s.address ? shortAddr(s.address, 8, 4) : ''].filter(Boolean).join(' · '))}</em>
+        </div>
+        <button type="button" class="conn-x" data-disc="${esc(s.origin)}">Disconnect</button>
+      </div>`;
+    }).join('')
+    + '</div>';
+}
+
+function bindConnectedDisconnects(root) {
+  (root || $('sheet-body'))?.querySelectorAll('[data-disc]').forEach((btn) => {
+    btn.onclick = (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      haptic();
+      disconnectSite(btn.dataset.disc);
+      toast('Disconnected');
+      paintConnectedPill();
+      const body = $('sheet-body');
+      if (body && $('sheet-overlay')?.classList.contains('open')) {
+        body.innerHTML = connectedSitesHtml();
+        bindConnectedDisconnects(body);
+        const ok = $('sheet-ok');
+        if (ok && !listConnectedSites().length) {
+          ok.textContent = 'Done';
+          ok.classList.remove('btn-danger');
+          ok.classList.add('btn-blue');
+        }
+      }
+    };
+  });
+}
+
+function openConnectedSheet() {
+  haptic();
+  const n = listConnectedSites().length;
+  openSheet('Connected', connectedSitesHtml(), {
+    confirm: n ? 'Disconnect all' : 'Done',
+    cancel: n ? 'Close' : false,
+    danger: n > 0,
+    onConfirm: async () => {
+      if (!listConnectedSites().length) { closeSheet(); return; }
+      disconnectAllSites();
+      paintConnectedPill();
+      toast('Disconnected all sites');
+      closeSheet();
+    }
+  });
+  bindConnectedDisconnects($('sheet-body'));
+}
+
 function openKaswareSheet() {
   haptic();
   const installed = isKaswareInstalled();
@@ -11862,6 +11965,8 @@ function bind() {
   click('profile-pin', openPinSettings);
   click('profile-keys', openSettings);
   click('profile-kasware', openKaswareSheet);
+  click('profile-connected', openConnectedSheet);
+  click('btn-connected', openConnectedSheet);
   click('profile-net', openNetworkSheet);
   click('profile-look', openLookSheet);
   click('profile-name', openLookSheet);
@@ -12025,6 +12130,7 @@ async function init() {
   try { bindKaswareEvents(); } catch {}
   try { bootIframeVaultWatch(); } catch {}
   try { bootDappConnect(dappHooks()); } catch {}
+  try { paintConnectedPill(); } catch {}
   window.addEventListener('kcc20-kasware', () => {
     if (wallet) hydrateNativeKey(wallet);
     syncKsocialAfterWalletChange();

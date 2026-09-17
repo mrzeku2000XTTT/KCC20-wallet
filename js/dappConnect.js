@@ -55,14 +55,54 @@ function originAllowed(origin) {
 function rememberOrigin(origin, name) {
   if (!origin) return;
   const map = loadAllow();
-  map[origin] = { at: Date.now(), name: String(name || '').slice(0, 80) };
+  const w = hooks?.getWallet?.();
+  map[origin] = {
+    at: Date.now(),
+    name: String(name || '').slice(0, 80),
+    address: String(w?.address || map[origin]?.address || '')
+  };
   saveAllow(map);
+  notifySites();
 }
 
 function forgetOrigin(origin) {
   const map = loadAllow();
   delete map[origin];
   saveAllow(map);
+  notifySites();
+}
+
+function notifySites() {
+  try { hooks?.onConnectedSitesChange?.(listConnectedSites()); } catch {}
+}
+
+export function listConnectedSites() {
+  const map = loadAllow();
+  return Object.keys(map).map((origin) => {
+    const row = map[origin] || {};
+    let host = origin;
+    try { host = new URL(origin).host; } catch {}
+    return {
+      origin,
+      host,
+      name: String(row.name || host || origin),
+      address: String(row.address || ''),
+      at: Number(row.at || 0)
+    };
+  }).sort((a, b) => (b.at || 0) - (a.at || 0));
+}
+
+export function disconnectSite(origin) {
+  forgetOrigin(origin);
+}
+
+export function disconnectAllSites() {
+  saveAllow({});
+  notifySites();
+}
+
+export function dappSourceOrigin() {
+  return sourceOrigin || pageParams().from || '';
 }
 
 function loadTreasuryMap() {
@@ -215,6 +255,41 @@ function paintDappWallets() {
   }).join('');
 }
 
+function paintDappConnectedChip() {
+  const n = listConnectedSites().length;
+  ['dapp-connected', 'btn-connected'].forEach((id) => {
+    const btn = $(id);
+    if (!btn) return;
+    btn.classList.toggle('on', n > 0);
+    const em = btn.querySelector('em');
+    if (em) {
+      em.textContent = n ? String(n) : '';
+      em.hidden = !n;
+    }
+  });
+  try { hooks?.onConnectedSitesChange?.(listConnectedSites()); } catch {}
+}
+
+function renderDappSitesPanel() {
+  const box = $('dapp-sites');
+  if (!box || box.classList.contains('hidden')) return;
+  const sites = listConnectedSites();
+  const cur = dappSourceOrigin();
+  if (!sites.length) {
+    box.innerHTML = '<p class="muted" style="text-align:left;margin:0;">No other sites yet. Approve this one and it stays on Connected.</p>';
+    return;
+  }
+  box.innerHTML = sites.map((s) => {
+    const label = (s.name && s.name !== s.origin) ? s.name : s.host;
+    const on = s.origin === cur;
+    return '<div class="conn-row' + (on ? ' on' : '') + '">'
+      + '<div class="conn-mark">' + esc(String(label || '?').slice(0, 1).toUpperCase()) + '</div>'
+      + '<div class="conn-copy"><b>' + esc(label) + '</b><span>' + esc(s.host || s.origin) + (on ? ' · this popup' : '') + '</span></div>'
+      + '<button type="button" class="conn-x" data-disc="' + esc(s.origin) + '">Disconnect</button>'
+      + '</div>';
+  }).join('');
+}
+
 function showOverlay({ title, origin, body, approveLabel, onWalletChange }) {
   return new Promise((resolve, reject) => {
     const overlay = $('dapp-overlay');
@@ -227,10 +302,14 @@ function showOverlay({ title, origin, body, approveLabel, onWalletChange }) {
     if (originEl) originEl.textContent = origin || '';
     const bodyEl = $('dapp-body');
     if (bodyEl) bodyEl.innerHTML = body || '';
+    const sitesBox = $('dapp-sites');
+    if (sitesBox) { sitesBox.classList.add('hidden'); sitesBox.innerHTML = ''; }
+    paintDappConnectedChip();
     paintDappWallets();
     const ok = $('dapp-approve');
     const no = $('dapp-reject');
     const chips = $('dapp-wallets');
+    const connBtn = $('dapp-connected');
     if (ok) ok.textContent = approveLabel || 'Approve';
     overlay.classList.add('open');
     const done = (fn) => {
@@ -238,8 +317,30 @@ function showOverlay({ title, origin, body, approveLabel, onWalletChange }) {
       ok.onclick = null;
       no.onclick = null;
       if (chips) chips.onclick = null;
+      if (connBtn) connBtn.onclick = null;
+      if (sitesBox) sitesBox.onclick = null;
       fn();
     };
+    if (connBtn) {
+      connBtn.onclick = (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        if (!sitesBox) return;
+        sitesBox.classList.toggle('hidden');
+        renderDappSitesPanel();
+      };
+    }
+    if (sitesBox) {
+      sitesBox.onclick = (e) => {
+        const b = e.target.closest('[data-disc]');
+        if (!b?.dataset.disc) return;
+        e.preventDefault();
+        forgetOrigin(b.dataset.disc);
+        paintDappConnectedChip();
+        renderDappSitesPanel();
+        try { hooks?.toast?.('Disconnected'); } catch {}
+      };
+    }
     if (chips) {
       chips.onclick = async (e) => {
         const b = e.target.closest('[data-dapp-wid]');

@@ -68,7 +68,7 @@ import {
   ksocialFeeKas
 } from './ksocial.js?v=207';
 
-export const BUILD = '250';
+export const BUILD = '251';
 const DESK_ID_KEY = 'kcc20_desk_id_v1';
 const DESK_VAULT_KEY = 'kcc20_desk_vault_v1';
 
@@ -328,6 +328,8 @@ let tokenBusy = false;
 let tokenPending = false;
 let tokenActBackfill = false;
 let activityAll = false;
+let activityView = 'feed';
+let activityFeedLimit = 40;
 let seenTokens = false;
 let tokenStream = null;
 let kronKickAt = 0;
@@ -712,7 +714,7 @@ function hydrateFromSnap(addr) {
 }
 
 async function fetchWalletTxs(addr) {
-  const res = await fetch(`${API_BASE()}/addresses/${encodeURIComponent(addr)}/full-transactions?limit=20&resolve_previous_outpoints=light`);
+  const res = await fetch(`${API_BASE()}/addresses/${encodeURIComponent(addr)}/full-transactions?limit=50&resolve_previous_outpoints=light`);
   if (!res.ok) return [];
   const txs = await res.json();
   return Array.isArray(txs) ? txs : (txs.transactions || []);
@@ -2992,7 +2994,33 @@ function loadTokenActivity(addr) {
 }
 
 function saveTokenActivity(list, addr) {
-  localStorage.setItem(actStoreKey(addr), JSON.stringify((list || []).slice(0, 80)));
+  localStorage.setItem(actStoreKey(addr), JSON.stringify((list || []).slice(0, 2000)));
+}
+
+const LEDGER_KEY = 'kcc20_txlog_v1';
+function ledgerStoreKey(addr) {
+  return LEDGER_KEY + ':' + (addr || wallet?.address || '');
+}
+function loadTxLedger(addr) {
+  try {
+    const raw = JSON.parse(localStorage.getItem(ledgerStoreKey(addr)) || '[]');
+    return Array.isArray(raw) ? raw : [];
+  } catch {
+    return [];
+  }
+}
+function saveTxLedger(list, addr) {
+  localStorage.setItem(ledgerStoreKey(addr), JSON.stringify((list || []).slice(0, 5000)));
+}
+function appendTxLedger(row, addr) {
+  const use = addr || wallet?.address;
+  if (!use || !row) return;
+  const list = loadTxLedger(use);
+  const i = list.findIndex(x => x.id === row.id);
+  const copy = { ...row, wallet: row.wallet || '', address: use };
+  if (i >= 0) list[i] = { ...list[i], ...copy };
+  else list.unshift(copy);
+  saveTxLedger(list, use);
 }
 
 function pushTokenActivity(ev, addr) {
@@ -3030,11 +3058,13 @@ function pushTokenActivity(ev, addr) {
     if (row.image && !dup.image) { dup.image = row.image; dirty = true; }
     if (ev.time && Number(ev.time) > Number(dup.time || 0)) { dup.time = Number(ev.time); dirty = true; }
     if (dirty) saveTokenActivity(list, use);
+    appendTxLedger(dup, use);
     scheduleActivityPaint();
     return dup;
   }
   list.unshift(row);
   saveTokenActivity(list, use);
+  appendTxLedger(row, use);
   scheduleActivityPaint();
   return row;
 }
@@ -3340,6 +3370,77 @@ function rowsForWallet(addr, txs, walletName) {
   return rows;
 }
 
+function ledgerForScope() {
+  if (activityAll && loadWalletList().length > 1) {
+    return loadWalletList().flatMap(w => loadTxLedger(w.address).map(r => ({ ...r, wallet: r.wallet || w.name || '' })));
+  }
+  return loadTxLedger(wallet?.address);
+}
+
+function pairEvidence(list) {
+  const rows = [...list].sort((a, b) => (b.time || 0) - (a.time || 0));
+  const used = new Set();
+  const pairs = [];
+  for (const buy of rows) {
+    const buyish = /kron buy|bought/i.test(buy.label || '') || buy.kind === 'kron-buy';
+    if (!buyish || used.has(buy.id)) continue;
+    const recv = rows.find(r =>
+      !used.has(r.id) &&
+      r.id !== buy.id &&
+      r.tick === buy.tick &&
+      r.dir === 'in' &&
+      /received|bought/i.test(r.label || '') &&
+      Math.abs((r.time || 0) - (buy.time || 0)) < 30 * 60 * 1000
+    );
+    used.add(buy.id);
+    if (recv) used.add(recv.id);
+    pairs.push({ buy, recv: recv || null, tick: buy.tick, time: buy.time });
+  }
+  const rest = rows.filter(r => !used.has(r.id));
+  return { pairs, rest };
+}
+
+function renderLocalLog() {
+  const box = $('activity-list');
+  if (!box) return;
+  $('act-log-bar')?.classList.remove('hidden');
+  const list = ledgerForScope();
+  if (!list.length) {
+    box.innerHTML = `<div class="empty">No local log on this wallet yet. Buys, receives, and sends are saved here on this device — not capped to the last 40 feed rows. IDs stay pending until the tx is known.</div>`;
+    return;
+  }
+  const { pairs, rest } = pairEvidence(list);
+  const idCell = (row, kind) => {
+    if (!row) return `<div class="log-id pending">${esc(kind)} · pending</div>`;
+    const id = row.txId || '';
+    return `<div class="log-id">${esc(kind)} · ${id ? `<code>${esc(id)}</code> <button type="button" class="copy-chip" data-copy="${esc(id)}">Copy</button>` : '<em>pending</em>'}</div>`;
+  };
+  box.innerHTML = `
+    <p class="muted" style="text-align:left;padding:8px 4px 12px;">Local evidence for ${activityAll ? 'all wallets' : 'this wallet'} (${list.length} records). Empty IDs are pending — nothing is invented.</p>
+    ${pairs.map(p => `
+      <div class="tx-log">
+        <div class="meta">
+          <b>${esc(p.tick || '')} · ${esc(p.buy.wallet || '')}</b>
+          <span>${new Date(p.time || Date.now()).toLocaleString()}</span>
+        </div>
+        ${idCell(p.buy, 'KRON buy')}
+        ${idCell(p.recv, 'Received')}
+        <div class="log-id">local · <code>${esc(p.buy.id)}</code>${p.recv ? ' / <code>' + esc(p.recv.id) + '</code>' : ''}</div>
+      </div>
+    `).join('')}
+    ${rest.map(r => `
+      <div class="tx-log">
+        <div class="meta">
+          <b>${esc(r.label || '')} ${esc(r.tick || '')}</b>
+          <span>${esc(r.wallet || '')} · ${new Date(r.time || Date.now()).toLocaleString()}</span>
+        </div>
+        ${idCell(r, r.dir === 'in' ? 'Received' : (r.label || 'Out'))}
+        <div class="log-id">local · <code>${esc(r.id)}</code></div>
+      </div>
+    `).join('')}
+  `;
+}
+
 function renderActivity(txs = []) {
   const box = $('activity-list');
   if (!box) return;
@@ -3349,6 +3450,12 @@ function renderActivity(txs = []) {
     scope.classList.toggle('hidden', !many);
     scope.querySelectorAll('button').forEach(b => b.classList.toggle('on', (b.dataset.actscope === 'all') === activityAll));
   }
+  $('act-view')?.querySelectorAll('button').forEach(b => b.classList.toggle('on', b.dataset.actview === activityView));
+  if (activityView === 'log') {
+    renderLocalLog();
+    return;
+  }
+  $('act-log-bar')?.classList.add('hidden');
   let rows = [];
   if (activityAll && many) {
     for (const w of loadWalletList()) {
@@ -3361,10 +3468,11 @@ function renderActivity(txs = []) {
   }
   rows.sort((a, b) => (b.time || 0) - (a.time || 0));
   if (!rows.length) {
-    box.innerHTML = `<div class="empty">No recent activity on ${activityAll ? 'these wallets' : 'this wallet'}. Incoming KAS and KCC20 show here automatically.</div>`;
+    box.innerHTML = `<div class="empty">No recent activity on ${activityAll ? 'these wallets' : 'this wallet'}. Incoming KAS and KCC20 show here automatically. Open Local log for the full device ledger.</div>`;
     return;
   }
-  box.innerHTML = rows.slice(0, 40).map(r => `
+  const shown = rows.slice(0, activityFeedLimit);
+  box.innerHTML = shown.map(r => `
       <button class="tx" type="button" ${r.id ? `data-txid="${esc(r.id)}"` : ''} ${r.tokId ? `data-token-act="${esc(r.tokId)}"` : ''}>
         <div class="dir">${r.logo || (r.dir === 'in' ? '↓' : '↑')}</div>
         <div class="meta">
@@ -3374,7 +3482,9 @@ function renderActivity(txs = []) {
         <div class="val ${r.dir === 'in' ? 'in' : 'out'}">${esc(r.val)}${r.feeLine ? `<small>${esc(r.feeLine)}</small>` : ''}
           ${r.id ? `<button type="button" class="copy-chip" data-copy="${esc(r.id)}">Copy ID</button>` : ''}
         </div>
-      </button>`).join('');
+      </button>`).join('') + (rows.length > shown.length
+    ? `<button class="btn btn-glass" id="btn-act-more" type="button" style="margin-top:10px;">Load more (${rows.length - shown.length} older)</button>`
+    : '');
 }
 
 const BUILD_PHASES = [
@@ -9102,13 +9212,25 @@ async function runTrade({ tick, side, amount, quote, forceKasware = false }) {
     afterTx();
     if (q?.side === 'buy' && q.tokenOut != null) {
       pushTokenActivity({
+        dir: 'out',
+        tick: q.tick || tick,
+        protocol: 'kcc20',
+        amount: String(q.tokenOut),
+        decimals: q.decimals || 0,
+        txId: result.txId || '',
+        label: 'KRON buy',
+        kind: 'kron-buy',
+        image: kronLogoFor(q.tick || tick)
+      });
+      pushTokenActivity({
         dir: 'in',
         tick: q.tick || tick,
         protocol: 'kcc20',
         amount: String(q.tokenOut),
         decimals: q.decimals || 0,
         txId: result.txId || '',
-        label: 'Bought',
+        label: 'Received',
+        kind: 'kron-receive',
         image: kronLogoFor(q.tick || tick)
       });
     } else if (q?.side === 'sell') {
@@ -11722,6 +11844,35 @@ function bind() {
     activityAll = b.dataset.actscope === 'all';
     haptic();
     renderActivity(window.__txs || []);
+  });
+  $('act-view')?.addEventListener('click', e => {
+    const b = e.target.closest('[data-actview]');
+    if (!b?.dataset.actview) return;
+    activityView = b.dataset.actview;
+    activityFeedLimit = 40;
+    haptic();
+    renderActivity(window.__txs || []);
+  });
+  $('activity-list')?.addEventListener('click', e => {
+    if (e.target.closest('#btn-act-more')) {
+      activityFeedLimit += 40;
+      renderActivity(window.__txs || []);
+    }
+  });
+  click('btn-export-log', () => {
+    const list = ledgerForScope();
+    const blob = new Blob([JSON.stringify(list, null, 2)], { type: 'application/json' });
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = 'kcc20-txlog-' + (wallet?.address || 'wallet').slice(0, 18) + '.json';
+    a.click();
+    toast('Exported ' + list.length + ' local records');
+  });
+  click('btn-copy-log-ids', async () => {
+    const list = ledgerForScope();
+    const lines = list.map(r => [r.label, r.tick, r.txId || 'pending', r.id].join('\t')).join('\n');
+    await navigator.clipboard.writeText(lines || 'none');
+    toast(list.length ? 'Copied IDs' : 'Nothing to copy');
   });
   click('btn-refresh', () => { haptic(); refreshAll(); toast('Refreshing'); });
   $('btn-compound')?.addEventListener('click', openCompound);

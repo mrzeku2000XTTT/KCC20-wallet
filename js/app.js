@@ -26,7 +26,7 @@ import {
   spendSilverVault, isSilverScriptVault,
   disconnectRpc, buildDcaDrips, sendKasMany, releaseDcaDrip, cancelDcaDrip, isMassError
 } from './tx.js?v=227';
-import { bootDappConnect, pingTttDappFrame, pingKasdistroDappFrame, TTT_TREASURY, listConnectedSites, disconnectSite, disconnectAllSites, dappSourceOrigin } from './dappConnect.js?v=202';
+import { bootDappConnect, pingTttDappFrame, pingKasdistroDappFrame, TTT_TREASURY, listConnectedSites, disconnectSite, disconnectAllSites, dappSourceOrigin } from './dappConnect.js?v=203';
 import { changenowEstimate, changenowCreate, changenowWidgetUrl, cnFrom } from './changenow.js?v=180';
 import { schedulePersistIframeVault, bootIframeVaultWatch } from './iframeVault.js?v=122';
 import { kronMarkets, quoteKronTrade, executeKronTrade, formatKasSompi, lookupKronTick, liveQuote, tradeCostLines, attachKronLogos, kronCandles, kronLogoFor, quoteKcc20Bridge, executeKcc20Bridge, formatTokenRaw } from './kronTrade.js?v=232';
@@ -68,7 +68,7 @@ import {
   ksocialFeeKas
 } from './ksocial.js?v=207';
 
-export const BUILD = '251';
+export const BUILD = '252';
 const DESK_ID_KEY = 'kcc20_desk_id_v1';
 const DESK_VAULT_KEY = 'kcc20_desk_vault_v1';
 
@@ -1857,6 +1857,7 @@ function dappHooks() {
     requirePin,
     toast,
     onConnectedSitesChange: () => { try { paintConnectedPill(); } catch {} },
+    getActivityLog: (addr) => activityLogPayload(addr),
     applyAppNetwork,
     hydrateNativeKey,
     ensureKasware: dappEnsureKaswareSigner,
@@ -3398,6 +3399,49 @@ function pairEvidence(list) {
   }
   const rest = rows.filter(r => !used.has(r.id));
   return { pairs, rest };
+}
+
+function activityLogPayload(addr) {
+  const use = addr || wallet?.address || '';
+  const list = loadTxLedger(use);
+  const { pairs, rest } = pairEvidence(list);
+  const buys = pairs.map(p => ({
+    tick: String(p.tick || ''),
+    time: Number(p.time || 0),
+    buyTxId: p.buy?.txId || '',
+    receiveTxId: p.recv?.txId || '',
+    buyLocalId: p.buy?.id || '',
+    receiveLocalId: p.recv?.id || '',
+    pending: {
+      buy: !p.buy?.txId,
+      receive: !p.recv?.txId
+    }
+  }));
+  return {
+    address: use,
+    count: list.length,
+    buys,
+    records: list.map(r => ({
+      localId: r.id,
+      label: r.label || '',
+      tick: r.tick || '',
+      dir: r.dir,
+      amount: r.amount || '',
+      decimals: r.decimals,
+      txId: r.txId || '',
+      pending: !r.txId,
+      time: Number(r.time || 0)
+    })),
+    unpaired: rest.map(r => ({
+      localId: r.id,
+      label: r.label || '',
+      tick: r.tick || '',
+      dir: r.dir,
+      txId: r.txId || '',
+      pending: !r.txId,
+      time: Number(r.time || 0)
+    }))
+  };
 }
 
 function renderLocalLog() {

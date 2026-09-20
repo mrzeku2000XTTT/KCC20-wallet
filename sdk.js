@@ -6,7 +6,7 @@
 */
 (function (root) {
   'use strict';
-  var SDK_VERSION = '171';
+  var SDK_VERSION = '172';
   if (root.kcc20 && root.kcc20.isKcc20 && String(root.kcc20.sdkVersion || '') === SDK_VERSION) return;
 
   function scriptOrigin() {
@@ -337,6 +337,88 @@
     });
   }
 
+  var bridgeFrame = null;
+  var bridgeWin = null;
+  function ensureActivityBridge() {
+    return new Promise(function (resolve, reject) {
+      if (bridgeWin) {
+        try {
+          if (bridgeWin && !bridgeWin.closed) {
+            resolve(bridgeWin);
+            return;
+          }
+        } catch (e) {}
+      }
+      if (!document.body && !document.documentElement) {
+        reject(new Error('No DOM for KCC20 activity bridge'));
+        return;
+      }
+      var iframe = document.getElementById('kcc20-activity-bridge');
+      if (!iframe) {
+        iframe = document.createElement('iframe');
+        iframe.id = 'kcc20-activity-bridge';
+        iframe.src = ORIGIN + '/?dapp=1&bridge=1';
+        iframe.setAttribute('aria-hidden', 'true');
+        iframe.style.cssText = 'position:fixed;width:1px;height:1px;left:0;top:0;opacity:0;border:0;pointer-events:none';
+        (document.body || document.documentElement).appendChild(iframe);
+      }
+      bridgeFrame = iframe;
+      var done = false;
+      var timer = setTimeout(function () {
+        if (done) return;
+        done = true;
+        window.removeEventListener('message', onReady);
+        reject(new Error('KCC20 activity bridge timed out'));
+      }, 20000);
+      function onReady(ev) {
+        if (done) return;
+        if (!ev.data || ev.data.ns !== 'kcc20' || ev.data.type !== 'ready') return;
+        if (ev.origin !== ORIGIN) return;
+        done = true;
+        clearTimeout(timer);
+        window.removeEventListener('message', onReady);
+        bridgeWin = iframe.contentWindow;
+        resolve(bridgeWin);
+      }
+      window.addEventListener('message', onReady);
+      iframe.addEventListener('load', function () {
+        try { iframe.contentWindow.postMessage({ ns: 'kcc20', type: 'hello', from: location.origin }, ORIGIN); } catch (e) {}
+      });
+      try { iframe.contentWindow && iframe.contentWindow.postMessage({ ns: 'kcc20', type: 'hello', from: location.origin }, ORIGIN); } catch (e) {}
+    });
+  }
+
+  function bridgeActivityLog(params) {
+    return ensureActivityBridge().then(function (win) {
+      return new Promise(function (resolve, reject) {
+        var id = uid();
+        pending[id] = {
+          resolve: resolve,
+          reject: reject,
+          timer: setTimeout(function () {
+            if (!pending[id]) return;
+            delete pending[id];
+            reject(new Error('KCC20 Wallet timed out on getActivityLog'));
+          }, 20000)
+        };
+        try {
+          win.postMessage({
+            ns: 'kcc20',
+            type: 'req',
+            id: id,
+            method: 'getActivityLog',
+            params: params || {},
+            from: location.origin,
+            name: document.title || location.hostname
+          }, ORIGIN);
+        } catch (e) {
+          delete pending[id];
+          reject(e);
+        }
+      });
+    });
+  }
+
   /* After Connect the popup closes on purpose. Reads must still work for
      any dApp (Nilla Prepare, TTT balance, …) from the saved session + public APIs. */
   function silentFallback(method, params) {
@@ -380,6 +462,15 @@
       if (!addr) return Promise.reject(new Error('Connect KCC20 Wallet first'));
       return fetchJson(restBase() + '/addresses/' + encodeURIComponent(addr) + '/utxos').then(function (data) {
         return normalizeUtxos(data, addr);
+      });
+    }
+    if (method === 'getActivityLog' || method === 'activityLog') {
+      return bridgeActivityLog(params).catch(function () {
+        var snap = lastState && lastState.activityLog;
+        if (snap && typeof snap === 'object') {
+          return Object.assign({ address: addr, stale: true }, snap);
+        }
+        return { address: addr, count: 0, buys: [], records: [], unpaired: [], stale: true };
       });
     }
     if (method === 'getTokenBalance' || method === 'getKcc20Balance') {
@@ -611,6 +702,12 @@
     },
     getBalance: function (address) {
       return rpc('getBalance', { address: address || '' });
+    },
+    getActivityLog: function (address) {
+      return rpc('getActivityLog', { address: address || '' });
+    },
+    activityLog: function (address) {
+      return rpc('getActivityLog', { address: address || '' });
     },
     getPublicKey: function () {
       return rpc('getPublicKey');

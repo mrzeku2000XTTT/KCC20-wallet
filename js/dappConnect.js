@@ -11,7 +11,8 @@ const HOST_METHODS = [
   'switchNetwork', 'signPskt', 'signPsbt', 'pushTx', 'getUtxoEntries', 'getBalance',
   'getTokenBalance', 'getHoldings', 'getState', 'sendToken', 'sendKcc20', 'payToken', 'payKcc20', 'fundCredits',
   'quoteKron', 'quoteToken', 'buyKron', 'buyToken', 'sellKron', 'sellToken', 'tradeKron', 'tradeToken',
-  'compileVault', 'lockVault', 'compileVaults', 'lockVaults', 'sendKas', 'sendKaspa', 'openWallet'
+  'compileVault', 'lockVault', 'compileVaults', 'lockVaults', 'sendKas', 'sendKaspa', 'openWallet',
+  'getActivityLog', 'activityLog'
 ];
 
 let hooks = null;
@@ -424,8 +425,18 @@ async function walletSnapshot(w) {
     },
     holdings: rows,
     kas: kas ? Number(kas.balance || sompi / 1e8) : Number(sompi || 0) / 1e8,
-    kkdags: kkd ? Number(kkd.balance || 0) : 0
+    kkdags: kkd ? Number(kkd.balance || 0) : 0,
+    activityLog: (typeof hooks.getActivityLog === 'function') ? hooks.getActivityLog(w.address) : { address: w.address, count: 0, buys: [], records: [] }
   };
+}
+
+async function handleGetActivityLog(req) {
+  if (!originAllowed(req.origin)) await handleConnect(req);
+  const w = hooks.getWallet?.();
+  const addr = String(req.params?.address || w?.address || '');
+  if (!addr) throw new Error('Connect KCC20 Wallet first');
+  if (typeof hooks.getActivityLog === 'function') return hooks.getActivityLog(addr);
+  return { address: addr, count: 0, buys: [], records: [], unpaired: [] };
 }
 
 async function handleGetState(req) {
@@ -1052,6 +1063,7 @@ async function dispatch(req) {
   if (method === 'compileVaults' || method === 'lockVaults') return handleCompileVaults(req);
   if (method === 'sendKas' || method === 'sendKaspa') return handleSendKas(req);
   if (method === 'openWallet') return handleOpenWallet(req);
+  if (method === 'getActivityLog' || method === 'activityLog') return handleGetActivityLog(req);
   throw new Error('Unknown method ' + method);
 }
 

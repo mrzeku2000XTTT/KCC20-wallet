@@ -1,5 +1,6 @@
 /* KasWare desktop extension — optional signer. Keys stay in KasWare. */
 import { networkId } from './crypto.js?v=90';
+import { safeSetItem } from './storage.js?v=1';
 
 const STORE = 'kcc20_kasware_v1';
 
@@ -32,7 +33,14 @@ export function loadKaswarePref() {
 }
 
 export function saveKaswarePref(pref) {
-  localStorage.setItem(STORE, JSON.stringify(pref || {}));
+  const slim = {
+    enabled: !!(pref && pref.enabled),
+    address: String((pref && pref.address) || '').slice(0, 80),
+    pubKey: String((pref && pref.pubKey) || '').replace(/^0x/i, '').slice(0, 66)
+  };
+  if (!safeSetItem(STORE, JSON.stringify(slim))) {
+    throw new Error('This browser is out of storage. Open Activity → Notices, then try KasWare again.');
+  }
 }
 
 export function kaswareEnabled() {

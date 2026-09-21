@@ -481,6 +481,7 @@
           <div class="seg" id="act-view">
             <button class="on" data-actview="feed" type="button">Feed</button>
             <button data-actview="log" type="button">Local log</button>
+            <button data-actview="notices" type="button">Notices</button>
           </div>
           <div class="act-log-bar hidden" id="act-log-bar">
             <button class="btn btn-glass" id="btn-export-log" type="button">Export JSON</button>
@@ -945,7 +946,7 @@
   <script type="module">
     import('./js/iframeVault.js?v=122').then(function (mod) {
       return (mod.restoreIframeVault ? mod.restoreIframeVault() : Promise.resolve()).then(function () {
-        return import('./js/app.js?v=252');
+        return import('./js/app.js?v=253');
       });
     }).catch(function (err) {
       console.error(err);

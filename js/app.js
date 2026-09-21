@@ -46,12 +46,13 @@ import {
 } from './receive.js?v=90';
 import { knsResolve, knsPrimary, knsDomainsFor, knsOwnerMatches, knsAppUrl, looksLikeKasDomain, normalizeKasDomain } from './kns.js?v=89';
 import { runPhoneStudio, runServerStudio } from './studio.js?v=89';
+import { safeSetItem, bootReclaim } from './storage.js?v=1';
 import {
   isKaswareInstalled, isDesktopBrowser, kaswareEnabled, kaswareSigning, kaswareConnectedAddress,
   connectKasware, disconnectKasware, bindKaswareEvents, loadKaswarePref, compoundWithKasware,
   ensureKaswareSigner, syncKaswareNetwork, walletIsKaswareChip, autoArmKaswareForWallet,
   fetchKaswareUtxos, sameKasAddr, liveKaswareAccount
-} from './kasware.js?v=216';
+} from './kasware.js?v=217';
 import {
   cookMarkets, cookQuote, cookWrappers, pickWrappedMarketId, cookOrderbook, cookCandles,
   cookDeploy, cookBuildOrder, cookFillOrder, cookSweep, cookWrap, cookMint,
@@ -68,7 +69,7 @@ import {
   ksocialFeeKas
 } from './ksocial.js?v=207';
 
-export const BUILD = '252';
+export const BUILD = '253';
 const DESK_ID_KEY = 'kcc20_desk_id_v1';
 const DESK_VAULT_KEY = 'kcc20_desk_vault_v1';
 
@@ -330,6 +331,8 @@ let tokenActBackfill = false;
 let activityAll = false;
 let activityView = 'feed';
 let activityFeedLimit = 40;
+const NOTE_KEY = 'kcc20_notices_v1';
+const toastedSig = new Set();
 let seenTokens = false;
 let tokenStream = null;
 let kronKickAt = 0;
@@ -580,7 +583,7 @@ function loadWalletList() {
 
 function saveWalletList(list) {
   const next = dedupeWalletList(list || []);
-  localStorage.setItem(WALLETS_KEY, JSON.stringify(next));
+  safeSetItem(WALLETS_KEY, JSON.stringify(next));
   try { schedulePersistIframeVault(); } catch {}
 }
 
@@ -641,7 +644,7 @@ function saveWallet() {
   if (priv) wallet.privKey = priv;
   const prevStore = loadStoredWalletRaw();
   const storePriv = priv || (sameAddrPayload(prevStore?.address, wallet.address) ? hexKey(prevStore?.privKey) : '') || '';
-  localStorage.setItem(STORE_KEY, JSON.stringify({
+  safeSetItem(STORE_KEY, JSON.stringify({
     address: wallet.address, privKey: storePriv || wallet.privKey || '', pubKey: wallet.pubKey
   }));
   try { schedulePersistIframeVault(); } catch {}
@@ -686,7 +689,17 @@ function loadSnaps() {
 }
 
 function persistSnaps() {
-  try { localStorage.setItem(SNAPS_KEY, JSON.stringify(walletSnap)); } catch {}
+  const slim = {};
+  for (const [addr, snap] of Object.entries(walletSnap || {})) {
+    slim[addr] = {
+      sompi: snap.sompi,
+      at: snap.at,
+      kcc: slimTokens(snap.kcc).map((t) => ({ ...t, image: String(t.image || '').length > 180 ? '' : t.image })),
+      krc: slimTokens(snap.krc).map((t) => ({ ...t, image: '' })),
+      txs: (snap.txs || []).slice(0, 8)
+    };
+  }
+  safeSetItem(SNAPS_KEY, JSON.stringify(slim));
 }
 
 function rememberActiveSnap() {
@@ -721,10 +734,12 @@ async function fetchWalletTxs(addr) {
 }
 
 function detectHoldingCredits(walletName, addr, prevList, nextList, protocol) {
+  if (!prevList || !prevList.length) return;
   for (const t of nextList || []) {
     const prev = (prevList || []).find(x =>
       (t.tokenId && x.tokenId === t.tokenId) || (x.protocol === t.protocol && x.ticker === t.ticker)
     );
+    if (!prev) continue;
     let d = 0n;
     try {
       const nextAmt = BigInt(t.balance || '0');
@@ -732,7 +747,12 @@ function detectHoldingCredits(walletName, addr, prevList, nextList, protocol) {
       if (nextAmt > prevAmt) d = nextAmt - prevAmt;
     } catch { continue; }
     if (d <= 0n) continue;
-    toast(`${walletName} received ${formatTokenUnits(d, t.decimals)} ${t.ticker}`);
+    const sig = [addr, t.ticker, d.toString(), protocol || 'kcc20'].join('|');
+    if (toastedSig.has(sig)) continue;
+    toastedSig.add(sig);
+    const title = `${walletName} received ${formatTokenUnits(d, t.decimals)} ${t.ticker}`;
+    if (!pushNotice({ title, tick: t.ticker, dir: 'in', amount: d.toString(), protocol: protocol || t.protocol || 'kcc20' }, addr)) continue;
+    toast(title);
     haptic();
     pushTokenActivity({
       dir: 'in',
@@ -771,12 +791,17 @@ async function refreshAllWalletSnaps({ tokens = false } = {}) {
         const name = w.name || 'Wallet';
         if (grew) {
           const delta = Number(sompi) - Number(prev.sompi);
-          toast(`${name} received ${formatAmount(delta)} KAS`);
-          haptic();
-          pushTokenActivity({
-            dir: 'in', tick: 'KAS', protocol: 'kas',
-            amount: String(delta), decimals: 8, label: 'Received'
-          }, w.address);
+          const title = `${name} received ${formatAmount(delta)} KAS`;
+          const sig = w.address + '|KAS|' + String(delta);
+          if (!toastedSig.has(sig) && pushNotice({ title, tick: 'KAS', dir: 'in', amount: String(delta), protocol: 'kas', sig }, w.address)) {
+            toastedSig.add(sig);
+            toast(title);
+            haptic();
+            pushTokenActivity({
+              dir: 'in', tick: 'KAS', protocol: 'kas',
+              amount: String(delta), decimals: 8, label: 'Received'
+            }, w.address);
+          }
         }
         const next = { ...prev, sompi, at: Date.now() };
         if (tokens || grew) {
@@ -1885,6 +1910,7 @@ function dappHooks() {
 
 async function unlockToHome() {
   markBooted();
+  try { bootReclaim(); } catch {}
   if (wallet?.address) setVaultOwner(wallet.address);
   persistSession();
   purgeDdPayVaults();
@@ -2995,7 +3021,11 @@ function loadTokenActivity(addr) {
 }
 
 function saveTokenActivity(list, addr) {
-  localStorage.setItem(actStoreKey(addr), JSON.stringify((list || []).slice(0, 2000)));
+  const slim = (list || []).slice(0, 120).map((r) => {
+    const image = String(r.image || '');
+    return { ...r, image: image.length > 180 ? '' : image };
+  });
+  safeSetItem(actStoreKey(addr), JSON.stringify(slim));
 }
 
 const LEDGER_KEY = 'kcc20_txlog_v1';
@@ -3011,8 +3041,50 @@ function loadTxLedger(addr) {
   }
 }
 function saveTxLedger(list, addr) {
-  localStorage.setItem(ledgerStoreKey(addr), JSON.stringify((list || []).slice(0, 5000)));
+  const slim = (list || []).slice(0, 250).map((r) => {
+    const image = String(r.image || '');
+    return { ...r, image: image.length > 180 ? '' : image };
+  });
+  safeSetItem(ledgerStoreKey(addr), JSON.stringify(slim));
 }
+function noticeStoreKey(addr) {
+  return NOTE_KEY + ':' + (addr || wallet?.address || '');
+}
+function loadNotices(addr) {
+  try {
+    const raw = JSON.parse(localStorage.getItem(noticeStoreKey(addr)) || '[]');
+    return Array.isArray(raw) ? raw : [];
+  } catch { return []; }
+}
+function saveNotices(list, addr) {
+  safeSetItem(noticeStoreKey(addr), JSON.stringify((list || []).slice(0, 80)));
+}
+function pushNotice(ev, addr) {
+  const use = addr || wallet?.address;
+  if (!use || !ev) return false;
+  const list = loadNotices(use);
+  const sig = String(ev.sig || [ev.tick, ev.dir, ev.amount, ev.title].join('|'));
+  const now = Date.now();
+  const dup = list.find(x => {
+    if (ev.txId && x.txId && x.txId === ev.txId) return true;
+    if (x.sig === sig && Math.abs((x.time || 0) - now) < 15 * 60 * 1000) return true;
+    return false;
+  });
+  if (dup) return false;
+  list.unshift({
+    id: 'n-' + now.toString(36),
+    time: now,
+    title: ev.title || '',
+    tick: ev.tick || '',
+    dir: ev.dir || 'in',
+    amount: ev.amount || '',
+    txId: ev.txId || '',
+    sig
+  });
+  saveNotices(list, use);
+  return true;
+}
+
 function appendTxLedger(row, addr) {
   const use = addr || wallet?.address;
   if (!use || !row) return;
@@ -3444,6 +3516,29 @@ function activityLogPayload(addr) {
   };
 }
 
+function renderNotices() {
+  const box = $('activity-list');
+  if (!box) return;
+  $('act-log-bar')?.classList.add('hidden');
+  const list = activityAll && loadWalletList().length > 1
+    ? loadWalletList().flatMap(w => loadNotices(w.address))
+    : loadNotices(wallet?.address);
+  list.sort((a, b) => (b.time || 0) - (a.time || 0));
+  if (!list.length) {
+    box.innerHTML = `<div class="empty">No notices yet. New receives stamp once — old balances do not replay.</div>`;
+    return;
+  }
+  box.innerHTML = list.map(n => `
+    <div class="tx-log">
+      <div class="meta">
+        <b>${esc(n.title || 'Notice')}</b>
+        <span>${new Date(n.time || Date.now()).toLocaleString()}</span>
+      </div>
+      ${n.txId ? `<div class="log-id"><code>${esc(n.txId)}</code></div>` : ''}
+    </div>
+  `).join('');
+}
+
 function renderLocalLog() {
   const box = $('activity-list');
   if (!box) return;
@@ -3497,6 +3592,10 @@ function renderActivity(txs = []) {
   $('act-view')?.querySelectorAll('button').forEach(b => b.classList.toggle('on', b.dataset.actview === activityView));
   if (activityView === 'log') {
     renderLocalLog();
+    return;
+  }
+  if (activityView === 'notices') {
+    renderNotices();
     return;
   }
   $('act-log-bar')?.classList.add('hidden');
@@ -12309,6 +12408,7 @@ async function init() {
   window.__kccLoad = loadKaspaSdk;
   setClock();
   setInterval(setClock, 1000);
+  try { bootReclaim(); } catch {}
   loadSnaps();
   try { wipeTestDcaNow(); } catch {}
   try { purgeDdPayVaults(); } catch {}

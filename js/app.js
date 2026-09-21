@@ -25,7 +25,7 @@ import {
   newHashlockSecret, checkinHop, currentHop, parseXmssKit, p2shFromRedeemHex, spendXmssVault,
   spendSilverVault, isSilverScriptVault,
   disconnectRpc, buildDcaDrips, sendKasMany, releaseDcaDrip, cancelDcaDrip, isMassError
-} from './tx.js?v=227';
+} from './tx.js?v=228';
 import { bootDappConnect, pingTttDappFrame, pingKasdistroDappFrame, TTT_TREASURY, listConnectedSites, disconnectSite, disconnectAllSites, dappSourceOrigin } from './dappConnect.js?v=203';
 import { changenowEstimate, changenowCreate, changenowWidgetUrl, cnFrom } from './changenow.js?v=180';
 import { schedulePersistIframeVault, bootIframeVaultWatch } from './iframeVault.js?v=122';
@@ -69,7 +69,7 @@ import {
   ksocialFeeKas
 } from './ksocial.js?v=207';
 
-export const BUILD = '254';
+export const BUILD = '255';
 const DESK_ID_KEY = 'kcc20_desk_id_v1';
 const DESK_VAULT_KEY = 'kcc20_desk_vault_v1';
 
@@ -9476,7 +9476,7 @@ async function openCompound() {
       : 'No native KAS coins to compound');
     return;
   }
-  const feeEst = 0.0045 + n * 0.00015;
+  const feeEst = Math.max(0.008, 0.0065 + n * 0.0003);
   if (walletIsKaswareChip(wallet)) autoArmKaswareForWallet(wallet).catch(() => {});
   openCompound._bag = bag;
   openCompound._addr = wallet.address;

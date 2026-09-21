@@ -2309,7 +2309,24 @@ function compoundOutputCount(tx) {
   try { return [...(tx.outputs || [])].length; } catch { return 0; }
 }
 
-async function buildSingleOutputCompound(k, entries, dest, rpc) {
+function compoundMinFee(k, tx, nInputs) {
+  const floor = BigInt(Math.min(4_000_000, 650_000 + Number(nInputs || 1) * 30_000));
+  let need = floor;
+  try {
+    const f = k.calculateTransactionFee(networkId(), tx, 1);
+    if (f != null && BigInt(f) > need) need = BigInt(f);
+  } catch {}
+  try {
+    const m = k.calculateTransactionMass(networkId(), tx, 1);
+    if (m != null) {
+      const byMass = BigInt(m) * 100n;
+      if (byMass > need) need = byMass;
+    }
+  } catch {}
+  return need + 80_000n;
+}
+
+async function buildSingleOutputCompound(k, entries, dest, rpc, feeOverride) {
   const net = networkId();
   const total = entries.reduce((a, e) => a + e.amount, 0n);
   const finish = (tx) => {
@@ -2318,40 +2335,39 @@ async function buildSingleOutputCompound(k, entries, dest, rpc) {
     try { k.updateTransactionMass(net, tx); } catch {}
     return tx;
   };
-  try {
-    const feeRate = await nodeFeeRate(rpc);
-    const built = await k.createTransactions({
-      entries,
-      outputs: [],
-      changeAddress: dest,
-      priorityFee: 0n,
-      feeRate,
-      networkId: net
-    });
-    const pending = (built.transactions || [])[0];
-    const tx = pending?.transaction;
-    if (tx && compoundOutputCount(tx) === 1 && compoundEntryCount(tx) === entries.length) {
-      return finish(tx);
-    }
-  } catch {}
-  let fee = BigInt(Math.min(3_000_000, 550_000 + entries.length * 25_000));
-  if (total <= fee + 10_000n) throw new Error('Balance too small to cover the compound fee');
-  for (let i = 0; i < 8; i++) {
-    const send = total - fee;
-    if (send <= 10_000n) throw new Error('Fee would consume the whole merge');
-    let tx = k.createTransaction(entries, [{ address: dest, amount: send }], 0n, undefined, 1);
-    tx = finish(tx);
-    const nOut = compoundOutputCount(tx);
-    if (nOut === 1) return tx;
-    const kept = [...tx.outputs].reduce((a, o) => a + BigInt(o.value), 0n);
-    fee = total - kept;
-    if (fee < 400_000n) fee += 50_000n;
-    else fee += 50_000n;
-    tx = k.createTransaction(entries, [{ address: dest, amount: total - fee }], 0n, undefined, 1);
-    tx = finish(tx);
-    if (compoundOutputCount(tx) === 1) return tx;
+  const assemble = (fee) => {
+    if (total <= fee + 10_000n) throw new Error('Balance too small to cover the compound fee');
+    let tx = k.createTransaction(entries, [{ address: dest, amount: total - fee }], 0n, undefined, 1);
+    return finish(tx);
+  };
+  let fee = feeOverride != null ? BigInt(feeOverride) : BigInt(Math.min(4_000_000, 650_000 + entries.length * 30_000));
+  if (!feeOverride) {
+    try {
+      const feeRate = await nodeFeeRate(rpc);
+      const built = await k.createTransactions({
+        entries,
+        outputs: [],
+        changeAddress: dest,
+        priorityFee: 0n,
+        feeRate,
+        networkId: net
+      });
+      const pending = (built.transactions || [])[0];
+      const tx = pending?.transaction;
+      if (tx && compoundOutputCount(tx) === 1 && compoundEntryCount(tx) === entries.length) {
+        const paid = total - txOutputSum(finish(tx));
+        fee = paid > fee ? paid : fee;
+      }
+    } catch {}
   }
-  throw new Error('Could not build a one-output merge. Retry Compound.');
+  let tx = assemble(fee);
+  const need = compoundMinFee(k, tx, entries.length);
+  if (need > fee) {
+    fee = need;
+    tx = assemble(fee);
+  }
+  if (compoundOutputCount(tx) !== 1) throw new Error('Could not build a one-output merge. Retry Compound.');
+  return tx;
 }
 
 export async function compoundUtxos({ wallet, utxos, signWithKasware = false }) {
@@ -2383,22 +2399,35 @@ export async function compoundUtxos({ wallet, utxos, signWithKasware = false }) 
   let txId = null;
 
   if (external) {
-    let json = repairSafeJson(tx.serializeToSafeJSON());
-    json = attachUtxosToSafeJson(json, entries, wallet.address);
-    json = repairSafeJson(json);
-    const signInputs = [...tx.inputs].map((_, i) => ({ index: i, sighashType: 1 }));
-    const signedJson = repairSafeJson(await signPsktWithKasware(json, signInputs));
-    const signed = k.Transaction.deserializeFromSafeJSON(signedJson);
-    if (compoundOutputCount(signed) !== 1) {
-      throw new Error('KasWare added a leftover coin. Reject that popup and tap Compound again — merge must stay one UTXO.');
+    let lastErr = '';
+    for (let round = 0; round < 3; round++) {
+      let json = repairSafeJson(tx.serializeToSafeJSON());
+      json = attachUtxosToSafeJson(json, entries, wallet.address);
+      json = repairSafeJson(json);
+      const signInputs = [...tx.inputs].map((_, i) => ({ index: i, sighashType: 1 }));
+      const signedJson = repairSafeJson(await signPsktWithKasware(json, signInputs));
+      const signed = k.Transaction.deserializeFromSafeJSON(signedJson);
+      if (compoundOutputCount(signed) !== 1) {
+        throw new Error('KasWare added a leftover coin. Reject that popup and tap Compound again — merge must stay one UTXO.');
+      }
+      assertKaswareP2pkSigs(signed);
+      try {
+        txId = await submitSignedRpc(k, rpc, url, signed, {
+          sigOpCount: 0,
+          computeBudget: 10,
+          lockTime: 0
+        });
+        tx = signed;
+        break;
+      } catch (e) {
+        lastErr = errText(e);
+        const need = requiredFeeFromError(e);
+        const paid = txInputSum(signed, entries) - txOutputSum(signed);
+        if (!need || need <= paid) throw e;
+        tx = await buildSingleOutputCompound(k, entries, wallet.address, rpc, need + 80_000n);
+      }
     }
-    assertKaswareP2pkSigs(signed);
-    txId = await submitSignedRpc(k, rpc, url, signed, {
-      sigOpCount: 0,
-      computeBudget: 10,
-      lockTime: 0
-    });
-    tx = signed;
+    if (!txId) throw new Error(lastErr || 'KasWare compound broadcast failed');
   } else {
     if (!priv) throw new Error('Need Native key or KasWare to compound');
     let scripts = meetToccataFee(k, tx, priv, entries, 0n, 0);

@@ -69,7 +69,7 @@ import {
   ksocialFeeKas
 } from './ksocial.js?v=207';
 
-export const BUILD = '253';
+export const BUILD = '254';
 const DESK_ID_KEY = 'kcc20_desk_id_v1';
 const DESK_VAULT_KEY = 'kcc20_desk_vault_v1';
 
@@ -3212,7 +3212,21 @@ function loadKnownCells(addr) {
 function saveKnownCells(map, addr) {
   const use = addr || wallet?.address;
   if (!use) return;
-  localStorage.setItem(CELL_KEY + ':' + use, JSON.stringify(map || {}));
+  safeSetItem(CELL_KEY + ':' + use, JSON.stringify(map || {}));
+}
+
+const LASTBAL_KEY = 'kcc20_lastbal_v1';
+function lastBalKey(addr) {
+  return LASTBAL_KEY + ':' + (addr || wallet?.address || '');
+}
+function loadLastBals(addr) {
+  try {
+    const raw = JSON.parse(localStorage.getItem(lastBalKey(addr)) || '{}');
+    return raw && typeof raw === 'object' ? raw : {};
+  } catch { return {}; }
+}
+function saveLastBals(map, addr) {
+  safeSetItem(lastBalKey(addr), JSON.stringify(map || {}));
 }
 
 function cellOutId(c) {
@@ -5554,40 +5568,48 @@ async function refreshTokenHoldings() {
     tokenLoadErr = errText(e);
   }
   const credits = [];
-  if (seenTokens || before.length > 0) {
-    const hushToast = Date.now() < hushTokenToastsUntil;
-    const after = [...kccHoldings, ...krcHoldings];
-    for (const t of after) {
-      const prev = before.find(x => (t.tokenId && x.tokenId === t.tokenId) || (x.protocol === t.protocol && x.ticker === t.ticker));
-      let d = 0n;
-      try {
-        const nextAmt = BigInt(t.balance || '0');
-        const prevAmt = BigInt(prev?.balance || '0');
-        if (nextAmt > prevAmt) d = nextAmt - prevAmt;
-      } catch { continue; }
-      if (d <= 0n) continue;
-      if (!hushToast) {
-        toast(`Received ${formatTokenUnits(d, t.decimals)} ${t.ticker}`);
-        haptic();
-      }
-      pushTokenActivity({
-        dir: 'in',
-        tick: t.ticker,
-        protocol: t.protocol || 'kcc20',
-        amount: d.toString(),
-        decimals: t.decimals,
-        label: 'Received',
-        note: hushToast ? '' : 'Incoming transfer'
-      });
-      credits.push({ tick: t.ticker, amount: d.toString(), protocol: t.protocol });
-      const recv = currentReceive(wallet, { tick: t.ticker });
-      if (recv) markAddressUsed(wallet, recv.address, true);
-      saveWallet();
-      setLiveFast(true);
-      clearTimeout(tokenFastOff);
-      tokenFastOff = setTimeout(() => setLiveFast(false), 25000);
+  const hushToast = Date.now() < hushTokenToastsUntil;
+  const after = [...kccHoldings, ...krcHoldings];
+  const last = loadLastBals(addr);
+  for (const t of after) {
+    const tick = String(t.ticker || '').toUpperCase();
+    if (!tick) continue;
+    let nextAmt = 0n;
+    try { nextAmt = BigInt(t.balance || '0'); } catch { continue; }
+    const had = Object.prototype.hasOwnProperty.call(last, tick);
+    let prevAmt = 0n;
+    try { prevAmt = had ? BigInt(last[tick] || '0') : nextAmt; } catch { prevAmt = nextAmt; }
+    last[tick] = nextAmt.toString();
+    if (!had) continue;
+    if (nextAmt <= prevAmt) continue;
+    const d = nextAmt - prevAmt;
+    const title = `Received ${formatTokenUnits(d, t.decimals)} ${tick}`;
+    const sig = addr + '|' + tick + '|' + d.toString();
+    if (toastedSig.has(sig)) continue;
+    toastedSig.add(sig);
+    if (!pushNotice({ title, tick, dir: 'in', amount: d.toString(), protocol: t.protocol || 'kcc20', sig }, addr)) continue;
+    if (!hushToast) {
+      toast(title);
+      haptic();
     }
+    pushTokenActivity({
+      dir: 'in',
+      tick,
+      protocol: t.protocol || 'kcc20',
+      amount: d.toString(),
+      decimals: t.decimals,
+      label: 'Received',
+      note: hushToast ? '' : 'Incoming transfer'
+    });
+    credits.push({ tick, amount: d.toString(), protocol: t.protocol });
+    const recv = currentReceive(wallet, { tick });
+    if (recv) markAddressUsed(wallet, recv.address, true);
+    saveWallet();
+    setLiveFast(true);
+    clearTimeout(tokenFastOff);
+    tokenFastOff = setTimeout(() => setLiveFast(false), 25000);
   }
+  saveLastBals(last, addr);
   seenTokens = true;
   rememberActiveSnap();
   ingestNewKcc20Cells().catch(() => {});

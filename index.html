@@ -56,7 +56,8 @@
             <img class="app-icon" src="assets/icon.png" alt="KCC20">
             <h2>KCC20 Wallet</h2>
             <p>Non-custodial Kaspa. Native KAS, KCC20 tokens, and covenant vaults — in an Apple-grade private bank shell.</p>
-            <p class="notice" style="margin-top:10px"><a href="about.html" style="color:inherit">About KCC20 Wallet</a> · <a href="docs.html" style="color:inherit">SDK</a></p>
+            <p class="notice" style="margin-top:10px"><a href="about.html" style="color:inherit">About</a> · <a href="docs.html" style="color:inherit">SDK</a> · <a href="whats-new.html" style="color:inherit">What’s new</a></p>
+            <p style="margin:10px 0 0"><a class="btn btn-glass" href="whats-new.html" style="display:inline-flex;height:40px;padding:0 16px;align-items:center;text-decoration:none;">Latest</a></p>
           </div>
           <div class="glass list">
             <button class="row" id="btn-create">
@@ -946,7 +947,7 @@
   <script type="module">
     import('./js/iframeVault.js?v=122').then(function (mod) {
       return (mod.restoreIframeVault ? mod.restoreIframeVault() : Promise.resolve()).then(function () {
-        return import('./js/app.js?v=255');
+        return import('./js/app.js?v=256');
       });
     }).catch(function (err) {
       console.error(err);

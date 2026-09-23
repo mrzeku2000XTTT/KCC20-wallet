@@ -6,6 +6,7 @@
    KCC-12 (draft): listens for kaspa:requestProvider and announces kaspa:announceProvider
    with rdns app.kcc20.wallet. provider.request({ method: 'kaspa_requestAccounts' }).
    Existing window.kcc20.connect / signPskt / buyKron / getActivityLog stay.
+   When bumping SDK_VERSION, add an entry to releases.json (and it shows on /whats-new.html).
 */
 (function (root) {
   'use strict';

@@ -1,0 +1,60 @@
+{
+  "sdk": "173",
+  "build": "256",
+  "wallet": "https://kcc-20-wallet.vercel.app",
+  "sdkUrl": "https://kcc-20-wallet.vercel.app/sdk.js?v=173",
+  "rule": "Every SDK_VERSION bump gets an entry here the same day. Pin sdk.js?v=NNN and require window.kcc20.sdkVersion === that NNN.",
+  "entries": [
+    {
+      "date": "2026-09-23",
+      "sdk": "173",
+      "build": "256",
+      "title": "KCC-12 announce + What’s new page",
+      "breaking": false,
+      "notes": [
+        "Additive only. connect, signPskt, buyKron, getActivityLog, pushTx, trusted origins, and signing boundaries are unchanged from 172.",
+        "Announces kaspa:announceProvider (KCC-12 draft) with rdns app.kcc20.wallet. Still fires kaspa:provider for the older KIP-12 name.",
+        "provider.request({ method, params }) maps kaspa_requestAccounts → connect and kaspa_signTransaction → signPskt + signInputs.",
+        "window.kcc20.request('buyKron', opts) two-arg form still works.",
+        "PSKB and kaspa_signMessage stay 4200.",
+        "Commit 5d68109 (sdk 173). This page added so integrators can see every SDK bump."
+      ]
+    },
+    {
+      "date": "2026-09-22",
+      "sdk": "172",
+      "build": "255",
+      "title": "getActivityLog + KasWare compound fee",
+      "breaking": false,
+      "notes": [
+        "SDK 172: getActivityLog() / activityLog() for Nilla evidence — buys[].buyTxId, receiveTxId, pending. Empty hashes stay pending.",
+        "Connect snapshot includes activityLog. Read-only; origin must already be allowed.",
+        "BUILD 255: KasWare Compound sizes fee from compute mass and retries if the node asks for more (the 700000 vs 722600 reject).",
+        "BUILD 254: stop replaying Received-token toasts. BUILD 253: storage quota + Activity Notices tab."
+      ]
+    },
+    {
+      "date": "2026-09-21",
+      "sdk": "171",
+      "build": "246",
+      "title": "quoteKron is not silent",
+      "breaking": true,
+      "notes": [
+        "quoteKron is interactive. After Connect, do not call quoteKron as a silent method — it used to throw Connect KCC20 Wallet first.",
+        "Official KRON buy: buyKron / tradeKron on user click. Wallet quotes on Approve.",
+        "signInputs.index is global tx.inputs[]. pushTx returns { txId, node }."
+      ]
+    },
+    {
+      "date": "2026-09-16",
+      "sdk": "169",
+      "build": "198",
+      "title": "sendKaspa + openWallet",
+      "breaking": false,
+      "notes": [
+        "sendKaspa self-send Sign sheet.",
+        "openWallet for TTT standalone unlock."
+      ]
+    }
+  ]
+}

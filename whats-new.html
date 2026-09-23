@@ -1,0 +1,75 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>What’s new — KCC20 Wallet / Scorpion SDK</title>
+  <meta name="description" content="KCC20 Wallet release notes: SDK versions, BUILD numbers, breaking changes. Pin sdk.js?v=173.">
+  <link rel="canonical" href="https://kcc-20-wallet.vercel.app/whats-new.html">
+  <link rel="icon" href="assets/icon.png">
+  <style>
+    :root { color-scheme: dark; --gold:#c9a36a; --bg:#0b0b0c; --card:#141416; --muted:rgba(235,235,245,.7); --line:rgba(255,255,255,.1); }
+    * { box-sizing: border-box; }
+    body { margin:0; font:16px/1.55 -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif; background:var(--bg); color:#f5f5f7; }
+    a { color:var(--gold); }
+    header { border-bottom:1px solid var(--line); padding:18px 22px; display:flex; gap:14px; align-items:center; flex-wrap:wrap; }
+    header img { width:36px; height:36px; border-radius:10px; }
+    nav { display:flex; gap:14px; margin-left:auto; font-size:13px; }
+    main { max-width:760px; margin:0 auto; padding:32px 20px 80px; }
+    h1 { font-size:34px; letter-spacing:-.6px; margin:0 0 10px; }
+    .pills { display:flex; gap:8px; flex-wrap:wrap; margin:14px 0 22px; }
+    .pill { font-size:12px; font-weight:700; padding:5px 10px; border-radius:999px; background:#2a2318; color:var(--gold); }
+    .entry { background:var(--card); border:1px solid var(--line); border-radius:16px; padding:18px 18px 8px; margin:0 0 16px; }
+    .entry h2 { font-size:18px; margin:0 0 6px; }
+    .meta { font-size:13px; color:var(--muted); margin-bottom:10px; }
+    .break { color:#f3c07a; font-size:11px; font-weight:800; letter-spacing:.4px; text-transform:uppercase; }
+    ul { margin:0 0 14px; padding-left:18px; color:var(--muted); }
+    li { margin:0 0 8px; }
+    code { font-family:ui-monospace,Menlo,Consolas,monospace; font-size:13px; background:#1c1c1e; padding:2px 6px; border-radius:6px; color:#f3e2bf; }
+  </style>
+</head>
+<body>
+  <header>
+    <img src="assets/icon.png" alt="">
+    <div><b>KCC20 Wallet</b><br><span style="color:var(--muted);font-size:13px">Release notes</span></div>
+    <nav>
+      <a href="/">Wallet</a>
+      <a href="about.html">About</a>
+      <a href="docs.html">SDK</a>
+      <a href="https://github.com/mrzeku2000XTTT/KCC20-wallet">GitHub</a>
+    </nav>
+  </header>
+  <main>
+    <h1>What’s new</h1>
+    <p style="color:var(--muted)">Every SDK bump is listed here the same day. Pin <code>sdk.js?v=NNN</code> and require <code>window.kcc20.sdkVersion === that NNN</code>. Fail closed on mismatch.</p>
+    <div class="pills" id="pills">
+      <span class="pill">SDK 173</span>
+      <span class="pill">BUILD 256</span>
+    </div>
+    <div id="feed">
+      <article class="entry">
+        <h2>KCC-12 announce + this page</h2>
+        <div class="meta">2026-09-23 · SDK <code>173</code> · BUILD <code>256</code></div>
+        <ul>
+          <li>Additive. <code>connect</code>, <code>signPskt</code>, <code>buyKron</code>, <code>getActivityLog</code>, <code>pushTx</code>, origins, and signing boundaries are unchanged from 172.</li>
+          <li>Announces <code>kaspa:announceProvider</code> (KCC-12 draft) with <code>rdns: app.kcc20.wallet</code>. Still fires <code>kaspa:provider</code>.</li>
+          <li><code>provider.request({ method, params })</code> maps <code>kaspa_requestAccounts</code> → connect and <code>kaspa_signTransaction</code> → existing <code>signPskt</code> + <code>signInputs</code>.</li>
+          <li>Commit <code>5d68109</code>.</li>
+        </ul>
+      </article>
+    </div>
+  </main>
+  <script>
+    fetch('releases.json?v=' + Date.now()).then(function (r) { return r.json(); }).then(function (data) {
+      var pills = document.getElementById('pills');
+      pills.innerHTML = '<span class="pill">SDK ' + data.sdk + '</span><span class="pill">BUILD ' + data.build + '</span>';
+      document.getElementById('feed').innerHTML = (data.entries || []).map(function (e) {
+        var notes = (e.notes || []).map(function (n) { return '<li>' + n.replace(/</g, '&lt;') + '</li>'; }).join('');
+        return '<article class="entry"><h2>' + (e.title || '') + '</h2><div class="meta">' +
+          (e.date || '') + ' · SDK <code>' + (e.sdk || '—') + '</code> · BUILD <code>' + (e.build || '—') + '</code>' +
+          (e.breaking ? ' · <span class="break">breaking</span>' : '') + '</div><ul>' + notes + '</ul></article>';
+      }).join('');
+    }).catch(function () {});
+  </script>
+</body>
+</html>

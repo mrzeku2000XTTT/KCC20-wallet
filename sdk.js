@@ -1,12 +1,15 @@
 /* KCC20 Wallet dApp SDK
    Load from the hosted PWA:
-     <script src="https://kcc-20-wallet.vercel.app/sdk.js"></script>
+     <script src="https://kcc-20-wallet.vercel.app/sdk.js?v=173"></script>
    Then: await window.kcc20.connect()
    Keys never leave the wallet origin. This script only opens the PWA and talks via postMessage.
+   KCC-12 (draft): listens for kaspa:requestProvider and announces kaspa:announceProvider
+   with rdns app.kcc20.wallet. provider.request({ method: 'kaspa_requestAccounts' }).
+   Existing window.kcc20.connect / signPskt / buyKron / getActivityLog stay.
 */
 (function (root) {
   'use strict';
-  var SDK_VERSION = '172';
+  var SDK_VERSION = '173';
   if (root.kcc20 && root.kcc20.isKcc20 && String(root.kcc20.sdkVersion || '') === SDK_VERSION) return;
 
   function scriptOrigin() {
@@ -938,18 +941,91 @@
   var kipIcon = 'data:image/svg+xml,' + encodeURIComponent(
     '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64"><rect width="64" height="64" rx="14" fill="#c9a36a"/><text x="32" y="42" text-anchor="middle" font-size="26" font-family="system-ui,sans-serif" fill="#1a140c">K</text></svg>'
   );
+  var legacyRequest = api.request;
+  function toKcc12Net(n) {
+    n = String(n || '');
+    if (/testnet/.test(n)) return 'testnet-10';
+    return 'mainnet';
+  }
+  function fromKcc12Net(n) {
+    n = String(n || '');
+    if (n === 'testnet-10' || /testnet/.test(n)) return 'kaspa_testnet_10';
+    return 'kaspa_mainnet';
+  }
+  function providerError(code, message) {
+    var e = new Error(message || 'Provider error');
+    e.code = code;
+    e.name = 'ProviderRpcError';
+    return e;
+  }
+  function firstParam(params) {
+    if (params == null) return {};
+    if (Array.isArray(params)) return params.length ? params[0] : {};
+    return params;
+  }
+  function asTxJson(tx) {
+    if (tx == null) return '';
+    if (typeof tx === 'string') return tx;
+    return String(tx.txJsonString || tx.signedTx || JSON.stringify(tx));
+  }
+  function kcc12Request(method, params) {
+    var m = String(method || '');
+    var p = firstParam(params);
+    if (m === 'kaspa_requestAccounts' || m === 'wallet_requestPermissions') {
+      return api.connect();
+    }
+    if (m === 'kaspa_accounts') {
+      return api.getAccounts();
+    }
+    if (m === 'kaspa_networkId') {
+      return api.getNetwork().then(toKcc12Net);
+    }
+    if (m === 'wallet_switchNetwork') {
+      return api.switchNetwork(fromKcc12Net(p.networkId || p.network || p)).then(function () { return null; });
+    }
+    if (m === 'wallet_getPermissions') {
+      if (!accounts.length) return Promise.resolve([]);
+      return Promise.resolve([{
+        invoker: (typeof location !== 'undefined' && location.origin) || '',
+        parentCapability: 'kaspa_accounts',
+        caveats: [{ type: 'restrictReturnedAccounts', value: accounts.slice() }]
+      }]);
+    }
+    if (m === 'wallet_revokePermissions') {
+      return api.disconnect().then(function () { return null; });
+    }
+    if (m === 'kaspa_signTransaction') {
+      var txJson = asTxJson(p.transaction || p.txJsonString || p);
+      return api.signPskt(txJson, { signInputs: p.signInputs || p.sign_inputs || [] });
+    }
+    if (m === 'kaspa_sendRawTransaction') {
+      return api.pushTx(asTxJson(p.transaction || p)).then(function (r) {
+        return (r && (r.txId || r.txid)) || r;
+      });
+    }
+    if (m === 'kaspa_signPskb' || m === 'kaspa_sendPskb' || m === 'kaspa_sendRawPskb') {
+      return Promise.reject(providerError(4200, 'PSKB is not on this KCC20 build. Use kaspa_signTransaction with signInputs.'));
+    }
+    if (m === 'kaspa_signMessage') {
+      return Promise.reject(providerError(4200, 'kaspa_signMessage (KIP-5) is not on this KCC20 build yet.'));
+    }
+    if (m === 'app.kcc20.wallet_buyKron' || m === 'buyKron') return api.buyKron(p);
+    if (m === 'app.kcc20.wallet_getActivityLog' || m === 'getActivityLog') return api.getActivityLog(p.address);
+    if (m === 'app.kcc20.wallet_sendKas' || m === 'sendKaspa') return api.sendKaspa(p);
+    if (m.indexOf('kaspa_') !== 0 && m.indexOf('wallet_') !== 0 && typeof legacyRequest === 'function') {
+      return legacyRequest(m, p);
+    }
+    return Promise.reject(providerError(4200, 'Unsupported method ' + m));
+  }
+  api.request = function (a, b) {
+    if (a && typeof a === 'object' && a.method) return kcc12Request(a.method, a.params);
+    return legacyRequest(a, b);
+  };
   var kipProvider = {
     requestAccounts: function () { return api.connect(); },
     getAccounts: function () { return api.getAccounts(); },
-    getNetwork: function () {
-      return api.getNetwork().then(function (n) {
-        n = String(n || '');
-        if (/testnet/.test(n)) return 'testnet-10';
-        if (n === 'mainnet' || n === 'kaspa_mainnet') return 'mainnet';
-        return n || 'mainnet';
-      });
-    },
-    switchNetwork: function (id) { return api.switchNetwork(id); },
+    getNetwork: function () { return api.getNetwork().then(toKcc12Net); },
+    switchNetwork: function (id) { return api.switchNetwork(fromKcc12Net(id)); },
     getPublicKey: function () { return api.getPublicKey(); },
     getUtxoEntries: function (address) { return api.getUtxoEntries(address); },
     getBalance: function (address) { return api.getBalance(address); },
@@ -957,25 +1033,38 @@
     signPskt: function (a, b) { return api.signPskt(a, b); },
     pushTx: function (json) { return api.pushTx(json); },
     disconnect: function () { return api.disconnect(); },
+    request: function (args) {
+      if (args && typeof args === 'object' && args.method) return kcc12Request(args.method, args.params);
+      return kcc12Request(arguments[0], arguments[1]);
+    },
     on: on,
     removeListener: off
   };
-  function announceKip12() {
+  function announceProviders() {
     try {
-      var info = Object.freeze({
+      var kcc12Info = Object.freeze({
+        uuid: kipUuid,
+        name: 'KCC20 Wallet',
+        icon: kipIcon,
+        rdns: 'app.kcc20.wallet'
+      });
+      var kcc12Detail = Object.freeze({ info: kcc12Info, provider: kipProvider });
+      root.dispatchEvent(new CustomEvent('kaspa:announceProvider', { detail: kcc12Detail }));
+      var kipInfo = Object.freeze({
         id: 'kcc20-wallet',
         name: 'KCC20 Wallet',
         icon: kipIcon,
-        methods: ['kaspa:signPskt', 'kaspa:requestAccounts'],
+        methods: ['kaspa:signPskt', 'kaspa:requestAccounts', 'kaspa_signTransaction'],
         uuid: kipUuid,
         rdns: 'app.kcc20.wallet'
       });
-      var detail = Object.freeze({ info: info, provider: kipProvider });
-      root.dispatchEvent(new CustomEvent('kaspa:provider', { detail: detail }));
+      root.dispatchEvent(new CustomEvent('kaspa:provider', {
+        detail: Object.freeze({ info: kipInfo, provider: kipProvider })
+      }));
     } catch (e) {}
   }
   try {
-    root.addEventListener('kaspa:requestProvider', announceKip12);
-    announceKip12();
+    root.addEventListener('kaspa:requestProvider', announceProviders);
+    announceProviders();
   } catch (e) {}
 })(typeof window !== 'undefined' ? window : this);

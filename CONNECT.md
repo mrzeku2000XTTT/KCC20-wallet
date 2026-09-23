@@ -7,9 +7,9 @@ SDK: https://kcc-20-wallet.vercel.app/sdk.js?v=169
 Demo: https://kcc-20-wallet.vercel.app/dapp-demo.html  
 Wallet app: https://github.com/mrzeku2000XTTT/KCC20-wallet
 
-KCC20 Wallet is a **hosted PWA**. It is **not** a Google/Chrome extension. Keys never leave the wallet origin. A dApp (Nilla, TTT, or yours) **builds the unsigned PSKT**, then hands it to this wallet. The user reviews an Approve sheet and PIN-signs (or KasWare, if they turned that on).
+KCC20 Wallet is a **hosted PWA**. It is **not** a Google/Chrome extension. Keys never leave the wallet origin. A dApp (TTT, KasDistro, or yours) **builds the unsigned PSKT**, then hands it to this wallet. The user reviews an Approve sheet and PIN-signs (or KasWare, if they turned that on).
 
-This is the same model Nilla asked Tap2Tip for: find the route, build the tx, wallet signs.
+This is the same model: find the route, build the tx, wallet signs.
 
 ## What exists today
 
@@ -96,13 +96,13 @@ Scrapeable page: https://kcc-20-wallet.vercel.app/kasdistro.html
 KasDistro pays **KAS to many `kaspa:q` addresses**. They load `sdk.js?v=169`, call `connect()` on a user click, then either:
 
 - `sendKaspa({ to, amount })` for one recipient, or
-- build one unsigned Safe JSON with many outputs and `signPskt` + `pushTx` (Nilla-style: they build, we sign).
+- build one unsigned Safe JSON with many outputs and `signPskt` + `pushTx` (they build, we sign).
 
 Do **not** use `buyKron` or `sendToken` for KAS distro. Keys never leave the PWA.
 
 ## What this is not
 
 - Not a Chrome Web Store extension. No `chrome.runtime`.
-- Not Tap2Tip. If Tap2Tip has no public PSKT/KIP-12 docs, do not block Nilla on them — KCC20 already does this handoff.
+- Not Tap2Tip. KCC20 already does the builder PSKT handoff.
 - Not a hosted signer. If the PWA is killed or locked, signing stops until the user reopens it.
-- KasWare PSKT issues (extension-only, input-index / Safe JSON mismatches) are why native PIN sign exists. Prefer native KCC20 for Nilla.
+- KasWare PSKT issues (extension-only, input-index / Safe JSON mismatches) are why native PIN sign exists. Prefer native KCC20 for builder PSKTs.

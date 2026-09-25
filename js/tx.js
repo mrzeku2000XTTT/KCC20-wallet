@@ -1975,8 +1975,6 @@ function attachUtxosToSafeJson(json, entries, address) {
     const prev = inp.previousOutpoint || inp.previous_outpoint || inp.previousOutPoint || {};
     const id = outpointId(prev.transactionId || prev.transaction_id);
     let e = map.get(id + ':' + Number(prev.index ?? 0));
-    if (!e && entries[i]) e = entries[i];
-    if (!e && entries.length === 1) e = entries[0];
     if (!e) { missing += 1; continue; }
     const script = hexish(e.scriptPublicKey?.script || e.scriptPublicKey);
     const blob = {
@@ -3038,10 +3036,18 @@ export async function sendKcc20({ wallet, dest, token, amountHuman, utxos, onSta
       const tx = asm.transaction;
       const fundIdx = asm.fundingInputIndexes || [];
       const useKw = kaswareSigning(wallet);
+      const covEntries = selected.map((p) => ({
+        address: wallet.address,
+        outpoint: { transactionId: p.transactionId, index: p.index },
+        amount: p.value,
+        scriptPublicKey: p.spk || p.scriptPublicKey,
+        blockDaaScore: 0,
+        isCoinbase: false
+      }));
       if (useKw) {
         onStatus?.('Approve the KAS fee input in KasWare…');
         let json = repairSafeJson(tx.serializeToSafeJSON());
-        json = attachUtxosToSafeJson(json, fundingEntries, wallet.address);
+        json = attachUtxosToSafeJson(json, [...covEntries, ...fundingEntries], wallet.address);
         json = repairSafeJson(json);
         const signInputs = fundIdx.map((index) => ({ index, sighashType: 1 }));
         const signedJson = repairSafeJson(await signPsktWithKasware(json, signInputs));
@@ -3079,9 +3085,17 @@ export async function sendKcc20({ wallet, dest, token, amountHuman, utxos, onSta
         );
         txId = submitted?.transactionId || submitted || tx.id;
       } catch (e) {
-        if (useKw && /false stack|verify the signature script/i.test(errText(e))) {
+        if (useKw && /false stack|verify the signature script|verification failed/i.test(errText(e))) {
           const keyHex = cleanPrivHex(wallet.privKey);
+          let keyOk = false;
           if (keyHex) {
+            try {
+              const trial = new k.PrivateKey(keyHex);
+              const addr = String(k.addressFromScriptPublicKey(k.payToAddressScript(trial.toPublicKey()), networkId()));
+              keyOk = addr === String(wallet.address);
+            } catch {}
+          }
+          if (keyOk) {
             onStatus?.('KasWare sig failed — signing the fee input with this wallet’s key…');
             const key = new k.PrivateKey(keyHex);
             const inputs = [...tx.inputs];

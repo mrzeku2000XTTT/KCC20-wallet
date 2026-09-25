@@ -1,6 +1,7 @@
-/* Max's vprog-tictactoe DA lobby (biryukovmaxim/vprog-tictactoe).
-   Reads the testing lane. Create/Join/Turn stay encoder-wasm carriers;
-   this wallet shows live state and the PIN key's rollup id. */
+/* Max's vprog-tictactoe DA lobby + TN10 encoder carriers (same as izio). */
+import { vprogCreate, vprogJoin, vprogTurn, vprogRollupId, vprogHexKey } from './vprogLane.js?v=1';
+import { isTestnet } from './crypto.js?v=100';
+
 const DA_KEY = 'kcc20_vprog_da_v1';
 const PUBLIC_DA = 'https://vprogs-tt.izio.fr';
 const PROXY = '/vprog-tt';
@@ -68,7 +69,9 @@ export async function loadVprogLobby(wallet) {
     getJson('/api/games?status=playing&limit=24').then(gamesOf).catch(() => []),
     getJson('/api/games?status=finished&limit=12').then(gamesOf).catch(() => [])
   ]);
-  const uid = vprogUserId(wallet);
+  let uid = '';
+  try { uid = await vprogRollupId(wallet); } catch {}
+  if (!uid) uid = vprogUserId(wallet);
   let account = { exists: false };
   if (uid) {
     try { account = await getJson('/api/accounts/' + uid); } catch { account = { exists: false }; }
@@ -99,27 +102,43 @@ function mark(n) {
   return '';
 }
 
-function boardHtml(board, pending) {
+function daIsMyTurn(g, uid) {
+  if (Number(g.state) !== 1 || !uid) return false;
+  const seat = g.players?.[0] === uid ? 0 : (g.players?.[1] === uid ? 1 : -1);
+  if (seat < 0) return false;
+  const round = Number(g.round_wins?.[0] || 0) + Number(g.round_wins?.[1] || 0) + Number(g.draws || 0);
+  return seatToMove(Number(g.creator_mark || 1), round, g.board || []) === seat;
+}
+
+function boardHtml(board, { pending, playable, gameId } = {}) {
   const cells = Array.isArray(board) ? board : [];
   const bits = [];
   for (let i = 0; i < 9; i++) {
     const ghost = pending && pending.cell === i ? ' ttt-cell-wait' : '';
-    bits.push(`<button type="button" class="ttt-cell${ghost}" data-vprog-cell="${i}" disabled>${mark(cells[i])}</button>`);
+    const can = playable && !cells[i];
+    const dis = can ? '' : ' disabled';
+    const extra = can ? ` data-vprog-turn="${esc(gameId)}:${i}"` : '';
+    bits.push(`<button type="button" class="ttt-cell${ghost}${can ? ' play' : ''}"${dis}${extra}>${mark(cells[i])}</button>`);
   }
   return `<div class="ttt-board">${bits.join('')}</div>`;
 }
 
-function gameRow(g, uid) {
+function gameRow(g, uid, live) {
   const mine = uid && (g.players?.[0] === uid || g.players?.[1] === uid);
   const a = shortHex(g.players?.[0]);
   const b = g.players?.[1] ? shortHex(g.players?.[1]) : 'open seat';
+  const join = live && Number(g.state) === 0 && uid && g.players?.[0] !== uid
+    ? `<button type="button" class="btn btn-gold" data-vprog-join="${esc(g.id)}">Join ${esc(kas(g.stake))}</button>`
+    : '';
+  const playable = live && daIsMyTurn(g, uid);
   return `<article class="vprog-game${mine ? ' mine' : ''}" data-vprog-game="${esc(g.id)}">
     <div class="vprog-game-h">
       <b>${esc(g.state_name || 'Game')}</b>
       <span>${esc(kas(g.stake))} · ${Number(g.rounds_total || 1)} round${Number(g.rounds_total) === 1 ? '' : 's'}</span>
     </div>
-    ${boardHtml(g.board)}
-    <p class="vprog-seats">${esc(a)} vs ${esc(b)}${mine ? ' · you' : ''}</p>
+    ${boardHtml(g.board, { playable, gameId: g.id })}
+    <p class="vprog-seats">${esc(a)} vs ${esc(b)}${mine ? ' · you' : ''}${playable ? ' · your turn' : ''}</p>
+    ${join}
   </article>`;
 }
 
@@ -136,16 +155,19 @@ export function renderVprogLobby(root, data, { network } = {}) {
   const uid = data.uid || '';
   const acc = data.account || {};
   const tn = String(network || '');
-  const netNote = /testnet/i.test(tn)
-    ? 'This wallet is on TN10 — same net as the public testing lane.'
-    : 'This wallet is on mainnet. The public testing lane is TN10 (kaspatest). Switch Network in You to sit on the same chain.';
+  const live = isTestnet() && !!vprogHexKey(data.wallet);
+  const netNote = live
+    ? 'TN10 live. Create / Join / tap your turn spends TN10 KAS the same way izio does — PIN signs the carrier, keys stay here.'
+    : (/testnet/i.test(tn)
+      ? 'TN10 is on, but this chip has no in-app PIN key. Import the hex or use a native wallet to spend.'
+      : 'Switch You → Network to testnet-10, then Create / Join with PIN. Mainnet cannot play this lane.');
   const bal = acc.exists && acc.balance != null ? kas(acc.balance) : 'no L2 account yet';
   const open = data.games?.open || [];
   const playing = data.games?.playing || [];
   const finished = data.games?.finished || [];
   const mine = [...open, ...playing, ...finished].filter(g => uid && (g.players?.[0] === uid || g.players?.[1] === uid));
   const html = `
-    <p class="muted" style="text-align:left;padding:0 0 10px">${esc(netNote)} These boards refresh from the testing lane. Tapping them does nothing — play the Practice board above.</p>
+    <p class="muted" style="text-align:left;padding:0 0 10px">${esc(netNote)}</p>
     <div class="kv"><span class="k">Lane</span><span class="v">${esc(shortHex(st.lane_subnet))}</span></div>
     <div class="kv"><span class="k">Covenant</span><span class="v">${esc(shortHex(st.covenant_id))}</span></div>
     <div class="kv"><span class="k">L2 tip</span><span class="v">${esc(st.l2_tip ?? '—')}</span></div>
@@ -156,16 +178,17 @@ export function renderVprogLobby(root, data, { network } = {}) {
       <button type="button" class="btn btn-glass" id="vprog-copy-id">Copy rollup id</button>
       <button type="button" class="btn btn-glass" id="vprog-copy-dep">Copy deposit addr</button>
       <button type="button" class="btn btn-gold" id="vprog-refresh">Refresh</button>
+      ${live ? '<button type="button" class="btn btn-gold" id="vprog-create">Create 0.5 KAS · 3 rounds</button>' : ''}
     </div>
     <p class="muted" style="text-align:left;padding:8px 0 0">Deposit address (covenant P2SH): <code id="vprog-dep">${esc(st.deposit_address || '')}</code></p>
     <h3 class="vprog-h">Your games</h3>
-    ${mine.length ? mine.map(g => gameRow(g, uid)).join('') : '<p class="empty">No match seated with this key yet.</p>'}
+    ${mine.length ? mine.map(g => gameRow(g, uid, live)).join('') : '<p class="empty">No match seated with this key yet.</p>'}
     <h3 class="vprog-h">Open</h3>
-    ${open.length ? open.map(g => gameRow(g, uid)).join('') : '<p class="empty">No open games.</p>'}
+    ${open.length ? open.map(g => gameRow(g, uid, live)).join('') : '<p class="empty">No open games.</p>'}
     <h3 class="vprog-h">Playing</h3>
-    ${playing.length ? playing.map(g => gameRow(g, uid)).join('') : '<p class="empty">No live boards.</p>'}
+    ${playing.length ? playing.map(g => gameRow(g, uid, live)).join('') : '<p class="empty">No live boards.</p>'}
     <h3 class="vprog-h">Finished</h3>
-    ${finished.length ? finished.slice(0, 8).map(g => gameRow(g, uid)).join('') : '<p class="empty">No settled matches in this window.</p>'}
+    ${finished.length ? finished.slice(0, 8).map(g => gameRow(g, uid, live)).join('') : '<p class="empty">No settled matches in this window.</p>'}
     <label class="field" style="margin-top:14px"><span>DA URL (blank = public TN10 lane)</span>
       <input id="vprog-da" type="url" placeholder="${PUBLIC_DA}" value="${esc(vprogDaBase())}">
     </label>
@@ -177,9 +200,19 @@ export function renderVprogLobby(root, data, { network } = {}) {
   return true;
 }
 
-export function bindVprogLobby(root, { wallet, toast, onRefresh }) {
+export function bindVprogLobby(root, { wallet, toast, onRefresh, onLive }) {
   if (!root) return;
   root.querySelector('#vprog-refresh')?.addEventListener('click', () => onRefresh?.());
+  root.querySelector('#vprog-create')?.addEventListener('click', () => onLive?.({ kind: 'create' }));
+  root.querySelectorAll('[data-vprog-join]').forEach(btn => {
+    btn.addEventListener('click', () => onLive?.({ kind: 'join', gameId: btn.dataset.vprogJoin }));
+  });
+  root.querySelectorAll('[data-vprog-turn]').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const [gameId, cell] = String(btn.dataset.vprogTurn || '').split(':');
+      onLive?.({ kind: 'turn', gameId, cell: Number(cell) });
+    });
+  });
   root.querySelector('#vprog-copy-id')?.addEventListener('click', async () => {
     const id = vprogUserId(wallet);
     if (!id) { toast?.('Unlock a wallet'); return; }
@@ -334,9 +367,8 @@ function paintPlay(root, toast) {
   const over = g.state >= 2;
   root.innerHTML = `
     <ol class="vprog-how">
-      <li>Same guest rules as TN10: X opens every round, seats swap marks on odd rounds, first to clinch the match wins the pot, a draw splits the stake back.</li>
-      <li>You are seat 0 (creator). Scorpion is seat 1. Tap only on your turn. No KAS leaves this wallet.</li>
-      <li>Live boards below are the real lane. Staked create/join/turn still use encoder-wasm on <a href="${PUBLIC_DA}" target="_blank" rel="noopener">vprogs-tt.izio.fr</a>.</li>
+      <li>Rules drill on this phone (no KAS). Live TN10 is below: Create / Join / tap your turn spends testnet KAS with PIN, same encoder as izio.</li>
+      <li>You are seat 0 here. Scorpion is seat 1. X opens every round; marks swap on odd rounds; early clinch; draw splits the displayed stake.</li>
     </ol>
     <div class="vprog-play-card">
       <div class="vprog-game-h"><b>Practice · TN10 rules</b><span>${esc(playStatus(g))}</span></div>

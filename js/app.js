@@ -68,9 +68,10 @@ import {
   ksocialRich, KSOCIAL_MAX, ksocialCachedFeed, detectWalletKns, knsNameForPubkey,
   ksocialFeeKas
 } from './ksocial.js?v=207';
-import { loadVprogLobby, renderVprogLobby, bindVprogLobby, startVprogPoll, stopVprogPoll, renderVprogPlay, bindVprogPlay } from './vprogTtt.js?v=3';
+import { loadVprogLobby, renderVprogLobby, bindVprogLobby, startVprogPoll, stopVprogPoll, renderVprogPlay, bindVprogPlay } from './vprogTtt.js?v=4';
+import { vprogCreate, vprogJoin, vprogTurn } from './vprogLane.js?v=1';
 
-export const BUILD = '265';
+export const BUILD = '266';
 const DESK_ID_KEY = 'kcc20_desk_id_v1';
 const DESK_VAULT_KEY = 'kcc20_desk_vault_v1';
 
@@ -3733,21 +3734,52 @@ function openBuildRoadmap() {
   openApps();
 }
 
+let vprogSnap = null;
+
 async function paintVprogApp() {
   const root = $('vprog-lobby');
   if (!root) return;
   try {
     const data = await loadVprogLobby(wallet);
-    if (renderVprogLobby(root, data, { network: networkId() })) {
+    vprogSnap = data;
+    if (renderVprogLobby(root, { ...data, wallet }, { network: networkId() })) {
       bindVprogLobby(root, {
         wallet,
         toast,
-        onRefresh: () => paintVprogApp().catch(e => toast(errText(e)))
+        onRefresh: () => paintVprogApp().catch(e => toast(errText(e))),
+        onLive: (act) => runVprogLive(act).catch(e => toast(errText(e)))
       });
     }
   } catch (e) {
     root.innerHTML = `<p class="empty">${esc(errText(e))}. Public lane is TN10 at vprogs-tt.izio.fr — local ttd is http://127.0.0.1:9880.</p>`;
   }
+}
+
+async function runVprogLive(act) {
+  const snap = vprogSnap;
+  if (!wallet) throw new Error('Unlock a wallet');
+  if (!snap?.state) throw new Error('Lane not loaded — tap Refresh');
+  hydrateNativeKey(wallet);
+  await requirePin('vProg TN10');
+  hydrateNativeKey(wallet);
+  const onStatus = (m) => { toast(m); };
+  let txId = '';
+  if (act.kind === 'create') {
+    txId = await vprogCreate({
+      wallet, stakeSompi: 50_000_000, rounds: 3, mark: 1,
+      state: snap.state, account: snap.account, onStatus
+    });
+  } else if (act.kind === 'join') {
+    const game = [...(snap.games?.open || []), ...(snap.games?.playing || [])].find(g => g.id === act.gameId);
+    if (!game) throw new Error('Game gone — refresh');
+    txId = await vprogJoin({ wallet, game, state: snap.state, account: snap.account, onStatus });
+  } else if (act.kind === 'turn') {
+    const game = [...(snap.games?.playing || []), ...(snap.games?.open || [])].find(g => g.id === act.gameId);
+    if (!game) throw new Error('Game gone — refresh');
+    txId = await vprogTurn({ wallet, game, cell: act.cell, state: snap.state, onStatus });
+  } else return;
+  toast('Carrier sent ' + String(txId).slice(0, 12) + '…');
+  setTimeout(() => paintVprogApp().catch(() => {}), 2500);
 }
 
 function startVprogApp() {

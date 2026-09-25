@@ -1,10 +1,21 @@
 {
   "sdk": "173",
-  "build": "265",
+  "build": "266",
   "wallet": "https://kcc-20-wallet.vercel.app",
   "sdkUrl": "https://kcc-20-wallet.vercel.app/sdk.js?v=173",
   "rule": "Every SDK_VERSION bump gets an entry here the same day. Pin sdk.js?v=NNN and require window.kcc20.sdkVersion === that NNN.",
   "entries": [
+    {
+      "date": "2026-09-25",
+      "sdk": "173",
+      "build": "266",
+      "title": "vProg TTT spends TN10 KAS like izio",
+      "breaking": false,
+      "notes": [
+        "You → Apps → vProg TTT on testnet-10: Create / Join / tap your turn builds the same encoder-wasm lane carriers as vprogs-tt.izio.fr. PIN signs. Keys stay in Scorpion.",
+        "Need TN10 KAS in one UTXO covering 0.5 KAS stake + fee. SDK 173 unchanged."
+      ]
+    },
     {
       "date": "2026-09-25",
       "sdk": "173",

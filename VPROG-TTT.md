@@ -8,11 +8,12 @@ Two players lock a stake, play a multi-round match, RISC0 guest settles the pot 
 
 ## In this wallet
 
-You → Apps → **vProg TTT**. BUILD 265.
+You → Apps → **vProg TTT**. BUILD 266.
 
-1. **Practice** — guest `rules.rs` on this phone. Default 3 rounds, 0.5 KAS pot display. You are seat 0 (creator). X opens every round; marks swap on odd rounds; early clinch; draw splits the stake. No KAS leaves the wallet.
-2. **Live TN10 lane** — spectator. Same games as `vprogs-tt.izio.fr`.
-3. **Staked match** — guest UI at https://vprogs-tt.izio.fr with a throwaway TN10 hex key (not this wallet’s PIN key).
+1. **You → Network → testnet-10.** Get TN10 KAS on this address (one UTXO bigger than 0.5 KAS + fee).
+2. **Create 0.5 KAS · 3 rounds** or **Join** an open game. PIN signs the same encoder-wasm carrier izio uses. Keys stay here.
+3. When it is your turn, tap a live cell. The carrier hits TN10; the DA board updates after the lane executes.
+4. **Practice** above the live list is still the guest rules drill (no KAS).
 
 Reads the DA through `/vprog-tt/*` on Vercel or a DA URL you paste (`http://127.0.0.1:9880` for local `ttd`). Rollup id is this wallet's x-only pubkey. Keys stay in Scorpion.
 

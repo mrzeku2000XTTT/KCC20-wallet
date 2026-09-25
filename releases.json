@@ -1,10 +1,22 @@
 {
   "sdk": "173",
-  "build": "260",
+  "build": "261",
   "wallet": "https://kcc-20-wallet.vercel.app",
   "sdkUrl": "https://kcc-20-wallet.vercel.app/sdk.js?v=173",
   "rule": "Every SDK_VERSION bump gets an entry here the same day. Pin sdk.js?v=NNN and require window.kcc20.sdkVersion === that NNN.",
   "entries": [
+    {
+      "date": "2026-09-25",
+      "sdk": "173",
+      "build": "261",
+      "title": "iPhone PIN can send KCC20",
+      "breaking": false,
+      "notes": [
+        "Home → Send KCC20 on iPhone (Safari / PWA) uses the same in-app PIN key as Send KAS. KasWare is a desktop extension and is not required on phone.",
+        "BUILD 259 compared the PIN key to the wallet address via payToAddressScript(publicKey), which throws, so nativeOk stayed false and the phone showed No in-app key.",
+        "SDK 173 unchanged. Hard-refresh until BUILD 261, then Send the token with PIN."
+      ]
+    },
     {
       "date": "2026-09-25",
       "sdk": "173",

@@ -15,6 +15,16 @@ function cleanPrivHex(raw) {
   return /^[0-9a-fA-F]{64}$/.test(s) ? s.toLowerCase() : '';
 }
 
+function walletNativeHex(wallet) {
+  let hex = cleanPrivHex(wallet?.privKey);
+  if (hex) return hex;
+  for (const a of wallet?.receiveAddrs || []) {
+    hex = cleanPrivHex(a.privateKey || a.privKey);
+    if (hex) return hex;
+  }
+  return '';
+}
+
 function privKeyFromWallet(k, wallet) {
   const hex = cleanPrivHex(wallet?.privKey);
   if (!hex) {
@@ -2929,7 +2939,9 @@ export async function sendKcc20({ wallet, dest, token, amountHuman, utxos, onSta
   const selfPkHex = String(wallet.pubKey || '').replace(/^0x/i, '').toLowerCase();
   const destHex = u8ToHex(destPk);
   if (selfPkHex && destHex === selfPkHex) throw new Error('That is this wallet’s own address');
-  if (!kaswareSigning(wallet) && !cleanPrivHex(wallet.privKey)) {
+  const keyHex = walletNativeHex(wallet);
+  if (keyHex && !cleanPrivHex(wallet.privKey)) wallet.privKey = keyHex;
+  if (!kaswareSigning(wallet) && !keyHex) {
     throw new Error('No in-app key on this wallet. Import the 64-hex key, or turn KasWare on in You → Settings.');
   }
 
@@ -3066,18 +3078,10 @@ export async function sendKcc20({ wallet, dest, token, amountHuman, utxos, onSta
       const tx = asm.transaction;
       const fundIdx = asm.fundingInputIndexes || [];
       const useKw = kaswareSigning(wallet);
-      const keyHex = cleanPrivHex(wallet.privKey);
-      let nativeOk = false;
-      if (keyHex) {
-        try {
-          const trial = new k.PrivateKey(keyHex);
-          const addr = String(k.addressFromScriptPublicKey(k.payToAddressScript(trial.toPublicKey()), networkId()));
-          nativeOk = addr === String(wallet.address);
-        } catch {}
-      }
-      if (nativeOk) {
+      const signHex = walletNativeHex(wallet);
+      if (signHex) {
         onStatus?.('Signing the KAS fee input…');
-        const key = new k.PrivateKey(keyHex);
+        const key = new k.PrivateKey(signHex);
         const inputs = [...tx.inputs];
         for (const idx of fundIdx) {
           const sig = k.createInputSignature(tx, idx, key, k.SighashType.All);
@@ -3118,18 +3122,10 @@ export async function sendKcc20({ wallet, dest, token, amountHuman, utxos, onSta
         txId = submitted?.transactionId || submitted || tx.id;
       } catch (e) {
         if (useKw && /false stack|verify the signature script|verification failed/i.test(errText(e))) {
-          const keyHex = cleanPrivHex(wallet.privKey);
-          let keyOk = false;
-          if (keyHex) {
-            try {
-              const trial = new k.PrivateKey(keyHex);
-              const addr = String(k.addressFromScriptPublicKey(k.payToAddressScript(trial.toPublicKey()), networkId()));
-              keyOk = addr === String(wallet.address);
-            } catch {}
-          }
-          if (keyOk) {
+          const pinHex = walletNativeHex(wallet);
+          if (pinHex) {
             onStatus?.('KasWare sig failed — signing the fee input with this wallet’s key…');
-            const key = new k.PrivateKey(keyHex);
+            const key = new k.PrivateKey(pinHex);
             const inputs = [...tx.inputs];
             for (const idx of fundIdx) {
               const sig = k.createInputSignature(tx, idx, key, k.SighashType.All);

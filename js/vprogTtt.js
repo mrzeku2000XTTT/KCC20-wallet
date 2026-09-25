@@ -198,98 +198,197 @@ export function bindVprogLobby(root, { wallet, toast, onRefresh }) {
   });
 }
 
-const WINS = [
+/* Guest rules from biryukovmaxim/vprog-tictactoe guest/src/program/rules.rs
+   (Cell 0 empty / 1 X / 2 O; State 1 Playing / 2 First / 3 Second / 4 Draw). */
+const LINES = [
   [0, 1, 2], [3, 4, 5], [6, 7, 8],
   [0, 3, 6], [1, 4, 7], [2, 5, 8],
   [0, 4, 8], [2, 4, 6]
 ];
-let playBoard = [0, 0, 0, 0, 0, 0, 0, 0, 0];
-let playOver = '';
+const STAKE = 50_000_000; // 0.5 KAS, same default as ttflow / CreatePanel
 
-function winnerOf(b) {
-  for (const [a, c, d] of WINS) {
-    if (b[a] && b[a] === b[c] && b[a] === b[d]) return b[a];
+function plies(board) {
+  let n = 0;
+  for (const c of board) if (c) n++;
+  return n;
+}
+function winner(board) {
+  for (const [a, b, c] of LINES) {
+    if (board[a] && board[a] === board[b] && board[b] === board[c]) return board[a];
   }
-  if (b.every(Boolean)) return 3;
   return 0;
 }
+function boardFull(board) {
+  return plies(board) === 9;
+}
+function otherMark(m) {
+  return m === 1 ? 2 : 1;
+}
+function markForSeat(creatorMark, round, seat) {
+  const creatorPlaysOwn = round % 2 === 0;
+  if (seat === 0) return creatorPlaysOwn ? creatorMark : otherMark(creatorMark);
+  if (seat === 1) return creatorPlaysOwn ? otherMark(creatorMark) : creatorMark;
+  return 0;
+}
+function toMoveMark(board) {
+  return plies(board) % 2 === 0 ? 1 : 2;
+}
+function seatToMove(creatorMark, round, board) {
+  return markForSeat(creatorMark, round, 0) === toMoveMark(board) ? 0 : 1;
+}
+function matchOutcome(roundsTotal, roundWins, draws) {
+  const w0 = roundWins[0];
+  const w1 = roundWins[1];
+  const completed = w0 + w1 + draws;
+  const remaining = Math.max(0, roundsTotal - completed);
+  if (w0 > w1 + remaining) return 2;
+  if (w1 > w0 + remaining) return 3;
+  if (remaining === 0) return w0 > w1 ? 2 : (w1 > w0 ? 3 : 4);
+  return 0;
+}
+function roundIndex(g) {
+  return g.round_wins[0] + g.round_wins[1] + g.draws;
+}
 
-function pickScorpion(b) {
+function freshMatch(roundsTotal, creatorMark) {
+  return {
+    stake: STAKE,
+    pot: STAKE * 2,
+    rounds_total: roundsTotal,
+    creator_mark: creatorMark,
+    round_wins: [0, 0],
+    draws: 0,
+    board: [0, 0, 0, 0, 0, 0, 0, 0, 0],
+    state: 1
+  };
+}
+
+let match = freshMatch(3, 1);
+
+function applyTurn(g, cell, seat) {
+  if (g.state !== 1) return 'Match over';
+  if (cell < 0 || cell > 8 || g.board[cell]) return 'Cell taken';
+  const round = roundIndex(g);
+  if (seatToMove(g.creator_mark, round, g.board) !== seat) return 'Not your turn';
+  const next = g.board.slice();
+  next[cell] = toMoveMark(g.board);
+  g.board = next;
+  const w = winner(g.board);
+  if (w || boardFull(g.board)) {
+    if (w === markForSeat(g.creator_mark, round, 0)) g.round_wins[0] += 1;
+    else if (w === markForSeat(g.creator_mark, round, 1)) g.round_wins[1] += 1;
+    else g.draws += 1;
+    g.board = [0, 0, 0, 0, 0, 0, 0, 0, 0];
+    const end = matchOutcome(g.rounds_total, g.round_wins, g.draws);
+    if (end) g.state = end;
+  }
+  return '';
+}
+
+function scorpionTurn(g) {
+  if (g.state !== 1) return;
+  const round = roundIndex(g);
+  if (seatToMove(g.creator_mark, round, g.board) !== 1) return;
+  const markNow = toMoveMark(g.board);
   const empty = [];
-  for (let i = 0; i < 9; i++) if (!b[i]) empty.push(i);
-  for (const i of empty) {
-    const t = b.slice(); t[i] = 2;
-    if (winnerOf(t) === 2) return i;
+  for (let i = 0; i < 9; i++) if (!g.board[i]) empty.push(i);
+  const tryWin = (who) => {
+    for (const i of empty) {
+      const t = g.board.slice();
+      t[i] = who;
+      if (winner(t) === who) return i;
+    }
+    return -1;
+  };
+  let i = tryWin(markNow);
+  if (i < 0) i = tryWin(otherMark(markNow));
+  if (i < 0 && g.board[4] === 0) i = 4;
+  if (i < 0) {
+    const corners = [0, 2, 6, 8].filter(c => g.board[c] === 0);
+    i = corners.length ? corners[Math.floor(Math.random() * corners.length)] : empty[0];
   }
-  for (const i of empty) {
-    const t = b.slice(); t[i] = 1;
-    if (winnerOf(t) === 1) return i;
-  }
-  if (b[4] === 0) return 4;
-  const corners = [0, 2, 6, 8].filter(i => b[i] === 0);
-  if (corners.length) return corners[Math.floor(Math.random() * corners.length)];
-  return empty[0];
+  applyTurn(g, i, 1);
 }
 
-function playStatus() {
-  if (playOver === 'x') return 'You win. Three in a row.';
-  if (playOver === 'o') return 'Scorpion wins.';
-  if (playOver === 'draw') return 'Draw. Tap New game.';
-  return 'Your move — you are X. Scorpion is O.';
+function playStatus(g) {
+  const round = roundIndex(g);
+  if (g.state === 2) return 'You win the pot';
+  if (g.state === 3) return 'Scorpion wins the pot';
+  if (g.state === 4) return 'Draw — stakes split back (' + kas(g.stake) + ' each)';
+  const seat = seatToMove(g.creator_mark, round, g.board);
+  const m = toMoveMark(g.board) === 1 ? 'X' : 'O';
+  return seat === 0 ? 'Your turn (' + m + ')' : 'Scorpion (' + m + ')';
 }
 
-export function renderVprogPlay(root) {
+function paintPlay(root, toast) {
   if (!root) return;
+  const g = match;
+  const round = roundIndex(g);
   const bits = [];
+  const myTurn = g.state === 1 && seatToMove(g.creator_mark, round, g.board) === 0;
   for (let i = 0; i < 9; i++) {
-    const on = playBoard[i] ? ' on' : '';
-    bits.push(`<button type="button" class="ttt-cell play${on}" data-play-cell="${i}">${mark(playBoard[i])}</button>`);
+    const on = g.board[i] ? ' on' : '';
+    const wait = myTurn && !g.board[i] ? '' : ' wait';
+    bits.push(`<button type="button" class="ttt-cell play${on}${wait}" data-play-cell="${i}">${mark(g.board[i])}</button>`);
   }
+  const over = g.state >= 2;
   root.innerHTML = `
     <ol class="vprog-how">
-      <li>Tap an empty square below. You are <b>X</b>. Scorpion answers as <b>O</b>. Three in a row wins.</li>
-      <li>That board is practice on this phone. No KAS moves.</li>
-      <li>Boards under <b>Live TN10 lane</b> are Max’s vProg tests. Watch only. Staked create/join/turn use the guest UI at <a href="${PUBLIC_DA}" target="_blank" rel="noopener">vprogs-tt.izio.fr</a> with a throwaway TN10 hex key — not this wallet’s PIN key.</li>
+      <li>Same guest rules as TN10: X opens every round, seats swap marks on odd rounds, first to clinch the match wins the pot, a draw splits the stake back.</li>
+      <li>You are seat 0 (creator). Scorpion is seat 1. Tap only on your turn. No KAS leaves this wallet.</li>
+      <li>Live boards below are the real lane. Staked create/join/turn still use encoder-wasm on <a href="${PUBLIC_DA}" target="_blank" rel="noopener">vprogs-tt.izio.fr</a>.</li>
     </ol>
     <div class="vprog-play-card">
-      <div class="vprog-game-h"><b>Practice</b><span id="vprog-play-status">${esc(playStatus())}</span></div>
+      <div class="vprog-game-h"><b>Practice · TN10 rules</b><span>${esc(playStatus(g))}</span></div>
+      <p class="vprog-seats">Round ${round + (over ? 0 : 1)} / ${g.rounds_total} · you ${g.round_wins[0]}–${g.round_wins[1]} scorpion · draws ${g.draws} · pot ${esc(kas(g.pot))}</p>
       <div class="ttt-board play">${bits.join('')}</div>
-      <button type="button" class="btn btn-glass" id="vprog-new">New game</button>
+      <div class="vprog-acts">
+        <label class="vprog-mini">Rounds
+          <select id="vprog-rounds">
+            <option value="1"${g.rounds_total === 1 ? ' selected' : ''}>1</option>
+            <option value="3"${g.rounds_total === 3 ? ' selected' : ''}>3</option>
+            <option value="5"${g.rounds_total === 5 ? ' selected' : ''}>5</option>
+          </select>
+        </label>
+        <label class="vprog-mini">Your mark
+          <select id="vprog-mark">
+            <option value="1"${g.creator_mark === 1 ? ' selected' : ''}>X (open round 1)</option>
+            <option value="2"${g.creator_mark === 2 ? ' selected' : ''}>O (joiner opens)</option>
+          </select>
+        </label>
+        <button type="button" class="btn btn-glass" id="vprog-new">New match</button>
+      </div>
     </div>
     <h3 class="vprog-h">Live TN10 lane</h3>
   `;
-}
-
-export function bindVprogPlay(root, { toast } = {}) {
-  if (!root) return;
   root.querySelector('#vprog-new')?.addEventListener('click', () => {
-    playBoard = [0, 0, 0, 0, 0, 0, 0, 0, 0];
-    playOver = '';
-    renderVprogPlay(root);
-    bindVprogPlay(root, { toast });
+    const rounds = Number(root.querySelector('#vprog-rounds')?.value || 3);
+    const cm = Number(root.querySelector('#vprog-mark')?.value || 1);
+    match = freshMatch(rounds === 1 || rounds === 5 ? rounds : 3, cm === 2 ? 2 : 1);
+    scorpionTurn(match);
+    paintPlay(root, toast);
   });
+  root.querySelector('#vprog-rounds')?.addEventListener('change', () => {});
   root.querySelectorAll('[data-play-cell]').forEach(btn => {
     btn.addEventListener('click', () => {
       const i = Number(btn.dataset.playCell);
-      if (playOver || playBoard[i]) return;
-      playBoard[i] = 1;
-      let w = winnerOf(playBoard);
-      if (w === 1) playOver = 'x';
-      else if (w === 3) playOver = 'draw';
-      else {
-        const j = pickScorpion(playBoard);
-        if (j != null) playBoard[j] = 2;
-        w = winnerOf(playBoard);
-        if (w === 2) playOver = 'o';
-        else if (w === 3) playOver = 'draw';
-      }
-      renderVprogPlay(root);
-      bindVprogPlay(root, { toast });
-      if (playOver === 'x') toast?.('You win');
-      if (playOver === 'o') toast?.('Scorpion wins');
-      if (playOver === 'draw') toast?.('Draw');
+      const err = applyTurn(match, i, 0);
+      if (err) { toast?.(err); return; }
+      scorpionTurn(match);
+      paintPlay(root, toast);
+      if (match.state === 2) toast?.('You win the pot');
+      else if (match.state === 3) toast?.('Scorpion wins the pot');
+      else if (match.state === 4) toast?.('Draw — stakes split back');
     });
   });
+}
+
+export function renderVprogPlay(root) {
+  paintPlay(root);
+}
+
+export function bindVprogPlay(root, { toast } = {}) {
+  paintPlay(root, toast);
 }
 
 export function startVprogPoll(tick, ms = 8000) {

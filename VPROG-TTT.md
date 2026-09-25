@@ -8,11 +8,11 @@ Two players lock a stake, play a multi-round match, RISC0 guest settles the pot 
 
 ## In this wallet
 
-You → Apps → **vProg TTT**. BUILD 264.
+You → Apps → **vProg TTT**. BUILD 265.
 
-1. **Practice** — tap an empty square. You are X. Scorpion is O. Three in a row wins. No KAS.
-2. **Live TN10 lane** — spectator. Same games as `vprogs-tt.izio.fr`. Tapping those cells does nothing.
-3. **Staked match** — guest UI at https://vprogs-tt.izio.fr with a throwaway TN10 hex key (not this wallet’s PIN key). Create or Join, then tap the guest board.
+1. **Practice** — guest `rules.rs` on this phone. Default 3 rounds, 0.5 KAS pot display. You are seat 0 (creator). X opens every round; marks swap on odd rounds; early clinch; draw splits the stake. No KAS leaves the wallet.
+2. **Live TN10 lane** — spectator. Same games as `vprogs-tt.izio.fr`.
+3. **Staked match** — guest UI at https://vprogs-tt.izio.fr with a throwaway TN10 hex key (not this wallet’s PIN key).
 
 Reads the DA through `/vprog-tt/*` on Vercel or a DA URL you paste (`http://127.0.0.1:9880` for local `ttd`). Rollup id is this wallet's x-only pubkey. Keys stay in Scorpion.
 

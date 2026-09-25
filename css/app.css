@@ -1763,6 +1763,12 @@ img { display: block; max-width: 100%; }
 .vprog-play-card .ttt-board { margin: 8px 0 12px; }
 .ttt-cell.play { pointer-events: auto; }
 .ttt-cell.play.on { color: var(--teal); }
+.ttt-cell.play.wait { opacity: 0.55; }
+.vprog-mini { font-size: 12px; color: var(--label-2); display: flex; align-items: center; gap: 6px; }
+.vprog-mini select {
+  background: rgba(0,0,0,0.35); color: var(--label); border: 0.5px solid var(--hairline);
+  border-radius: 10px; padding: 6px 8px;
+}
 .vprog-h { font-size: 13px; font-weight: 700; margin: 16px 0 8px; color: var(--gold-2); }
 .vprog-acts { display: flex; flex-wrap: wrap; gap: 8px; margin: 12px 0 4px; }
 .vprog-acts .btn { height: 40px; font-size: 13px; }

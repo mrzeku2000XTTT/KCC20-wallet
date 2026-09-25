@@ -1,0 +1,72 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>VEYRA — The Sovereign Thread</title>
+  <meta name="description" content="VEYRA: DApps request. Wallets authorize. Users decide. Kaspa settles. Open Scorpion wallet + SDK 174. Fork KCC20-wallet instead of starting from scratch.">
+  <link rel="canonical" href="https://kcc-20-wallet.vercel.app/veyra.html">
+  <link rel="icon" href="assets/icon.png">
+  <style>
+    :root { color-scheme: dark; --gold:#c9a36a; --bg:#0b0b0c; --card:#141416; --muted:rgba(235,235,245,.7); --line:rgba(255,255,255,.1); }
+    * { box-sizing: border-box; }
+    body { margin:0; font:16px/1.55 -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif; background:var(--bg); color:#f5f5f7; }
+    a { color:var(--gold); }
+    header { border-bottom:1px solid var(--line); padding:18px 22px; display:flex; gap:14px; align-items:center; flex-wrap:wrap; }
+    header img { width:36px; height:36px; border-radius:10px; }
+    nav { display:flex; gap:14px; margin-left:auto; font-size:13px; }
+    main { max-width:760px; margin:0 auto; padding:32px 20px 80px; }
+    h1 { font-size:34px; letter-spacing:-.6px; margin:0 0 8px; }
+    h2 { font-size:22px; margin:32px 0 10px; }
+    p, li { color:var(--muted); }
+    .lede { font-size:18px; color:#f3e2bf; }
+    code, pre { font-family:ui-monospace,Menlo,Consolas,monospace; font-size:13px; }
+    code { background:#1c1c1e; padding:2px 6px; border-radius:6px; color:#f3e2bf; }
+    pre { background:var(--card); border:1px solid var(--line); border-radius:14px; padding:14px 16px; overflow:auto; }
+    table { width:100%; border-collapse:collapse; font-size:14px; margin:12px 0 20px; }
+    th, td { text-align:left; padding:9px 10px; border-bottom:1px solid var(--line); vertical-align:top; }
+    th { color:#aaa; font-size:12px; text-transform:uppercase; }
+    .pill { display:inline-block; font-size:11px; font-weight:700; padding:3px 8px; border-radius:999px; background:#2a2318; color:var(--gold); }
+  </style>
+</head>
+<body>
+  <header>
+    <img src="assets/icon.png" alt="">
+    <div><b>VEYRA</b><br><span style="color:var(--muted);font-size:13px">TTT Phase 6 · Scorpion wallet</span></div>
+    <nav>
+      <a href="/">Wallet</a>
+      <a href="docs.html">SDK</a>
+      <a href="FORK.md">Fork</a>
+      <a href="VEYRA.md">Markdown</a>
+      <a href="https://github.com/mrzeku2000XTTT/KCC20-wallet">GitHub</a>
+    </nav>
+  </header>
+  <main>
+    <p class="pill">sdk 174</p>
+    <h1>The Sovereign Thread</h1>
+    <p class="lede">DApps request. Wallets authorize. Users decide. Kaspa settles.</p>
+    <p>VEYRA is TTT Phase 6: a signing protocol for the Kaspa application layer. It is not a wallet and not a dApp. <b>Scorpion</b> (this PWA) is the open wallet that holds the boundary so TTT, KasDistro, Nilla, and your app can ask without owning the key.</p>
+    <p>Read the working spec: <a href="VEYRA.md">VEYRA.md</a>. Clone the wallet instead of starting from scratch: <a href="FORK.md">FORK.md</a>.</p>
+
+    <h2>Descriptor</h2>
+<pre>const kcc = window.kcc20; // sdk.js?v=174
+kcc.veyra.principle
+await kcc.request('veyra')
+// spec, fork, rdns, rules — silent, no popup</pre>
+
+    <h2>Shipped methods</h2>
+    <table>
+      <tr><th>Veyra</th><th>Scorpion</th></tr>
+      <tr><td>Discovery</td><td><code>kaspa:announceProvider</code> · rdns <code>app.kcc20.wallet</code></td></tr>
+      <tr><td>Connection</td><td><code>connect()</code> on a user click</td></tr>
+      <tr><td>Signing</td><td><code>signPskt</code> + P2PK <code>signInputs</code> only</td></tr>
+      <tr><td>Settlement</td><td><code>pushTx</code> → <code>{ txId, node }</code></td></tr>
+      <tr><td>KRON</td><td><code>buyKron({ tick, amount })</code> — amount is KAS, wallet-built</td></tr>
+    </table>
+
+    <h2>Fork</h2>
+    <p>GitHub <a href="https://github.com/mrzeku2000XTTT/KCC20-wallet">mrzeku2000XTTT/KCC20-wallet</a>. Keep the signing boundary. Change origin, <code>rdns</code>, branding, trusted origins. Implement the same <code>window.kcc20</code> surface so dApps do not fork.</p>
+    <p>Keys stay in the wallet. The dApp builds the unsigned tx. The user Approves. Kaspa settles.</p>
+  </main>
+</body>
+</html>

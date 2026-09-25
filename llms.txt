@@ -3,19 +3,23 @@
 # KCC20 Wallet
 Wallet: https://kcc-20-wallet.vercel.app
 About: https://kcc-20-wallet.vercel.app/about.html
-SDK: https://kcc-20-wallet.vercel.app/sdk.js?v=169
+SDK: https://kcc-20-wallet.vercel.app/sdk.js?v=174
 Docs: https://kcc-20-wallet.vercel.app/docs.html
+VEYRA: https://kcc-20-wallet.vercel.app/veyra.html
+Fork: https://kcc-20-wallet.vercel.app/FORK.md
 KasDistro connect recipe: https://kcc-20-wallet.vercel.app/kasdistro.html
 CONNECT.md: https://kcc-20-wallet.vercel.app/CONNECT.md
 GitHub wallet: https://github.com/mrzeku2000XTTT/KCC20-wallet
 GitHub SDK: https://github.com/mrzeku2000XTTT/kcc20-sdk
 
-Hosted PWA, not a Chrome extension. Keys never leave the wallet origin. dApp builds the unsigned tx; user Approves and signs (PIN or KasWare).
+VEYRA (TTT Phase 6): DApps request. Wallets authorize. Users decide. Kaspa settles. `window.kcc20.veyra` / `request('veyra')`. This PWA is the open Scorpion wallet — fork KCC20-wallet (FORK.md) instead of starting from scratch.
+
+Hosted PWA, not a Chrome extension. Keys never leave the wallet origin. dApp builds the unsigned tx; user Approves and signs (PIN, KasWare, or Kaspire).
 
 ## Connect (any site, including KasDistro and Nilla)
 
 ```html
-<script src="https://kcc-20-wallet.vercel.app/sdk.js?v=169"></script>
+<script src="https://kcc-20-wallet.vercel.app/sdk.js?v=174"></script>
 ```
 
 ```js

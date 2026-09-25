@@ -12,7 +12,7 @@ const HOST_METHODS = [
   'getTokenBalance', 'getHoldings', 'getState', 'sendToken', 'sendKcc20', 'payToken', 'payKcc20', 'fundCredits',
   'quoteKron', 'quoteToken', 'buyKron', 'buyToken', 'sellKron', 'sellToken', 'tradeKron', 'tradeToken',
   'compileVault', 'lockVault', 'compileVaults', 'lockVaults', 'sendKas', 'sendKaspa', 'openWallet',
-  'getActivityLog', 'activityLog'
+  'getActivityLog', 'activityLog', 'veyra', 'getVeyra'
 ];
 
 let hooks = null;
@@ -1064,6 +1064,30 @@ async function dispatch(req) {
   if (method === 'sendKas' || method === 'sendKaspa') return handleSendKas(req);
   if (method === 'openWallet') return handleOpenWallet(req);
   if (method === 'getActivityLog' || method === 'activityLog') return handleGetActivityLog(req);
+  if (method === 'veyra' || method === 'getVeyra') {
+    const origin = String(location.origin || 'https://kcc-20-wallet.vercel.app').replace(/\/$/, '');
+    return {
+      name: 'VEYRA',
+      title: 'The Sovereign Thread',
+      phase: '6',
+      principle: 'DApps request. Wallets authorize. Users decide. Kaspa settles.',
+      wallet: 'scorpion',
+      rdns: 'app.kcc20.wallet',
+      origin,
+      spec: origin + '/veyra.html',
+      markdown: origin + '/VEYRA.md',
+      fork: 'https://github.com/mrzeku2000XTTT/KCC20-wallet',
+      forkGuide: origin + '/FORK.md',
+      sdkRepo: 'https://github.com/mrzeku2000XTTT/kcc20-sdk',
+      rules: [
+        'Keys stay in the wallet origin.',
+        'dApp builds the unsigned transaction.',
+        'User Approves each connect, sign, and broadcast.',
+        'signInputs lists only user P2PK funding indexes.',
+        'Do not overwrite a real window.kasware.'
+      ]
+    };
+  }
   throw new Error('Unknown method ' + method);
 }
 

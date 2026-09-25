@@ -3,7 +3,8 @@
 **SDK repo (plug-and-play):** https://github.com/mrzeku2000XTTT/kcc20-sdk  
 **Docs site:** https://kcc-20-wallet.vercel.app/docs.html  
 Live wallet: https://kcc-20-wallet.vercel.app  
-SDK: https://kcc-20-wallet.vercel.app/sdk.js?v=169  
+SDK: https://kcc-20-wallet.vercel.app/sdk.js?v=174
+VEYRA: https://kcc-20-wallet.vercel.app/veyra.html  
 Demo: https://kcc-20-wallet.vercel.app/dapp-demo.html  
 Wallet app: https://github.com/mrzeku2000XTTT/KCC20-wallet
 

@@ -6,11 +6,12 @@
    KCC-12 (draft): listens for kaspa:requestProvider and announces kaspa:announceProvider
    with rdns app.kcc20.wallet. provider.request({ method: 'kaspa_requestAccounts' }).
    Existing window.kcc20.connect / signPskt / buyKron / getActivityLog stay.
+   VEYRA (TTT Phase 6): window.kcc20.veyra and request('veyra') — silent descriptor.
    When bumping SDK_VERSION, add an entry to releases.json (and it shows on /whats-new.html).
 */
 (function (root) {
   'use strict';
-  var SDK_VERSION = '173';
+  var SDK_VERSION = '174';
   if (root.kcc20 && root.kcc20.isKcc20 && String(root.kcc20.sdkVersion || '') === SDK_VERSION) return;
 
   function scriptOrigin() {
@@ -607,10 +608,34 @@
     };
   }
 
+  var VEYRA = Object.freeze({
+    name: 'VEYRA',
+    title: 'The Sovereign Thread',
+    phase: '6',
+    principle: 'DApps request. Wallets authorize. Users decide. Kaspa settles.',
+    wallet: 'scorpion',
+    sdk: SDK_VERSION,
+    rdns: 'app.kcc20.wallet',
+    origin: ORIGIN,
+    spec: ORIGIN + '/veyra.html',
+    markdown: ORIGIN + '/VEYRA.md',
+    fork: 'https://github.com/mrzeku2000XTTT/KCC20-wallet',
+    forkGuide: ORIGIN + '/FORK.md',
+    sdkRepo: 'https://github.com/mrzeku2000XTTT/kcc20-sdk',
+    rules: Object.freeze([
+      'Keys stay in the wallet origin.',
+      'dApp builds the unsigned transaction.',
+      'User Approves each connect, sign, and broadcast.',
+      'signInputs lists only user P2PK funding indexes.',
+      'Do not overwrite a real window.kasware.'
+    ])
+  });
+
   var api = {
     isKcc20: true,
     sdkVersion: SDK_VERSION,
     origin: ORIGIN,
+    veyra: VEYRA,
     on: on,
     off: off,
     connect: function () {
@@ -818,9 +843,13 @@
         : String(json || '');
       return rpc('pushTx', { txJsonString: s }).then(function (r) { closeAfterUse(); return r; });
     },
+    getVeyra: function () {
+      return Promise.resolve(VEYRA);
+    },
     request: function (method, params) {
       var m = String(method || '');
       var p = params || {};
+      if (m === 'veyra' || m === 'getVeyra') return Promise.resolve(VEYRA);
       if (m === 'connect' || m === 'requestAccounts') {
         return api.connect().then(function (acc) {
           var s = lastState || {};
@@ -1010,6 +1039,7 @@
     if (m === 'kaspa_signMessage') {
       return Promise.reject(providerError(4200, 'kaspa_signMessage (KIP-5) is not on this KCC20 build yet.'));
     }
+    if (m === 'veyra' || m === 'getVeyra' || m === 'app.kcc20.wallet_veyra') return Promise.resolve(VEYRA);
     if (m === 'app.kcc20.wallet_buyKron' || m === 'buyKron') return api.buyKron(p);
     if (m === 'app.kcc20.wallet_getActivityLog' || m === 'getActivityLog') return api.getActivityLog(p.address);
     if (m === 'app.kcc20.wallet_sendKas' || m === 'sendKaspa') return api.sendKaspa(p);

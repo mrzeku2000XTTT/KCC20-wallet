@@ -1,10 +1,22 @@
 {
-  "sdk": "173",
-  "build": "267",
+  "sdk": "174",
+  "build": "268",
   "wallet": "https://kcc-20-wallet.vercel.app",
-  "sdkUrl": "https://kcc-20-wallet.vercel.app/sdk.js?v=173",
+  "sdkUrl": "https://kcc-20-wallet.vercel.app/sdk.js?v=174",
   "rule": "Every SDK_VERSION bump gets an entry here the same day. Pin sdk.js?v=NNN and require window.kcc20.sdkVersion === that NNN.",
   "entries": [
+    {
+      "date": "2026-09-25",
+      "sdk": "174",
+      "build": "268",
+      "title": "VEYRA in the SDK + fork the wallet",
+      "breaking": false,
+      "notes": [
+        "Additive. window.kcc20.veyra and request('veyra') / getVeyra return the Phase 6 descriptor (silent, no popup). connect, signPskt, buyKron, getActivityLog unchanged.",
+        "Spec: /veyra.html and VEYRA.md. Fork Scorpion instead of a blank app: FORK.md and github.com/mrzeku2000XTTT/KCC20-wallet.",
+        "Pin sdk.js?v=174. window.kcc20.sdkVersion === '174'."
+      ]
+    },
     {
       "date": "2026-09-25",
       "sdk": "173",

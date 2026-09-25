@@ -1,10 +1,22 @@
 {
   "sdk": "173",
-  "build": "256",
+  "build": "260",
   "wallet": "https://kcc-20-wallet.vercel.app",
   "sdkUrl": "https://kcc-20-wallet.vercel.app/sdk.js?v=173",
   "rule": "Every SDK_VERSION bump gets an entry here the same day. Pin sdk.js?v=NNN and require window.kcc20.sdkVersion === that NNN.",
   "entries": [
+    {
+      "date": "2026-09-25",
+      "sdk": "173",
+      "build": "260",
+      "title": "KRON buy survives a dead Kaspa explorer",
+      "breaking": false,
+      "notes": [
+        "Pay with PIN no longer dies when api.kaspa.org is unreachable. Quote already comes from the KRON indexer; BUILD 260 uses that same head (realKas, tokenReserve, last trade txid) if the explorer lookup times out.",
+        "Explorer lookup now has a 7s timeout and retries the official REST host. KDIST/KRON curve and graduated pool buys assemble without waiting on Cloudflare.",
+        "SDK 173 unchanged. Hard-refresh the wallet before the next buy."
+      ]
+    },
     {
       "date": "2026-09-23",
       "sdk": "173",

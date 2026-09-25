@@ -1750,6 +1750,25 @@ img { display: block; max-width: 100%; }
 .app-tile span { font-size: 12px; color: var(--label-2); line-height: 1.35; }
 .app-pane { flex: 1; min-height: 0; display: flex; flex-direction: column; overflow: hidden; }
 .app-pane.hidden { display: none !important; }
+#vprog-lobby { flex: 1; min-height: 0; overflow: auto; padding: 0 2px 18px; -webkit-overflow-scrolling: touch; }
+.vprog-h { font-size: 13px; font-weight: 700; margin: 16px 0 8px; color: var(--gold-2); }
+.vprog-acts { display: flex; flex-wrap: wrap; gap: 8px; margin: 12px 0 4px; }
+.vprog-acts .btn { height: 40px; font-size: 13px; }
+.vprog-game {
+  background: rgba(255,255,255,0.05); border: 0.5px solid var(--hairline);
+  border-radius: 16px; padding: 12px; margin: 0 0 10px;
+}
+.vprog-game.mine { border-color: rgba(212,176,122,0.45); }
+.vprog-game-h { display: flex; justify-content: space-between; gap: 8px; font-size: 13px; margin-bottom: 8px; }
+.vprog-game-h span { color: var(--label-2); }
+.vprog-seats { font-size: 11px; color: var(--label-2); margin-top: 8px; }
+.ttt-board { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; max-width: 220px; }
+.ttt-cell {
+  aspect-ratio: 1; border-radius: 12px; border: 0;
+  background: rgba(0,0,0,0.35); color: var(--gold-2);
+  font-size: 22px; font-weight: 800;
+}
+.ttt-cell-wait { outline: 1px dashed var(--gold); }
 .studio-form { flex-shrink: 0; }
 .studio-form .field { margin-bottom: 8px; }
 .studio-form .field > span {

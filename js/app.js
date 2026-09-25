@@ -68,8 +68,9 @@ import {
   ksocialRich, KSOCIAL_MAX, ksocialCachedFeed, detectWalletKns, knsNameForPubkey,
   ksocialFeeKas
 } from './ksocial.js?v=207';
+import { loadVprogLobby, renderVprogLobby, bindVprogLobby, startVprogPoll, stopVprogPoll } from './vprogTtt.js?v=1';
 
-export const BUILD = '262';
+export const BUILD = '263';
 const DESK_ID_KEY = 'kcc20_desk_id_v1';
 const DESK_VAULT_KEY = 'kcc20_desk_vault_v1';
 
@@ -3688,14 +3689,15 @@ function showBuildApp(name) {
     openKaspaBrowser({ fromApps: true });
     return;
   }
-  ['home', 'studio', 'truth', 'ksocial'].forEach(v => {
+  ['home', 'studio', 'truth', 'ksocial', 'vprog'].forEach(v => {
     $('app-' + v)?.classList.toggle('hidden', v !== view);
   });
   $('build-back')?.classList.toggle('hidden', view === 'home');
   if ($('build-title')) {
     $('build-title').textContent = view === 'studio' ? 'Faceless Studio'
       : (view === 'truth' ? 'Proof of Fact'
-        : (view === 'ksocial' ? 'K Social' : 'Apps'));
+        : (view === 'ksocial' ? 'K Social'
+          : (view === 'vprog' ? 'vProg TTT' : 'Apps')));
   }
   if (view === 'truth') setBuildPhase(0);
   if (view === 'studio') {
@@ -3709,6 +3711,8 @@ function showBuildApp(name) {
     loadKsocialFeed().catch(err => toast(errText(err)));
     refreshKsocialKns().catch(() => {});
   }
+  if (view === 'vprog') startVprogApp();
+  else stopVprogPoll();
   if (view !== 'studio') {
     $('app-studio')?.classList.remove('playing', 'working');
     const v = $('studio-video');
@@ -3727,6 +3731,28 @@ function openApps() {
 
 function openBuildRoadmap() {
   openApps();
+}
+
+async function paintVprogApp() {
+  const root = $('vprog-lobby');
+  if (!root) return;
+  try {
+    const data = await loadVprogLobby(wallet);
+    if (renderVprogLobby(root, data, { network: networkId() })) {
+      bindVprogLobby(root, {
+        wallet,
+        toast,
+        onRefresh: () => paintVprogApp().catch(e => toast(errText(e)))
+      });
+    }
+  } catch (e) {
+    root.innerHTML = `<p class="empty">${esc(errText(e))}. Public lane is TN10 at vprogs-tt.izio.fr — local ttd is http://127.0.0.1:9880.</p>`;
+  }
+}
+
+function startVprogApp() {
+  paintVprogApp().catch(e => toast(errText(e)));
+  startVprogPoll(() => paintVprogApp().catch(() => {}));
 }
 
 let ksocialCursor = '';

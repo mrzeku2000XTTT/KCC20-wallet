@@ -1,10 +1,22 @@
 {
   "sdk": "173",
-  "build": "262",
+  "build": "263",
   "wallet": "https://kcc-20-wallet.vercel.app",
   "sdkUrl": "https://kcc-20-wallet.vercel.app/sdk.js?v=173",
   "rule": "Every SDK_VERSION bump gets an entry here the same day. Pin sdk.js?v=NNN and require window.kcc20.sdkVersion === that NNN.",
   "entries": [
+    {
+      "date": "2026-09-25",
+      "sdk": "173",
+      "build": "263",
+      "title": "vProg Tic-Tac-Toe testing lane in Apps",
+      "breaking": false,
+      "notes": [
+        "You → Apps → vProg TTT reads the live Kaspa vProgs tic-tac-toe DA (biryukovmaxim/vprog-tictactoe, public TN10 lane vprogs-tt.izio.fr).",
+        "Shows covenant, deposit address, open/playing/finished boards, and this PIN key's rollup id. Create/Join/Turn stay encoder-wasm carriers in the guest repo.",
+        "SDK 173 unchanged. Hard-refresh until BUILD 263."
+      ]
+    },
     {
       "date": "2026-09-25",
       "sdk": "173",

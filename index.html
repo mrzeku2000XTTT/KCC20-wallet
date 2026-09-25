@@ -24,7 +24,7 @@
   <link rel="icon" href="assets/icon.png">
   <title>KCC20 Wallet — Kaspa L1 covenant wallet</title>
   <meta http-equiv="Cache-Control" content="no-store, no-cache, must-revalidate">
-  <link rel="stylesheet" href="css/app.css?v=213">
+  <link rel="stylesheet" href="css/app.css?v=214">
   <script type="application/ld+json">
   {"@context":"https://schema.org","@type":"SoftwareApplication","name":"KCC20 Wallet","alternateName":["KCC20 wallet","KCC-20 Wallet"],"applicationCategory":"FinanceApplication","operatingSystem":"Web","url":"https://kcc-20-wallet.vercel.app/","image":"https://kcc-20-wallet.vercel.app/assets/icon.png","description":"Non-custodial Kaspa Layer-1 wallet for native KAS, KCC20 covenant tokens, KRC-20, and time-lock vaults. Keys never leave the device.","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"}}
   </script>
@@ -664,7 +664,7 @@
         </div>
 
         <div id="app-home" class="app-home">
-          <p class="build-lede">Open an app. TTT first. KBUILD drafts SilverScript v1 covenants++. KasDistro pays many kaspa:q addresses. K Social is the Kaspa L1 feed — in this wallet, no new tab.</p>
+          <p class="build-lede">Open an app. TTT first. KBUILD drafts SilverScript v1 covenants++. KasDistro pays many kaspa:q addresses. K Social is the Kaspa L1 feed. vProg TTT is the Kaspa testing lane for staked tic-tac-toe.</p>
           <div class="app-grid">
             <button type="button" class="app-tile" data-app="ttt">
               <span class="app-ico app-ico-img"><img src="assets/ttt.png" alt=""></span>
@@ -701,7 +701,16 @@
               <b>Proof of Fact</b>
               <span>SHA-256 AI output → Kaspa payload</span>
             </button>
+            <button type="button" class="app-tile" data-app="vprog">
+              <span class="app-ico">✕○</span>
+              <b>vProg TTT</b>
+              <span>Kaspa vProgs tic-tac-toe testing lane · TN10</span>
+            </button>
           </div>
+        </div>
+
+        <div id="app-vprog" class="app-pane hidden">
+          <div id="vprog-lobby"><div class="empty">Loading vProg lane…</div></div>
         </div>
 
         <div id="app-ksocial" class="app-pane hidden">
@@ -947,7 +956,7 @@
   <script type="module">
     import('./js/iframeVault.js?v=122').then(function (mod) {
       return (mod.restoreIframeVault ? mod.restoreIframeVault() : Promise.resolve()).then(function () {
-        return import('./js/app.js?v=262');
+        return import('./js/app.js?v=263');
       });
     }).catch(function (err) {
       console.error(err);

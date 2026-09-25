@@ -3,9 +3,20 @@
     {
       "source": "/cook-api/:path*",
       "destination": "https://dev-api-kcc20.kaspa.com/:path*"
+    },
+    {
+      "source": "/vprog-tt/:path*",
+      "destination": "https://vprogs-tt.izio.fr/:path*"
     }
   ],
   "headers": [
+    {
+      "source": "/vprog-tt/(.*)",
+      "headers": [
+        { "key": "Access-Control-Allow-Origin", "value": "*" },
+        { "key": "Cross-Origin-Resource-Policy", "value": "cross-origin" }
+      ]
+    },
     {
       "source": "/cook-api/(.*)",
       "headers": [

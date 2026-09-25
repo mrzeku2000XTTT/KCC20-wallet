@@ -36,6 +36,7 @@ await kcc.sendKaspa({ to, amount }); // one KAS pay
 2. KasDistro — https://kasdistro.com (logo: kasdistro-logo.png). Distribute KAS to many kaspa:q.
 3. K Social — on-chain feed
 4. Faceless Studio / Proof of Fact
+5. vProg TTT — Kaspa vProgs tic-tac-toe testing lane (DA lobby, TN10). Guest: biryukovmaxim/vprog-tictactoe
 
 KasDistro iframe: You → Apps → KasDistro. Same host-ready postMessage as TTT (`kcc20_browser=1`).
 

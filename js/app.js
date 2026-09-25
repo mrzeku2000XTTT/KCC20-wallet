@@ -76,7 +76,7 @@ import {
 import { loadVprogLobby, renderVprogLobby, bindVprogLobby, startVprogPoll, stopVprogPoll, renderVprogPlay, bindVprogPlay } from './vprogTtt.js?v=4';
 import { vprogCreate, vprogJoin, vprogTurn } from './vprogLane.js?v=1';
 
-export const BUILD = '268';
+export const BUILD = '269';
 const DESK_ID_KEY = 'kcc20_desk_id_v1';
 const DESK_VAULT_KEY = 'kcc20_desk_vault_v1';
 
@@ -4574,6 +4574,20 @@ function closeKaspaBrowser() {
     openApps();
     return;
   }
+  if (wallet && sessionOpen()) $('tabbar')?.classList.add('show');
+}
+
+function openVeyraDocs() {
+  haptic();
+  $('veyra-screen')?.classList.remove('hidden');
+  $('veyra-screen')?.setAttribute('aria-hidden', 'false');
+  $('tabbar')?.classList.remove('show');
+  try { $('veyra-doc')?.scrollTo?.(0, 0); } catch {}
+}
+
+function closeVeyraDocs() {
+  $('veyra-screen')?.classList.add('hidden');
+  $('veyra-screen')?.setAttribute('aria-hidden', 'true');
   if (wallet && sessionOpen()) $('tabbar')?.classList.add('show');
 }
 
@@ -12511,6 +12525,8 @@ function bind() {
   click('profile-look', openLookSheet);
   click('profile-name', openLookSheet);
   click('profile-scorpion', openScorpionSheet);
+  click('profile-veyra', openVeyraDocs);
+  click('veyra-close', closeVeyraDocs);
   click('profile-bot', openBotSheet);
   click('profile-apps', openApps);
   click('profile-wipe', logout);

@@ -1,10 +1,21 @@
 {
   "sdk": "174",
-  "build": "268",
+  "build": "269",
   "wallet": "https://kcc-20-wallet.vercel.app",
   "sdkUrl": "https://kcc-20-wallet.vercel.app/sdk.js?v=174",
   "rule": "Every SDK_VERSION bump gets an entry here the same day. Pin sdk.js?v=NNN and require window.kcc20.sdkVersion === that NNN.",
   "entries": [
+    {
+      "date": "2026-09-25",
+      "sdk": "174",
+      "build": "269",
+      "title": "VEYRA protocol docs in the wallet",
+      "breaking": false,
+      "notes": [
+        "You → Settings → VEYRA opens the protocol in the PWA: three rooms, request vs authority, what this wallet signs, BYO KasWare/Kaspire, agents, fork. Lock screen also links veyra.html.",
+        "SDK 174 unchanged."
+      ]
+    },
     {
       "date": "2026-09-25",
       "sdk": "174",

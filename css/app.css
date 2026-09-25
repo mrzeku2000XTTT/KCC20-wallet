@@ -1764,6 +1764,17 @@ img { display: block; max-width: 100%; }
 .ttt-cell.play { pointer-events: auto; }
 .ttt-cell.play.on { color: var(--teal); }
 .ttt-cell.play.wait { opacity: 0.55; }
+#veyra-screen { z-index: 40; }
+.veyra-doc { flex: 1; min-height: 0; overflow: auto; padding: 4px 6px 36px; -webkit-overflow-scrolling: touch; text-align: left; }
+.veyra-kicker { font-size: 11px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; color: var(--gold); margin: 0 0 6px; }
+.veyra-title { font-size: 26px; letter-spacing: -.4px; margin: 0 0 8px; color: var(--label); }
+.veyra-lede { font-size: 17px; line-height: 1.4; color: var(--gold-2); margin: 0 0 14px; }
+.veyra-doc h4 { font-size: 14px; margin: 20px 0 8px; color: var(--gold-2); }
+.veyra-doc p { font-size: 14px; line-height: 1.5; color: var(--label-2); margin: 0 0 10px; }
+.veyra-doc b { color: var(--label); font-weight: 650; }
+.veyra-doc code { font-size: 12px; color: var(--gold-2); }
+.veyra-close { color: var(--gold-2) !important; font-size: 15px !important; margin-top: 18px !important; }
+.veyra-links { font-size: 13px; }
 .vprog-mini { font-size: 12px; color: var(--label-2); display: flex; align-items: center; gap: 6px; }
 .vprog-mini select {
   background: rgba(0,0,0,0.35); color: var(--label); border: 0.5px solid var(--hairline);

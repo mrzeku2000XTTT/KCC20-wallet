@@ -24,7 +24,7 @@
   <link rel="icon" href="assets/icon.png">
   <title>KCC20 Wallet — Kaspa L1 covenant wallet</title>
   <meta http-equiv="Cache-Control" content="no-store, no-cache, must-revalidate">
-  <link rel="stylesheet" href="css/app.css?v=216">
+  <link rel="stylesheet" href="css/app.css?v=217">
   <script type="application/ld+json">
   {"@context":"https://schema.org","@type":"SoftwareApplication","name":"KCC20 Wallet","alternateName":["KCC20 wallet","KCC-20 Wallet"],"applicationCategory":"FinanceApplication","operatingSystem":"Web","url":"https://kcc-20-wallet.vercel.app/","image":"https://kcc-20-wallet.vercel.app/assets/icon.png","description":"Non-custodial Kaspa Layer-1 wallet for native KAS, KCC20 covenant tokens, KRC-20, and time-lock vaults. Keys never leave the device.","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"}}
   </script>
@@ -56,7 +56,7 @@
             <img class="app-icon" src="assets/icon.png" alt="KCC20">
             <h2>KCC20 Wallet</h2>
             <p>Non-custodial Kaspa. Native KAS, KCC20 tokens, and covenant vaults — in an Apple-grade private bank shell.</p>
-            <p class="notice" style="margin-top:10px"><a href="about.html" style="color:inherit">About</a> · <a href="docs.html" style="color:inherit">SDK</a> · <a href="whats-new.html" style="color:inherit">What’s new</a></p>
+            <p class="notice" style="margin-top:10px"><a href="about.html" style="color:inherit">About</a> · <a href="docs.html" style="color:inherit">SDK</a> · <a href="veyra.html" style="color:inherit">VEYRA</a> · <a href="whats-new.html" style="color:inherit">What’s new</a></p>
             <p style="margin:10px 0 0"><a class="btn btn-glass" href="whats-new.html" style="display:inline-flex;height:40px;padding:0 16px;align-items:center;text-decoration:none;">Latest</a></p>
           </div>
           <div class="glass list">
@@ -553,6 +553,7 @@
               <button class="you-tile" id="profile-keys" type="button"><span class="glyph keys">🔑</span>Keys</button>
               <button class="you-tile" id="profile-look" type="button"><span class="glyph look">◐</span>Look</button>
               <button class="you-tile" id="profile-scorpion" type="button"><span class="glyph sco">🦂</span>Scorpion</button>
+              <button class="you-tile" id="profile-veyra" type="button"><span class="glyph net">V</span>VEYRA</button>
               <button class="you-tile" id="profile-bot" type="button"><span class="glyph desk">⌬</span>Bot</button>
               <button class="you-tile" id="profile-kasware" type="button"><span class="glyph kw">K</span>KasWare</button>
               <button class="you-tile" id="profile-kaspire" type="button"><span class="glyph kw">S</span>Kaspire</button>
@@ -889,6 +890,50 @@
         <div class="kron-board-list" id="kron-board-list"></div>
       </div>
 
+      <div class="build-screen hidden" id="veyra-screen" aria-hidden="true">
+        <div class="build-head">
+          <button type="button" class="trade-x" id="veyra-close">Close</button>
+          <h2>VEYRA</h2>
+        </div>
+        <article class="veyra-doc" id="veyra-doc">
+          <p class="veyra-kicker">Protocol · TTT Phase 6</p>
+          <h3 class="veyra-title">The Sovereign Thread</h3>
+          <p class="veyra-lede">DApps request. Wallets authorize. Users decide. Kaspa settles.</p>
+          <p>VEYRA is the signing protocol for the Kaspa application layer. It is the rule that a dApp may ask this wallet to move coins, and may never hold the key that does it. TTT, KasDistro, Nilla, COOK Agent, and any site on <code>sdk.js</code> knock on this boundary. Scorpion is the open wallet that answers.</p>
+
+          <h4>Three rooms</h4>
+          <p>The <b>application</b> prepares unsigned work: a KRON buy, a KKDAG send, a vault lock, a vProg turn. The <b>wallet</b> holds the Schnorr key — PIN on this device, or KasWare / Kaspire if you turned that on in Settings. The <b>network</b> is Kaspa L1. Settlement is a verified transaction, not a balance in someone else’s app.</p>
+          <p>When those rooms collapse, the dApp becomes a custodian. VEYRA refuses that collapse. This PWA is the wallet room. TTT is an application. Kaspa is the settlement.</p>
+
+          <h4>Request is not authority</h4>
+          <p>A site saying “sign this” is a proposal. A signature is consent. Connect selects this wallet; it does not hand the dApp a standing right to spend. Each Connect, Sign, Send, and Broadcast opens an Approve sheet. Reject is a valid result. Approving one PSKT does not approve the next.</p>
+          <p>After Connect the popup closes on purpose so reads stay silent (<code>getAccounts</code>, <code>getUtxoEntries</code>, <code>getBalance</code>). A later sign reopens the sheet. The dApp never receives seed, PIN, or hex.</p>
+
+          <h4>What this wallet signs</h4>
+          <p>You (or the dApp) build the unsigned transaction. Scorpion signs only the listed <b>P2PK funding inputs</b> — the KAS coins that pay fees and, for KCC-20, the buyer’s funding input. Covenant cells, KRON curve/pool, and inventory inputs already carry their own witnesses. <code>signInputs.index</code> is the global slot in <code>tx.inputs[]</code>. SIGHASH_ALL on this build.</p>
+          <p><code>buyKron</code> is wallet-built: the PWA quotes and assembles the covenant tx, then you Pay with PIN or an extension. <code>sendToken</code> moves a bag you already hold. Neither path sends your key off this origin.</p>
+
+          <h4>Bring your own signer</h4>
+          <p>PIN is the in-app signer. KasWare and Kaspire are desktop extensions with the same job: they pop, you Approve, keys stay in the extension. You → Settings turns one of them on. Only one extension signer is active at a time. iPhone has no Chrome extension; PIN is the signer there.</p>
+
+          <h4>Agents knock too</h4>
+          <p>COOK Agent, Home TRADE, and Scorpion chat may quote, route, and assemble. They stop at the Approve sheet. If this tab is locked, the loop stops. An agent that can prepare a fill without being able to sign it is safe to leave running. An agent that owned the key would not be VEYRA.</p>
+
+          <h4>KCC-20 and the rest of the stack</h4>
+          <p>A KCC-20 token is a covenant UTXO with rules, not a line in a contract’s storage. The wallet authorizes the owner’s funding input. The covenant checks the transfer. Kaspa includes the tx. KCC-01 / KCC-02 / KCC-20 in <code>kaspanet/kccs</code> are still drafts as conventions. The KRON path in this app is the live token transfer we already ship.</p>
+          <p>vProgs is a prototype runtime. The tic-tac-toe lane in Apps is a TN10 guest demo. DAGKnight is future consensus. VEYRA does not wait on them. It works on Kaspa L1 as it runs today.</p>
+
+          <h4>For builders</h4>
+          <p>Pin <code>https://kcc-20-wallet.vercel.app/sdk.js?v=174</code>. Require <code>window.kcc20.sdkVersion === '174'</code>. Call Connect from a user click. Read <code>window.kcc20.veyra</code> or <code>request('veyra')</code> for this protocol (silent). Docs: docs.html. Discovery: <code>kaspa:announceProvider</code>, rdns <code>app.kcc20.wallet</code>. Do not overwrite a real <code>window.kasware</code>.</p>
+
+          <h4>Fork this wallet</h4>
+          <p>Scorpion is MIT-licensed so people do not start from a blank page. Clone github.com/mrzeku2000XTTT/KCC20-wallet. Keep the signing boundary. Change origin, rdns, branding, and trusted iframe origins. Implement the same <code>window.kcc20</code> surface so dApps do not fork. Guide: FORK.md on this origin.</p>
+
+          <p class="veyra-close">Your wallet. Your keys. Your signature. VEYRA is the thread that carries it.</p>
+          <p class="veyra-links"><a href="veyra.html">Full page</a> · <a href="VEYRA.md">Markdown</a> · <a href="FORK.md">Fork guide</a> · <a href="docs.html">SDK</a></p>
+        </article>
+      </div>
+
       <div class="pin-lock hidden" id="pin-lock" aria-hidden="true">
         <div class="pin-inner">
           <img class="pin-app-icon" src="assets/icon.png" alt="">
@@ -958,7 +1003,7 @@
   <script type="module">
     import('./js/iframeVault.js?v=122').then(function (mod) {
       return (mod.restoreIframeVault ? mod.restoreIframeVault() : Promise.resolve()).then(function () {
-        return import('./js/app.js?v=268');
+        return import('./js/app.js?v=269');
       });
     }).catch(function (err) {
       console.error(err);

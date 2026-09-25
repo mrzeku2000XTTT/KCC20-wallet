@@ -1,6 +1,10 @@
 /* KasWare desktop extension — optional signer. Keys stay in KasWare. */
 import { networkId } from './crypto.js?v=90';
 import { safeSetItem } from './storage.js?v=1';
+import {
+  kaspireSigning, isKaspireInstalled, kaspireEnabled, setKaspireEnabled,
+  signPsktWithKaspire, sendKaspaWithKaspire, fetchKaspireUtxos, ensureKaspireSigner
+} from './kaspire.js?v=1';
 
 const STORE = 'kcc20_kasware_v1';
 
@@ -65,6 +69,9 @@ export function setKaswareEnabled(on) {
   const pref = loadKaswarePref();
   pref.enabled = !!on;
   saveKaswarePref(pref);
+  if (on) {
+    try { setKaspireEnabled(false); } catch {}
+  }
 }
 
 export function kaswareNetName(net) {
@@ -154,6 +161,7 @@ export async function liveKaswareAccount() {
 }
 
 export function kaswareSigning(wallet) {
+  if (kaspireSigning(wallet)) return true;
   if (!wallet || !isKaswareInstalled()) return false;
   if (walletIsKaswareChip(wallet)) return true;
   if (!kaswareEnabled()) return false;
@@ -175,6 +183,9 @@ export async function autoArmKaswareForWallet(w) {
 }
 
 export async function ensureKaswareSigner(wallet) {
+  if (kaspireSigning(wallet) || (kaspireEnabled() && isKaspireInstalled() && !kaswareEnabled())) {
+    return ensureKaspireSigner(wallet);
+  }
   if (!kaswareEnabled() && !walletIsKaswareChip(wallet)) return false;
   if (!kaswareEnabled()) setKaswareEnabled(true);
   const p = kaswareProvider();
@@ -242,6 +253,7 @@ export async function connectKasware() {
   try { pubKey = await p.getPublicKey(); } catch {}
   const pref = { enabled: true, address, pubKey: pubKey || '', at: Date.now(), network: kaswareNetName() };
   saveKaswarePref(pref);
+  try { setKaspireEnabled(false); } catch {}
   bindKaswareEvents();
   return pref;
 }
@@ -328,6 +340,9 @@ export async function signMessageWithKasware(message, params) {
 }
 
 export async function sendKaspaWithKasware(dest, amountKas) {
+  if (kaspireEnabled() && isKaspireInstalled() && (!kaswareEnabled() || kaspireSigning())) {
+    return sendKaspaWithKaspire(dest, amountKas);
+  }
   const p = kaswareProvider();
   if (!p) throw new Error('KasWare is not installed');
   const sompi = Math.round(Number(amountKas) * 1e8);
@@ -392,6 +407,9 @@ function signedJsonFrom(res) {
 }
 
 export async function signPsktWithKasware(txJsonString, signInputs) {
+  if (kaspireEnabled() && isKaspireInstalled() && (!kaswareEnabled() || kaspireSigning())) {
+    return signPsktWithKaspire(txJsonString, signInputs);
+  }
   const p = kaswareProvider();
   if (!p) throw new Error('KasWare is not installed');
   const fn = p.signPskt || p.signPsbt;
@@ -431,6 +449,9 @@ function withMs(p, ms) {
 }
 
 export async function fetchKaswareUtxos(address) {
+  if (kaspireEnabled() && isKaspireInstalled() && (!kaswareEnabled() || kaspireSigning())) {
+    return fetchKaspireUtxos(address);
+  }
   const theirs = kaswareConnectedAddress();
   if (address && theirs && !sameKasAddr(address, theirs)) return [];
   const p = kaswareProvider();

@@ -52,7 +52,12 @@ import {
   connectKasware, disconnectKasware, bindKaswareEvents, loadKaswarePref, compoundWithKasware,
   ensureKaswareSigner, syncKaswareNetwork, walletIsKaswareChip, autoArmKaswareForWallet,
   fetchKaswareUtxos, sameKasAddr, liveKaswareAccount
-} from './kasware.js?v=217';
+} from './kasware.js?v=218';
+import {
+  isKaspireInstalled, kaspireEnabled, kaspireSigning, kaspireConnectedAddress,
+  connectKaspire, disconnectKaspire, bindKaspireEvents, waitForKaspire,
+  kaspireStoreUrl, sameKaspireAddr
+} from './kaspire.js?v=1';
 import {
   cookMarkets, cookQuote, cookWrappers, pickWrappedMarketId, cookOrderbook, cookCandles,
   cookDeploy, cookBuildOrder, cookFillOrder, cookSweep, cookWrap, cookMint,
@@ -71,7 +76,7 @@ import {
 import { loadVprogLobby, renderVprogLobby, bindVprogLobby, startVprogPoll, stopVprogPoll, renderVprogPlay, bindVprogPlay } from './vprogTtt.js?v=4';
 import { vprogCreate, vprogJoin, vprogTurn } from './vprogLane.js?v=1';
 
-export const BUILD = '266';
+export const BUILD = '267';
 const DESK_ID_KEY = 'kcc20_desk_id_v1';
 const DESK_VAULT_KEY = 'kcc20_desk_vault_v1';
 
@@ -1310,7 +1315,7 @@ function syncKsocialAfterWalletChange() {
   try { paintKsocialAs(); } catch {}
   try { syncKsocialCount(); } catch {}
   if ($('live-pill')) {
-    $('live-pill').textContent = (isTestnet() ? 'TN10 · ' : (kaswareSigning(wallet) ? 'KasWare · ' : 'Live · ')) + BUILD;
+    $('live-pill').textContent = (isTestnet() ? 'TN10 · ' : (kaspireSigning(wallet) ? 'Kaspire · ' : (kaswareSigning(wallet) ? 'KasWare · ' : 'Live · '))) + BUILD;
   }
   if (!ksocialOpen()) return;
   refreshKsocialKns().catch(() => {});
@@ -2052,7 +2057,7 @@ function paintIfChanged(el, html) {
 function renderHome() {
   if (!wallet) return;
   if ($('live-pill')) {
-    $('live-pill').textContent = (isTestnet() ? 'TN10 · ' : (kaswareSigning(wallet) ? 'KasWare · ' : 'Live · ')) + BUILD;
+    $('live-pill').textContent = (isTestnet() ? 'TN10 · ' : (kaspireSigning(wallet) ? 'Kaspire · ' : (kaswareSigning(wallet) ? 'KasWare · ' : 'Live · '))) + BUILD;
   }
   const balHtml = `${formatAmount(balanceSompi)}<small>KAS</small>`;
   if ($('card-bal') && $('card-bal').innerHTML !== balHtml) $('card-bal').innerHTML = balHtml;
@@ -10660,6 +10665,67 @@ function openKaswareSheet() {
   });
 }
 
+function openKaspireSheet() {
+  haptic();
+  const installed = isKaspireInstalled();
+  const connected = kaspireConnectedAddress();
+  const match = kaspireSigning(wallet);
+  const desktop = isDesktopBrowser();
+  openSheet('Kaspire', `
+    <p class="muted" style="text-align:left;padding:0 0 10px;">Desktop Chrome / Edge. Detects <code>window.kaspire</code> (isKaspire). Signs KAS, KCC20 PSKTs, and KRON fee inputs — keys stay in Kaspire. Same job as KasWare; only one extension signer can be on at a time.</p>
+    <div class="kv"><span class="k">Extension</span><span class="v">${installed ? 'Found' : (desktop ? 'Not installed' : 'Desktop only')}</span></div>
+    <div class="kv"><span class="k">This wallet</span><span class="v">${esc(shortAddr(wallet?.address || '', 10, 6) || '—')}</span></div>
+    <div class="kv"><span class="k">Kaspire</span><span class="v">${connected ? esc(shortAddr(connected, 10, 6)) : 'Not connected'}</span></div>
+    <div class="kv"><span class="k">Signing</span><span class="v">${match ? 'Kaspire' : (kaswareSigning(wallet) && !kaspireSigning(wallet) ? 'KasWare' : 'In-app key')}</span></div>
+    <label class="kw-toggle">
+      <input type="checkbox" id="kp-on" ${match ? 'checked' : ''} ${installed ? '' : 'disabled'}>
+      <span>Sign with Kaspire</span>
+    </label>
+    ${!installed ? `<p class="muted" style="text-align:left;padding:8px 0 0;">Install <a href="${esc(kaspireStoreUrl())}" target="_blank" rel="noopener" style="color:var(--gold-2)">Kaspire Wallet</a> in this browser, then come back here.</p>` : ''}
+    ${connected && wallet?.address && !sameKaspireAddr(connected, wallet.address) ? `<p class="muted" style="text-align:left;padding:8px 0 0;">This chip is not the Kaspire account. Switch Kaspire to this same address, then turn Sign with Kaspire on.</p>` : ''}
+    <p class="muted" style="text-align:left;padding:8px 0 0;">When this is on, Send, Compound, KRON buys, and KCC20 PSKTs pop Kaspire. Match the extension network to You → Network (mainnet or TN10).</p>
+  `, { confirm: 'Done', cancel: false });
+  $('kp-on')?.addEventListener('change', async (e) => {
+    const want = !!e.target.checked;
+    try {
+      if (want) {
+        setSheetStatus('Approve in Kaspire…');
+        const linked = await connectKaspire();
+        hydrateNativeKey(wallet);
+        const same = sameKaspireAddr(wallet?.address, linked.address);
+        if (!same && hexKey(wallet?.privKey) && wallet?.address) {
+          await disconnectKaspire();
+          e.target.checked = false;
+          throw new Error('Kaspire is on a different account. Switch the extension to ' + shortAddr(wallet.address, 10, 6) + ', then try again.');
+        }
+        if (linked.address && (!wallet || !hexKey(wallet.privKey) || same)) {
+          if (wallet && same) {
+            wallet.kaspire = true;
+            if (linked.pubKey) wallet.pubKey = wallet.pubKey || linked.pubKey;
+            saveWallet();
+          }
+        }
+        toast('Kaspire signing on');
+      } else {
+        await disconnectKaspire();
+        if (wallet) wallet.kaspire = false;
+        saveWallet();
+        toast('Signing with in-app key');
+      }
+    } catch (err) {
+      e.target.checked = !want;
+      if (errText(err) === 'cancelled') { toast('Kaspire cancelled'); return; }
+      toast(errText(err));
+    }
+    closeSheet();
+    openKaspireSheet();
+    if (currentTab === 'you') renderProfile();
+    if (currentTab === 'home') renderHome();
+    syncAtKwBtn();
+    syncKsocialAfterWalletChange();
+  });
+}
+
 async function adoptKaswareAccount(linked) {
   const addr = String(linked?.address || '');
   if (!addr) return;
@@ -12438,6 +12504,7 @@ function bind() {
   click('profile-pin', openPinSettings);
   click('profile-keys', openSettings);
   click('profile-kasware', openKaswareSheet);
+  click('profile-kaspire', openKaspireSheet);
   click('profile-connected', openConnectedSheet);
   click('btn-connected', openConnectedSheet);
   click('profile-net', openNetworkSheet);
@@ -12602,6 +12669,7 @@ async function init() {
   try { saveWalletList(loadWalletList()); } catch {}
   try { paintLockNet(); syncAtVenues(); } catch {}
   try { bindKaswareEvents(); } catch {}
+  try { bindKaspireEvents(); waitForKaspire(); } catch {}
   try { bootIframeVaultWatch(); } catch {}
   try { bootDappConnect(dappHooks()); } catch {}
   try { paintConnectedPill(); } catch {}

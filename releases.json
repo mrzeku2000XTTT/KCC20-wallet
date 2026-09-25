@@ -1,10 +1,21 @@
 {
   "sdk": "173",
-  "build": "266",
+  "build": "267",
   "wallet": "https://kcc-20-wallet.vercel.app",
   "sdkUrl": "https://kcc-20-wallet.vercel.app/sdk.js?v=173",
   "rule": "Every SDK_VERSION bump gets an entry here the same day. Pin sdk.js?v=NNN and require window.kcc20.sdkVersion === that NNN.",
   "entries": [
+    {
+      "date": "2026-09-25",
+      "sdk": "173",
+      "build": "267",
+      "title": "Kaspire extension signing",
+      "breaking": false,
+      "notes": [
+        "You → Settings → Kaspire. Detects window.kaspire (isKaspire). Toggle Sign with Kaspire. Connect uses requestAccounts; PSKTs use signPskt like KasWare.",
+        "Only one extension signer is on at a time. Keys stay in Kaspire. SDK 173 unchanged."
+      ]
+    },
     {
       "date": "2026-09-25",
       "sdk": "173",

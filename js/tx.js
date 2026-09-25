@@ -5,7 +5,7 @@ import {
   kaspaRestBase, networkId, kaspaAddressFromPubkey
 } from './crypto.js?v=90';
 import { parse as parseSilArtifact, encodeEntry, redeemHex as silRedeemHex, encodeKcc01, toSig65 as silToSig65, SEARCH_DISPATCH_TAGS } from './silverscript.js?v=187';
-import { kaswareSigning, sendKaspaWithKasware, sendKrc20WithKasware, signPsktWithKasware, fetchKaswareUtxos, repairSafeJson, kaswareEnabled, isKaswareInstalled, liveKaswareAccount } from './kasware.js?v=216';
+import { kaswareSigning, sendKaspaWithKasware, sendKrc20WithKasware, signPsktWithKasware, fetchKaswareUtxos, repairSafeJson, kaswareEnabled, isKaswareInstalled, liveKaswareAccount } from './kasware.js?v=218';
 import * as kron from '../vendor/kron-sdk/index.js';
 
 function API() { return kaspaRestBase(); }

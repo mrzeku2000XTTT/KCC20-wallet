@@ -1959,6 +1959,36 @@ function outpointId(raw) {
   return String(raw).replace(/^0x/i, '').toLowerCase();
 }
 
+function fillSafeJsonUtxosFromTx(json, tx) {
+  let o;
+  try { o = JSON.parse(String(json || '')); } catch { return String(json || ''); }
+  const root = o.transaction || o;
+  const ins = root.inputs || [];
+  const live = tx.inputs || [];
+  for (let i = 0; i < ins.length; i++) {
+    const have = ins[i].utxo;
+    const scriptHave = hexish(have?.scriptPublicKey?.script || have?.scriptPublicKey);
+    if (have && have.amount != null && scriptHave.length >= 20) continue;
+    const u = live[i]?.utxo;
+    if (!u) continue;
+    const script = hexish(u.scriptPublicKey?.script || u.scriptPublicKey);
+    const amount = u.amount != null ? String(u.amount) : (u.value != null ? String(u.value) : '');
+    if (!script || !amount) continue;
+    ins[i].utxo = {
+      address: String(u.address || ''),
+      amount,
+      scriptPublicKey: {
+        version: Number(u.scriptPublicKey?.version || 0),
+        script
+      },
+      blockDaaScore: String(u.blockDaaScore ?? 0),
+      isCoinbase: !!(u.isCoinbase)
+    };
+  }
+  fillMissingIsCoinbase(o);
+  return JSON.stringify(o);
+}
+
 function attachUtxosToSafeJson(json, entries, address) {
   let o;
   try { o = JSON.parse(String(json || '')); } catch { return String(json || ''); }
@@ -3036,18 +3066,31 @@ export async function sendKcc20({ wallet, dest, token, amountHuman, utxos, onSta
       const tx = asm.transaction;
       const fundIdx = asm.fundingInputIndexes || [];
       const useKw = kaswareSigning(wallet);
-      const covEntries = selected.map((p) => ({
-        address: wallet.address,
-        outpoint: { transactionId: p.transactionId, index: p.index },
-        amount: p.value,
-        scriptPublicKey: p.spk || p.scriptPublicKey,
-        blockDaaScore: 0,
-        isCoinbase: false
-      }));
-      if (useKw) {
+      const keyHex = cleanPrivHex(wallet.privKey);
+      let nativeOk = false;
+      if (keyHex) {
+        try {
+          const trial = new k.PrivateKey(keyHex);
+          const addr = String(k.addressFromScriptPublicKey(k.payToAddressScript(trial.toPublicKey()), networkId()));
+          nativeOk = addr === String(wallet.address);
+        } catch {}
+      }
+      if (nativeOk) {
+        onStatus?.('Signing the KAS fee input…');
+        const key = new k.PrivateKey(keyHex);
+        const inputs = [...tx.inputs];
+        for (const idx of fundIdx) {
+          const sig = k.createInputSignature(tx, idx, key, k.SighashType.All);
+          const hex = hexish(sig);
+          if (!hex || hex.length < 20) throw new Error('Signing failed — empty KAS fee signature');
+          inputs[idx].signatureScript = hex;
+          inputs[idx].sigOpCount = 0;
+        }
+        tx.inputs = inputs;
+      } else if (useKw) {
         onStatus?.('Approve the KAS fee input in KasWare…');
         let json = repairSafeJson(tx.serializeToSafeJSON());
-        json = attachUtxosToSafeJson(json, [...covEntries, ...fundingEntries], wallet.address);
+        json = fillSafeJsonUtxosFromTx(json, tx);
         json = repairSafeJson(json);
         const signInputs = fundIdx.map((index) => ({ index, sighashType: 1 }));
         const signedJson = repairSafeJson(await signPsktWithKasware(json, signInputs));
@@ -3062,18 +3105,7 @@ export async function sendKcc20({ wallet, dest, token, amountHuman, utxos, onSta
         }
         tx.inputs = origIns;
       } else {
-        const keyHex = cleanPrivHex(wallet.privKey);
-        if (!keyHex) throw new Error('No in-app key on this wallet. Import the 64-hex key, or turn KasWare on in You → Settings.');
-        const key = new k.PrivateKey(keyHex);
-        const inputs = [...tx.inputs];
-        for (const idx of fundIdx) {
-          const sig = k.createInputSignature(tx, idx, key, k.SighashType.All);
-          const hex = hexish(sig);
-          if (!hex || hex.length < 20) throw new Error('Signing failed — empty KAS fee signature');
-          inputs[idx].signatureScript = hex;
-          inputs[idx].sigOpCount = 0;
-        }
-        tx.inputs = inputs;
+        throw new Error('No in-app key on this wallet. Import the 64-hex key, or turn KasWare on in You → Settings.');
       }
       onStatus?.('Broadcasting KCC20 send…');
       let txId;

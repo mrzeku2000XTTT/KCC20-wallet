@@ -1,10 +1,22 @@
 {
   "sdk": "173",
-  "build": "261",
+  "build": "262",
   "wallet": "https://kcc-20-wallet.vercel.app",
   "sdkUrl": "https://kcc-20-wallet.vercel.app/sdk.js?v=173",
   "rule": "Every SDK_VERSION bump gets an entry here the same day. Pin sdk.js?v=NNN and require window.kcc20.sdkVersion === that NNN.",
   "entries": [
+    {
+      "date": "2026-09-25",
+      "sdk": "173",
+      "build": "262",
+      "title": "Sent tokens leave Home immediately",
+      "breaking": false,
+      "notes": [
+        "After Send all KKDAG (or any KCC20), Home / Tokens drop that row right away. A stale KRON/kascov balance can no longer put the token back for minutes.",
+        "Zero-balance rows are hidden. The live KRON tokenlist is the source of truth; the slower kascov catalog no longer resurrects spent cells.",
+        "SDK 173 unchanged. Hard-refresh until BUILD 262."
+      ]
+    },
     {
       "date": "2026-09-25",
       "sdk": "173",

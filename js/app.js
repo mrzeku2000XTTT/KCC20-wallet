@@ -11,7 +11,7 @@ import {
   fetchKcc20Portfolio, fetchKrc20Portfolio, fetchKcc20PortfolioMany, fetchKrc20PortfolioMany,
   fetchKronAddrTrades, fetchKronTokenUtxos, fetchKronAddrHoldings, KRON_IDX,
   krc20Logo, toTokenRaw, setVaultOwner, kcc20Identicon, VAULT_GROUPS, LIFE_KINDS, lifeKindMeta
-} from './kcc20.js?v=126';
+} from './kcc20.js?v=127';
 import { parseIntent, describeIntent, askFor, parseDurationField, interpretVaultChat, normalizeChat, normalizeVaultType, collectKasAmount } from './intent.js?v=127';
 import { parse as parseSilArtifact, redeemHex as silRedeemHex, matchSilverIntent } from './silverscript.js?v=187';
 import { payloadFromAddress } from './script.js?v=90';
@@ -69,7 +69,7 @@ import {
   ksocialFeeKas
 } from './ksocial.js?v=207';
 
-export const BUILD = '261';
+export const BUILD = '262';
 const DESK_ID_KEY = 'kcc20_desk_id_v1';
 const DESK_VAULT_KEY = 'kcc20_desk_vault_v1';
 
@@ -338,6 +338,9 @@ let tokenStream = null;
 let kronKickAt = 0;
 let tokenFastOff = 0;
 let hushTokenToastsUntil = 0;
+const HOLD_PIN_MS = 180000;
+const HOLD_PIN_KEY = 'kcc20_holdpin_v1';
+let holdPins = new Map();
 let hushUtxosUntil = 0;
 let walletSnap = {};
 let lastAllSnap = 0;
@@ -715,14 +718,15 @@ function rememberActiveSnap() {
 }
 
 function hydrateFromSnap(addr) {
+  loadHoldPins(addr);
   const snap = walletSnap[addr];
   if (!snap) return;
   if (snap.sompi != null) {
     balanceSompi = Number(snap.sompi) || 0;
     seenBalance = balanceSompi;
   }
-  if (Array.isArray(snap.kcc)) kccHoldings = snap.kcc;
-  if (Array.isArray(snap.krc)) krcHoldings = snap.krc;
+  if (Array.isArray(snap.kcc)) kccHoldings = applyHoldPinsToList(snap.kcc, 'kcc20');
+  if (Array.isArray(snap.krc)) krcHoldings = applyHoldPinsToList(snap.krc, 'krc20');
   if (Array.isArray(snap.txs)) window.__txs = snap.txs;
 }
 
@@ -2503,8 +2507,8 @@ function tokenRow(t, extra = '') {
 
 function renderHoldings() {
   const kasRow = tokenRow({ ...NATIVE_KAS, sompi: balanceSompi, usd: usd(kas()), protocol: 'native' }, 'data-ticker="KAS"');
-  const kccRows = kccHoldings.map(t => tokenRow(t));
-  const krcRows = krcHoldings.map(t => tokenRow(t));
+  const kccRows = kccHoldings.filter(heldPositive).map(t => tokenRow(t));
+  const krcRows = krcHoldings.filter(heldPositive).map(t => tokenRow(t));
   const ddRows = (isTttTreasuryWallet() ? kkdCellCache : []).map(c => `
     <button class="row token-row" type="button" data-dd-cell="${esc(c.txid)}:${esc(String(c.index))}">
       <div class="dot" style="background:rgba(122,162,247,.2);color:#7aa2f7">↓</div>
@@ -2584,14 +2588,16 @@ function renderTokens() {
   }
   const kcc = $('token-list');
   if (kcc) {
-    kcc.innerHTML = kccHoldings.length
-      ? kccHoldings.map(t => tokenRow(t)).join('')
+    const kccLive = kccHoldings.filter(heldPositive);
+    kcc.innerHTML = kccLive.length
+      ? kccLive.map(t => tokenRow(t)).join('')
       : `<div class="empty">${tokenLoadErr || (lastTokenFetch ? 'No KCC20 on this address yet. Import the same key as KasWare to see KRON / KKDAG here automatically.' : 'Loading KCC20…')}</div>`;
   }
   const krc = $('token-krc20');
   if (krc) {
-    krc.innerHTML = krcHoldings.length
-      ? krcHoldings.map(t => tokenRow(t)).join('')
+    const krcLive = krcHoldings.filter(heldPositive);
+    krc.innerHTML = krcLive.length
+      ? krcLive.map(t => tokenRow(t)).join('')
       : `<div class="empty">No KRC-20 (Kasplex / KasWare) tokens on this address.</div>`;
   }
   const watch = $('token-watch');
@@ -5309,6 +5315,86 @@ function setLiveFast(on) {
   liveTimer = setInterval(() => tickLive(false), liveFast ? 1500 : 3000);
 }
 
+function holdPinStorageKey(addr) {
+  return HOLD_PIN_KEY + ':' + (addr || wallet?.address || '');
+}
+
+function persistHoldPins(addr) {
+  const use = addr || wallet?.address;
+  if (!use) return;
+  const rows = [...holdPins.entries()].map(([tick, p]) => ({ tick, ...p }));
+  try { sessionStorage.setItem(holdPinStorageKey(use), JSON.stringify(rows)); } catch {}
+}
+
+function loadHoldPins(addr) {
+  holdPins = new Map();
+  try {
+    const rows = JSON.parse(sessionStorage.getItem(holdPinStorageKey(addr)) || '[]');
+    const now = Date.now();
+    for (const p of rows || []) {
+      const tick = String(p?.tick || '').toUpperCase();
+      if (!tick || now > Number(p.until || 0)) continue;
+      holdPins.set(tick, p);
+    }
+  } catch { holdPins = new Map(); }
+}
+
+function pinTokenHold(tick, protocol, balance, dir, decimals) {
+  const T = String(tick || '').toUpperCase();
+  if (!T) return;
+  holdPins.set(T, {
+    tick: T,
+    protocol: protocol || 'kcc20',
+    balance: String(balance ?? '0'),
+    decimals: Number(decimals || 0),
+    until: Date.now() + HOLD_PIN_MS,
+    dir: dir === 'in' ? 'in' : 'out'
+  });
+  persistHoldPins();
+  try {
+    const last = loadLastBals(wallet?.address);
+    last[T] = String(balance ?? '0');
+    saveLastBals(last, wallet?.address);
+  } catch {}
+}
+
+function heldPositive(t) {
+  try { return BigInt(t.balance || '0') > 0n; } catch { return !!t.ticker; }
+}
+
+function applyHoldPinsToList(list, protocol) {
+  const now = Date.now();
+  const map = new Map((list || []).map(t => [String(t.ticker || '').toUpperCase(), { ...t }]));
+  for (const [tick, pin] of [...holdPins]) {
+    if (protocol && pin.protocol && pin.protocol !== protocol) continue;
+    if (now > Number(pin.until || 0)) { holdPins.delete(tick); continue; }
+    const r = map.get(tick);
+    let remBal = 0n;
+    try { remBal = r ? BigInt(r.balance || '0') : 0n; } catch {}
+    let pinBal = 0n;
+    try { pinBal = BigInt(pin.balance || '0'); } catch {}
+    if (pin.dir === 'out') {
+      if (remBal <= pinBal) { holdPins.delete(tick); continue; }
+      if (pinBal <= 0n) { map.delete(tick); continue; }
+      if (r) r.balance = String(pin.balance);
+    } else if (remBal >= pinBal && r) {
+      holdPins.delete(tick);
+    } else if (r) {
+      r.balance = String(pin.balance);
+    } else {
+      map.set(tick, {
+        ticker: tick,
+        protocol: pin.protocol || 'kcc20',
+        balance: String(pin.balance),
+        decimals: Number(pin.decimals || 0),
+        name: tick
+      });
+    }
+  }
+  persistHoldPins();
+  return [...map.values()].filter(heldPositive);
+}
+
 function applyLocalTokenDelta(ticker, protocol, deltaRaw) {
   const tick = String(ticker || '').toUpperCase();
   const list = protocol === 'krc20' ? krcHoldings : kccHoldings;
@@ -5318,29 +5404,27 @@ function applyLocalTokenDelta(ticker, protocol, deltaRaw) {
     const next = BigInt(t.balance || '0') + BigInt(deltaRaw);
     t.balance = (next < 0n ? 0n : next).toString();
   } catch { return; }
+  const dir = (() => { try { return BigInt(deltaRaw) < 0n ? 'out' : 'in'; } catch { return 'out'; } })();
+  pinTokenHold(tick, protocol || t.protocol, t.balance, dir, t.decimals);
+  if (!heldPositive(t)) {
+    const i = list.indexOf(t);
+    if (i >= 0) list.splice(i, 1);
+  }
   rememberActiveSnap();
   renderHome();
   if (currentTab === 'tokens') renderTokens();
   if (currentTab === 'you') renderProfile();
 }
 
-function mergeFreshHoldings(local, remote) {
+function mergeFreshHoldings(local, remote, protocol) {
   const rem = Array.isArray(remote) ? remote : [];
-  if (Date.now() > hushTokenToastsUntil) return rem;
-  const map = new Map(rem.map(t => [String(t.ticker || '').toUpperCase(), t]));
-  for (const t of local || []) {
-    const key = String(t.ticker || '').toUpperCase();
-    if (!key) continue;
-    const r = map.get(key);
-    try {
-      if (!r || BigInt(t.balance || '0') > BigInt(r.balance || '0')) {
-        map.set(key, r ? { ...r, ...t, image: t.image || r.image } : t);
-      }
-    } catch {
-      if (!r) map.set(key, t);
-    }
-  }
-  return [...map.values()];
+  const loc = new Map((local || []).map(t => [String(t.ticker || '').toUpperCase(), t]));
+  const merged = rem.map(t => {
+    const l = loc.get(String(t.ticker || '').toUpperCase());
+    if (!l) return t;
+    return { ...t, image: t.image || l.image, name: t.name || l.name };
+  });
+  return applyHoldPinsToList(merged, protocol);
 }
 
 function afterTx() {
@@ -5535,7 +5619,7 @@ async function refreshTokenHoldings() {
     if (!wallet || wallet.address !== addr) return;
     if (kcc.status === 'fulfilled') {
       const withLogos = await attachKronLogos(kcc.value);
-      kccHoldings = mergeFreshHoldings(kccHoldings, withLogos);
+      kccHoldings = mergeFreshHoldings(kccHoldings, withLogos, 'kcc20');
       try {
         const map = { ...kronPx };
         try {
@@ -5563,7 +5647,7 @@ async function refreshTokenHoldings() {
         await hydrateKronPnl(addr).catch(() => {});
       } catch {}
     }
-    if (krc.status === 'fulfilled') krcHoldings = mergeFreshHoldings(krcHoldings, krc.value);
+    if (krc.status === 'fulfilled') krcHoldings = mergeFreshHoldings(krcHoldings, krc.value, 'krc20');
     tokenLoadErr = kcc.status === 'rejected' ? 'KCC20 indexer unreachable — retrying…' : '';
   } catch (e) {
     tokenLoadErr = errText(e);
@@ -5580,6 +5664,11 @@ async function refreshTokenHoldings() {
     const had = Object.prototype.hasOwnProperty.call(last, tick);
     let prevAmt = 0n;
     try { prevAmt = had ? BigInt(last[tick] || '0') : nextAmt; } catch { prevAmt = nextAmt; }
+    const pin = holdPins.get(tick);
+    if (pin && pin.dir === 'out' && Date.now() < Number(pin.until || 0)) {
+      last[tick] = String(pin.balance || '0');
+      continue;
+    }
     last[tick] = nextAmt.toString();
     if (!had) continue;
     if (nextAmt <= prevAmt) continue;
@@ -7801,7 +7890,7 @@ async function tickAgent() {
     } else if (want.sell) {
       let hold = holdingForTick(job.tick);
       if (job.deskId && tradeWallet.address !== wallet?.address) {
-        const rows = await fetchKronAddrHoldings(tradeWallet.address);
+        const rows = await fetchKronAddrHoldings(tradeWallet.address).catch(() => []);
         hold = (rows || []).find(x => String(x.ticker || x.tick || '').toUpperCase() === job.tick) || hold;
       }
       if (!hold || !(Number(hold.balance) > 0)) {
@@ -9368,6 +9457,7 @@ async function runTrade({ tick, side, amount, quote, forceKasware = false }) {
           image: logo || ''
         });
       }
+      pinTokenHold(tickU, 'kcc20', row ? row.balance : String(q.tokenOut), 'in', q.decimals);
       try { kccHoldings = await attachKronLogos(kccHoldings); } catch {}
       try {
         const info = await lookupKronTick(tickU);
@@ -9400,6 +9490,7 @@ async function runTrade({ tick, side, amount, quote, forceKasware = false }) {
         image: kronLogoFor(q.tick || tick)
       });
     } else if (q?.side === 'sell') {
+      if (q.tokenIn != null) applyLocalTokenDelta(q.tick || tick, 'kcc20', '-' + String(q.tokenIn));
       pushTokenActivity({
         dir: 'out',
         tick: q.tick || tick,

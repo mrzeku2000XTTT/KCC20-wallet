@@ -420,17 +420,13 @@ function withTimeout(promise, ms, fallback) {
   ]).finally(() => clearTimeout(t));
 }
 
-/** KRON indexer: CORS-open, live KCC20 balances. Path is /address/{addr}/tokenlist. */
+/** KRON indexer: CORS-open, live KCC20 balances. Path is /address/{addr}/tokenlist. Throws on network/HTTP errors so callers can tell empty from down. */
 export async function fetchKronAddrHoldings(address) {
   if (!address) return [];
-  try {
-    const body = await fetchJson(KRON_IDX + '/address/' + encodeURIComponent(address) + '/tokenlist');
-    const rows = Array.isArray(body?.result) ? body.result
-      : Array.isArray(body) ? body : [];
-    return rows.map(mapKronHold).filter(Boolean);
-  } catch {
-    return [];
-  }
+  const body = await fetchJson(KRON_IDX + '/address/' + encodeURIComponent(address) + '/tokenlist');
+  const rows = Array.isArray(body?.result) ? body.result
+    : Array.isArray(body) ? body : [];
+  return rows.map(mapKronHold).filter(Boolean);
 }
 
 export async function fetchKronAddrTrades(address, limit = 24) {
@@ -478,33 +474,57 @@ async function fetchKascovHoldings(address, pubKey) {
   return { list: [], err: lastErr };
 }
 
-function mergeHoldings(kron, kascov) {
+function mergeHoldings(kron, kascov, kronAuthoritative = false) {
   const map = new Map();
-  for (const t of [...kron, ...kascov]) {
+  for (const t of kron || []) {
+    const key = String(t.ticker || '').toUpperCase();
+    if (key) map.set(key, t);
+  }
+  for (const t of kascov || []) {
     const key = String(t.ticker || '').toUpperCase();
     if (!key) continue;
     const cur = map.get(key);
-    if (!cur) map.set(key, t);
-    else {
-      try {
-        if (BigInt(t.balance || '0') > BigInt(cur.balance || '0')) map.set(key, { ...cur, ...t });
-      } catch {}
+    if (!cur) {
+      if (!kronAuthoritative) map.set(key, t);
+      continue;
     }
+    map.set(key, {
+      ...t,
+      ...cur,
+      image: cur.image || t.image,
+      name: (cur.name && cur.name !== cur.ticker) ? cur.name : (t.name || cur.name)
+    });
   }
-  return [...map.values()];
+  return [...map.values()].filter(t => {
+    try { return BigInt(t.balance || '0') > 0n; } catch { return true; }
+  });
 }
 
 export async function fetchKcc20Portfolio(address, pubKey) {
-  const kronP = address ? fetchKronAddrHoldings(address) : Promise.resolve([]);
   const kascovP = fetchKascovHoldings(address, pubKey);
+  let kron = [];
+  let kronOk = false;
+  let lastErr = null;
+  if (address) {
+    try {
+      kron = await fetchKronAddrHoldings(address);
+      kronOk = true;
+    } catch (e) {
+      lastErr = e;
+    }
+  }
 
-  const kron = await kronP;
-  const kascovBag = kron.length
-    ? await withTimeout(kascovP, 450, { list: [], err: null })
-    : await kascovP;
+  if (kronOk) {
+    const kascovBag = kron.length
+      ? await withTimeout(kascovP, 450, { list: [], err: null })
+      : { list: [], err: null };
+    return mergeHoldings(kron, kascovBag?.list || [], true);
+  }
+
+  const kascovBag = await kascovP;
   const kascov = kascovBag?.list || [];
-  let lastErr = kascovBag?.err || null;
-  if (kascov.length || kron.length) return mergeHoldings(kron, kascov);
+  lastErr = kascovBag?.err || lastErr;
+  if (kascov.length || kron.length) return mergeHoldings(kron, kascov, false);
 
   if (address) {
     try {

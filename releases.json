@@ -8,6 +8,17 @@
     {
       "date": "2026-09-25",
       "sdk": "173",
+      "build": "264",
+      "title": "vProg TTT: tap Practice to play",
+      "breaking": false,
+      "notes": [
+        "You → Apps → vProg TTT now has a Practice board you tap (you X, Scorpion O). Live TN10 boards stay watch-only.",
+        "SDK 173 unchanged."
+      ]
+    },
+    {
+      "date": "2026-09-25",
+      "sdk": "173",
       "build": "263",
       "title": "vProg Tic-Tac-Toe testing lane in Apps",
       "breaking": false,

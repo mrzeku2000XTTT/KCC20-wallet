@@ -68,9 +68,9 @@ import {
   ksocialRich, KSOCIAL_MAX, ksocialCachedFeed, detectWalletKns, knsNameForPubkey,
   ksocialFeeKas
 } from './ksocial.js?v=207';
-import { loadVprogLobby, renderVprogLobby, bindVprogLobby, startVprogPoll, stopVprogPoll } from './vprogTtt.js?v=1';
+import { loadVprogLobby, renderVprogLobby, bindVprogLobby, startVprogPoll, stopVprogPoll, renderVprogPlay, bindVprogPlay } from './vprogTtt.js?v=2';
 
-export const BUILD = '263';
+export const BUILD = '264';
 const DESK_ID_KEY = 'kcc20_desk_id_v1';
 const DESK_VAULT_KEY = 'kcc20_desk_vault_v1';
 
@@ -3751,6 +3751,12 @@ async function paintVprogApp() {
 }
 
 function startVprogApp() {
+  const play = $('vprog-play');
+  if (play && !play.dataset.bound) {
+    play.dataset.bound = '1';
+    renderVprogPlay(play);
+    bindVprogPlay(play, { toast });
+  }
   paintVprogApp().catch(e => toast(errText(e)));
   startVprogPoll(() => paintVprogApp().catch(() => {}));
 }

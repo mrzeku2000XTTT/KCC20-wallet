@@ -145,8 +145,7 @@ export function renderVprogLobby(root, data, { network } = {}) {
   const finished = data.games?.finished || [];
   const mine = [...open, ...playing, ...finished].filter(g => uid && (g.players?.[0] === uid || g.players?.[1] === uid));
   const html = `
-    <p class="build-lede">Kaspa vProgs tic-tac-toe testing lane. Two players lock a stake, play, a RISC0 guest settles the pot. Repo: <a href="${GUEST_REPO}" target="_blank" rel="noopener">biryukovmaxim/vprog-tictactoe</a>.</p>
-    <p class="muted" style="text-align:left;padding:0 0 10px">${esc(netNote)} Create / join / turn are encoder-wasm carriers — Scorpion shows the live DA and your PIN key's rollup id. Keys stay here.</p>
+    <p class="muted" style="text-align:left;padding:0 0 10px">${esc(netNote)} These boards refresh from the testing lane. Tapping them does nothing — play the Practice board above.</p>
     <div class="kv"><span class="k">Lane</span><span class="v">${esc(shortHex(st.lane_subnet))}</span></div>
     <div class="kv"><span class="k">Covenant</span><span class="v">${esc(shortHex(st.covenant_id))}</span></div>
     <div class="kv"><span class="k">L2 tip</span><span class="v">${esc(st.l2_tip ?? '—')}</span></div>
@@ -196,6 +195,100 @@ export function bindVprogLobby(root, { wallet, toast, onRefresh }) {
     lastPaint = '';
     toast?.(vprogDaBase() ? 'DA saved' : 'Using public TN10 lane');
     onRefresh?.();
+  });
+}
+
+const WINS = [
+  [0, 1, 2], [3, 4, 5], [6, 7, 8],
+  [0, 3, 6], [1, 4, 7], [2, 5, 8],
+  [0, 4, 8], [2, 4, 6]
+];
+let playBoard = [0, 0, 0, 0, 0, 0, 0, 0, 0];
+let playOver = '';
+
+function winnerOf(b) {
+  for (const [a, c, d] of WINS) {
+    if (b[a] && b[a] === b[c] && b[a] === b[d]) return b[a];
+  }
+  if (b.every(Boolean)) return 3;
+  return 0;
+}
+
+function pickScorpion(b) {
+  const empty = [];
+  for (let i = 0; i < 9; i++) if (!b[i]) empty.push(i);
+  for (const i of empty) {
+    const t = b.slice(); t[i] = 2;
+    if (winnerOf(t) === 2) return i;
+  }
+  for (const i of empty) {
+    const t = b.slice(); t[i] = 1;
+    if (winnerOf(t) === 1) return i;
+  }
+  if (b[4] === 0) return 4;
+  const corners = [0, 2, 6, 8].filter(i => b[i] === 0);
+  if (corners.length) return corners[Math.floor(Math.random() * corners.length)];
+  return empty[0];
+}
+
+function playStatus() {
+  if (playOver === 'x') return 'You win. Three in a row.';
+  if (playOver === 'o') return 'Scorpion wins.';
+  if (playOver === 'draw') return 'Draw. Tap New game.';
+  return 'Your move — you are X. Scorpion is O.';
+}
+
+export function renderVprogPlay(root) {
+  if (!root) return;
+  const bits = [];
+  for (let i = 0; i < 9; i++) {
+    const on = playBoard[i] ? ' on' : '';
+    bits.push(`<button type="button" class="ttt-cell play${on}" data-play-cell="${i}">${mark(playBoard[i])}</button>`);
+  }
+  root.innerHTML = `
+    <ol class="vprog-how">
+      <li>Tap an empty square below. You are <b>X</b>. Scorpion answers as <b>O</b>. Three in a row wins.</li>
+      <li>That board is practice on this phone. No KAS moves.</li>
+      <li>Boards under <b>Live TN10 lane</b> are Max’s vProg tests. Watch only. Staked create/join/turn use the guest UI at <a href="${PUBLIC_DA}" target="_blank" rel="noopener">vprogs-tt.izio.fr</a> with a throwaway TN10 hex key — not this wallet’s PIN key.</li>
+    </ol>
+    <div class="vprog-play-card">
+      <div class="vprog-game-h"><b>Practice</b><span id="vprog-play-status">${esc(playStatus())}</span></div>
+      <div class="ttt-board play">${bits.join('')}</div>
+      <button type="button" class="btn btn-glass" id="vprog-new">New game</button>
+    </div>
+    <h3 class="vprog-h">Live TN10 lane</h3>
+  `;
+}
+
+export function bindVprogPlay(root, { toast } = {}) {
+  if (!root) return;
+  root.querySelector('#vprog-new')?.addEventListener('click', () => {
+    playBoard = [0, 0, 0, 0, 0, 0, 0, 0, 0];
+    playOver = '';
+    renderVprogPlay(root);
+    bindVprogPlay(root, { toast });
+  });
+  root.querySelectorAll('[data-play-cell]').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const i = Number(btn.dataset.playCell);
+      if (playOver || playBoard[i]) return;
+      playBoard[i] = 1;
+      let w = winnerOf(playBoard);
+      if (w === 1) playOver = 'x';
+      else if (w === 3) playOver = 'draw';
+      else {
+        const j = pickScorpion(playBoard);
+        if (j != null) playBoard[j] = 2;
+        w = winnerOf(playBoard);
+        if (w === 2) playOver = 'o';
+        else if (w === 3) playOver = 'draw';
+      }
+      renderVprogPlay(root);
+      bindVprogPlay(root, { toast });
+      if (playOver === 'x') toast?.('You win');
+      if (playOver === 'o') toast?.('Scorpion wins');
+      if (playOver === 'draw') toast?.('Draw');
+    });
   });
 }
 

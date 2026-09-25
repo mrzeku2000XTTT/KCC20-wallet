@@ -2898,10 +2898,12 @@ export async function sendKcc20({ wallet, dest, token, amountHuman, utxos, onSta
   const sendAmt = BigInt(toRawLocal(amountHuman, token.decimals ?? 0));
   if (sendAmt <= 0n) throw new Error('Enter an amount greater than 0');
   const destPk = destXOnly(k, dest);
-  const priv = new k.PrivateKey(wallet.privKey);
-  const selfPk = hexToU8(priv.toPublicKey().toXOnlyPublicKey().toString());
-  if (selfPk.length !== 32) throw new Error('Wallet public key is not a 32-byte x-only key');
-  if (u8ToHex(destPk) === u8ToHex(selfPk)) throw new Error('That is this wallet’s own address');
+  const selfPkHex = String(wallet.pubKey || '').replace(/^0x/i, '').toLowerCase();
+  const destHex = u8ToHex(destPk);
+  if (selfPkHex && destHex === selfPkHex) throw new Error('That is this wallet’s own address');
+  if (!kaswareSigning(wallet) && !cleanPrivHex(wallet.privKey)) {
+    throw new Error('No in-app key on this wallet. Import the 64-hex key, or turn KasWare on in You → Settings.');
+  }
 
   onStatus?.('Loading KRON KCC20 cells…');
   let info;
@@ -3034,18 +3036,75 @@ export async function sendKcc20({ wallet, dest, token, amountHuman, utxos, onSta
       });
       if (asm.change < 200_000n) throw kasNeedError(networkFee);
       const tx = asm.transaction;
-      for (const idx of asm.fundingInputIndexes) {
-        const sig = k.createInputSignature(tx, idx, priv, k.SighashType.All);
-        tx.inputs[idx].signatureScript = hexish(sig);
+      const fundIdx = asm.fundingInputIndexes || [];
+      const useKw = kaswareSigning(wallet);
+      if (useKw) {
+        onStatus?.('Approve the KAS fee input in KasWare…');
+        let json = repairSafeJson(tx.serializeToSafeJSON());
+        json = attachUtxosToSafeJson(json, fundingEntries, wallet.address);
+        json = repairSafeJson(json);
+        const signInputs = fundIdx.map((index) => ({ index, sighashType: 1 }));
+        const signedJson = repairSafeJson(await signPsktWithKasware(json, signInputs));
+        const signed = k.Transaction.deserializeFromSafeJSON(signedJson);
+        const origIns = [...tx.inputs];
+        const signedIns = [...signed.inputs];
+        for (const idx of fundIdx) {
+          const hex = hexish(signedIns[idx]?.signatureScript);
+          if (!hex || hex.length < 20) throw new Error('KasWare did not sign the KAS fee input');
+          origIns[idx].signatureScript = hex;
+          origIns[idx].sigOpCount = 0;
+        }
+        tx.inputs = origIns;
+      } else {
+        const keyHex = cleanPrivHex(wallet.privKey);
+        if (!keyHex) throw new Error('No in-app key on this wallet. Import the 64-hex key, or turn KasWare on in You → Settings.');
+        const key = new k.PrivateKey(keyHex);
+        const inputs = [...tx.inputs];
+        for (const idx of fundIdx) {
+          const sig = k.createInputSignature(tx, idx, key, k.SighashType.All);
+          const hex = hexish(sig);
+          if (!hex || hex.length < 20) throw new Error('Signing failed — empty KAS fee signature');
+          inputs[idx].signatureScript = hex;
+          inputs[idx].sigOpCount = 0;
+        }
+        tx.inputs = inputs;
       }
-      const scripts = [...tx.inputs].map(inp => hexish(inp.signatureScript));
       onStatus?.('Broadcasting KCC20 send…');
-      const txId = await submitSignedRpc(k, rpc, url, tx, {
-        sigOpCount: 0,
-        computeBudget: 100,
-        lockTime: 0,
-        scripts
-      });
+      let txId;
+      try {
+        const submitted = await withTimeout(
+          rpc.submitTransaction({ transaction: tx, allowOrphan: true }),
+          20000,
+          'Timed out broadcasting to ' + url
+        );
+        txId = submitted?.transactionId || submitted || tx.id;
+      } catch (e) {
+        if (useKw && /false stack|verify the signature script/i.test(errText(e))) {
+          const keyHex = cleanPrivHex(wallet.privKey);
+          if (keyHex) {
+            onStatus?.('KasWare sig failed — signing the fee input with this wallet’s key…');
+            const key = new k.PrivateKey(keyHex);
+            const inputs = [...tx.inputs];
+            for (const idx of fundIdx) {
+              const sig = k.createInputSignature(tx, idx, key, k.SighashType.All);
+              inputs[idx].signatureScript = hexish(sig);
+              inputs[idx].sigOpCount = 0;
+            }
+            tx.inputs = inputs;
+            const submitted = await withTimeout(
+              rpc.submitTransaction({ transaction: tx, allowOrphan: true }),
+              20000,
+              'Timed out broadcasting to ' + url
+            );
+            txId = submitted?.transactionId || submitted || tx.id;
+          } else {
+            throw e;
+          }
+        } else {
+          throw e;
+        }
+      }
+      if (!txId) throw new Error('Node did not return a transaction id');
       return {
         txId,
         revealId: txId,

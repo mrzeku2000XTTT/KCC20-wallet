@@ -1,10 +1,21 @@
 {
   "sdk": "174",
-  "build": "269",
+  "build": "270",
   "wallet": "https://kcc-20-wallet.vercel.app",
   "sdkUrl": "https://kcc-20-wallet.vercel.app/sdk.js?v=174",
   "rule": "Every SDK_VERSION bump gets an entry here the same day. Pin sdk.js?v=NNN and require window.kcc20.sdkVersion === that NNN.",
   "entries": [
+    {
+      "date": "2026-09-25",
+      "sdk": "174",
+      "build": "270",
+      "title": "KasWare toggle is KasWare only",
+      "breaking": false,
+      "notes": [
+        "You → KasWare no longer stays on because Kaspire is signing. Kaspire is a different extension. Turning Kaspire on leaves the KasWare switch off.",
+        "SDK 174 unchanged."
+      ]
+    },
     {
       "date": "2026-09-25",
       "sdk": "174",

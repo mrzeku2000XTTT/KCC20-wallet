@@ -48,11 +48,11 @@ import { knsResolve, knsPrimary, knsDomainsFor, knsOwnerMatches, knsAppUrl, look
 import { runPhoneStudio, runServerStudio } from './studio.js?v=89';
 import { safeSetItem, bootReclaim } from './storage.js?v=1';
 import {
-  isKaswareInstalled, isDesktopBrowser, kaswareEnabled, kaswareSigning, kaswareConnectedAddress,
+  isKaswareInstalled, isDesktopBrowser, kaswareEnabled, kaswareSigning, kaswareSigningOnly, kaswareConnectedAddress,
   connectKasware, disconnectKasware, bindKaswareEvents, loadKaswarePref, compoundWithKasware,
   ensureKaswareSigner, syncKaswareNetwork, walletIsKaswareChip, autoArmKaswareForWallet,
   fetchKaswareUtxos, sameKasAddr, liveKaswareAccount
-} from './kasware.js?v=218';
+} from './kasware.js?v=219';
 import {
   isKaspireInstalled, kaspireEnabled, kaspireSigning, kaspireConnectedAddress,
   connectKaspire, disconnectKaspire, bindKaspireEvents, waitForKaspire,
@@ -76,7 +76,7 @@ import {
 import { loadVprogLobby, renderVprogLobby, bindVprogLobby, startVprogPoll, stopVprogPoll, renderVprogPlay, bindVprogPlay } from './vprogTtt.js?v=4';
 import { vprogCreate, vprogJoin, vprogTurn } from './vprogLane.js?v=1';
 
-export const BUILD = '269';
+export const BUILD = '270';
 const DESK_ID_KEY = 'kcc20_desk_id_v1';
 const DESK_VAULT_KEY = 'kcc20_desk_vault_v1';
 
@@ -10607,26 +10607,32 @@ function openKaswareSheet() {
   haptic();
   const installed = isKaswareInstalled();
   const connected = kaswareConnectedAddress();
-  const match = kaswareSigning(wallet);
+  const kpOn = kaspireSigning(wallet);
+  const match = kaswareSigningOnly(wallet) && !kpOn;
   const desktop = isDesktopBrowser();
+  const signer = kpOn ? 'Kaspire' : (match ? 'KasWare' : 'In-app key');
   openSheet('KasWare', `
-    <p class="muted" style="text-align:left;padding:0 0 10px;">Desktop Chrome / Edge. KasWare follows this app’s Network toggle: TN10 stays kaspatest, mainnet stays kaspa:. It signs sends, vault locks, compound, KRC-20, and Cook launches — keys never leave KasWare.</p>
-    <div class="kv"><span class="k">Extension</span><span class="v">${installed ? 'Found' : (desktop ? 'Not installed' : 'Desktop only')}</span></div>
+    <p class="muted" style="text-align:left;padding:0 0 10px;">Desktop Chrome / Edge. This tile is <b>KasWare only</b>. Kaspire is a different extension — use You → Kaspire for that. Only one extension signer is on at a time.</p>
+    <div class="kv"><span class="k">KasWare ext</span><span class="v">${installed ? 'Found' : (desktop ? 'Not installed' : 'Desktop only')}</span></div>
     <div class="kv"><span class="k">This wallet</span><span class="v">${esc(shortAddr(wallet?.address || '', 10, 6) || '—')}</span></div>
-    <div class="kv"><span class="k">KasWare</span><span class="v">${connected ? esc(shortAddr(connected, 10, 6)) : 'Not connected'}</span></div>
-    <div class="kv"><span class="k">Signing</span><span class="v">${match ? 'KasWare' : 'In-app key'}</span></div>
+    <div class="kv"><span class="k">KasWare acct</span><span class="v">${connected ? esc(shortAddr(connected, 10, 6)) : 'Not connected'}</span></div>
+    <div class="kv"><span class="k">Signing</span><span class="v">${esc(signer)}</span></div>
     <label class="kw-toggle">
-      <input type="checkbox" id="kw-on" ${match ? 'checked' : ''} ${installed ? '' : 'disabled'}>
+      <input type="checkbox" id="kw-on" ${match ? 'checked' : ''} ${installed && !kpOn ? '' : 'disabled'}>
       <span>Sign with KasWare</span>
     </label>
-    ${!installed ? `<p class="muted" style="text-align:left;padding:8px 0 0;">Install <a href="https://chromewebstore.google.com/detail/kasware-wallet/hklhheigdmpoolooomdihmhlpjjdbklf" target="_blank" rel="noopener" style="color:var(--gold-2)">KasWare Wallet</a> in this browser, then come back here.</p>` : ''}
-    ${connected && wallet?.address && !sameKasAddr(connected, wallet.address) ? `<p class="muted" style="text-align:left;padding:8px 0 0;">This chip is not the KasWare account. Switch to the KasWare wallet in the switcher, then turn Sign with KasWare on.</p>` : ''}
-    <p class="muted" style="text-align:left;padding:8px 0 0;">When this is on for the KasWare chip, KAS sends, vault locks, compound, KRC-20, KRON buys/sells, and Cook PSKTs pop KasWare. Other wallets keep their own PIN key and their own balance.</p>
+    ${kpOn ? `<p class="muted" style="text-align:left;padding:8px 0 0;">Kaspire is the signer. KasWare stays off until you turn Kaspire off in its own tile.</p>` : ''}
+    ${!installed && !kpOn ? `<p class="muted" style="text-align:left;padding:8px 0 0;">Install <a href="https://chromewebstore.google.com/detail/kasware-wallet/hklhheigdmpoolooomdihmhlpjjdbklf" target="_blank" rel="noopener" style="color:var(--gold-2)">KasWare Wallet</a> in this browser, then come back here.</p>` : ''}
+    ${!kpOn && connected && wallet?.address && !sameKasAddr(connected, wallet.address) ? `<p class="muted" style="text-align:left;padding:8px 0 0;">This chip is not the KasWare account. Switch KasWare to this same address, then turn Sign with KasWare on.</p>` : ''}
   `, { confirm: 'Done', cancel: false });
   $('kw-on')?.addEventListener('change', async (e) => {
     const want = !!e.target.checked;
     try {
       if (want) {
+        if (kaspireSigning(wallet) || kaspireEnabled()) {
+          e.target.checked = false;
+          throw new Error('Turn Kaspire off in You → Kaspire first. Only one extension signer at a time.');
+        }
         setSheetStatus('Approve in KasWare…');
         const linked = await connectKasware();
         hydrateNativeKey(wallet);
@@ -10647,7 +10653,10 @@ function openKaswareSheet() {
         }
         saveWalletList(listOff);
         if (wallet && hexKey(wallet.privKey)) wallet.kasware = false;
-        if (wallet && !hexKey(wallet.privKey)) {
+        if (kaspireEnabled() || kaspireSigning(wallet)) {
+          saveWallet();
+          toast('KasWare off. Kaspire is the signer.');
+        } else if (wallet && !hexKey(wallet.privKey)) {
           const native = loadWalletList().find(x =>
             hexKey(x.privKey) && sameAddrPayload(x.address, wallet.address)
           );
@@ -10658,7 +10667,7 @@ function openKaswareSheet() {
             });
           } else {
             saveWallet();
-            toast('KasWare off — import the hex key to post on K Social');
+            toast('KasWare off — PIN key or Kaspire can sign');
           }
         } else {
           saveWallet();

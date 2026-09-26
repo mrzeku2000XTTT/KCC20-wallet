@@ -10,7 +10,13 @@ const STORE = 'kcc20_kasware_v1';
 
 export function kaswareProvider() {
   try {
-    if (typeof window !== 'undefined' && window.kasware) return window.kasware;
+    const p = typeof window !== 'undefined' ? window.kasware : null;
+    if (!p) return null;
+    if (p.isKaspire || p.isKcc20Shim) return null;
+    try {
+      if (window.kaspire && (p === window.kaspire || p.provider === window.kaspire)) return null;
+    } catch {}
+    return p;
   } catch {}
   return null;
 }
@@ -59,9 +65,10 @@ function hasNativeHex(w) {
 /** Named KasWare chip in this app — no in-app key; extension must sign. */
 export function walletIsKaswareChip(w) {
   if (!w) return false;
+  try { if (kaspireSigning(w) || (kaspireEnabled() && isKaspireInstalled() && w.kaspire)) return false; } catch {}
   if (w.kasware && !hasNativeHex(w)) return true;
   const theirs = kaswareConnectedAddress();
-  if (!hasNativeHex(w) && theirs && sameKasAddr(w.address, theirs)) return true;
+  if (!hasNativeHex(w) && theirs && sameKasAddr(w.address, theirs) && kaswareEnabled()) return true;
   return false;
 }
 
@@ -160,18 +167,22 @@ export async function liveKaswareAccount() {
   return { address: /^kaspa/i.test(address) ? address : '', pubKey };
 }
 
+export function kaswareSigningOnly(wallet) {
+  if (!isKaswareInstalled() || !kaswareEnabled()) return false;
+  if (!wallet) return true;
+  const theirs = kaswareConnectedAddress();
+  if (walletIsKaswareChip(wallet)) return !theirs || sameKasAddr(wallet.address, theirs);
+  return !!(wallet.address && theirs && sameKasAddr(wallet.address, theirs));
+}
+
 export function kaswareSigning(wallet) {
   if (kaspireSigning(wallet)) return true;
-  if (!wallet || !isKaswareInstalled()) return false;
-  if (walletIsKaswareChip(wallet)) return true;
-  if (!kaswareEnabled()) return false;
-  const mine = wallet.address || '';
-  const theirs = kaswareConnectedAddress();
-  return !!(mine && theirs && sameKasAddr(mine, theirs));
+  return kaswareSigningOnly(wallet);
 }
 
 /** When Home is the KasWare-named chip, arm the Settings toggle so Compound/Send pop the extension. */
 export async function autoArmKaswareForWallet(w) {
+  if (kaspireEnabled() && isKaspireInstalled()) return false;
   if (!walletIsKaswareChip(w)) return false;
   if (!isKaswareInstalled()) return false;
   const pref = loadKaswarePref();

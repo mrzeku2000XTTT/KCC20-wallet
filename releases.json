@@ -1,10 +1,21 @@
 {
   "sdk": "174",
-  "build": "270",
+  "build": "271",
   "wallet": "https://kcc-20-wallet.vercel.app",
   "sdkUrl": "https://kcc-20-wallet.vercel.app/sdk.js?v=174",
   "rule": "Every SDK_VERSION bump gets an entry here the same day. Pin sdk.js?v=NNN and require window.kcc20.sdkVersion === that NNN.",
   "entries": [
+    {
+      "date": "2026-09-25",
+      "sdk": "174",
+      "build": "271",
+      "title": "Pay with Kaspire when Kaspire is on",
+      "breaking": false,
+      "notes": [
+        "KRON Review buy / Compound / COOK confirm say Pay with Kaspire when that extension is the signer. KasWare label only when KasWare is on.",
+        "SDK 174 unchanged."
+      ]
+    },
     {
       "date": "2026-09-25",
       "sdk": "174",

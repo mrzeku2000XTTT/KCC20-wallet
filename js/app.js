@@ -51,8 +51,8 @@ import {
   isKaswareInstalled, isDesktopBrowser, kaswareEnabled, kaswareSigning, kaswareSigningOnly, kaswareConnectedAddress,
   connectKasware, disconnectKasware, bindKaswareEvents, loadKaswarePref, compoundWithKasware,
   ensureKaswareSigner, syncKaswareNetwork, walletIsKaswareChip, autoArmKaswareForWallet,
-  fetchKaswareUtxos, sameKasAddr, liveKaswareAccount
-} from './kasware.js?v=219';
+  fetchKaswareUtxos, sameKasAddr, liveKaswareAccount, payWithSignerLabel, openingSignerStatus, signerName
+} from './kasware.js?v=220';
 import {
   isKaspireInstalled, kaspireEnabled, kaspireSigning, kaspireConnectedAddress,
   connectKaspire, disconnectKaspire, bindKaspireEvents, waitForKaspire,
@@ -76,7 +76,7 @@ import {
 import { loadVprogLobby, renderVprogLobby, bindVprogLobby, startVprogPoll, stopVprogPoll, renderVprogPlay, bindVprogPlay } from './vprogTtt.js?v=4';
 import { vprogCreate, vprogJoin, vprogTurn } from './vprogLane.js?v=1';
 
-export const BUILD = '270';
+export const BUILD = '271';
 const DESK_ID_KEY = 'kcc20_desk_id_v1';
 const DESK_VAULT_KEY = 'kcc20_desk_vault_v1';
 
@@ -6632,14 +6632,14 @@ async function atQuotePreview() {
 }
 
 async function confirmAtSign(title, body, run) {
-  const kw = kaswareEnabled();
+  const kw = kaswareSigning(wallet);
   openSheet(title, body, {
-    confirm: kw ? 'Pay with KasWare' : 'Pay with PIN',
+    confirm: payWithSignerLabel(wallet),
     gold: true,
     onConfirm: async () => {
       try {
         if (kw) {
-          setSheetStatus('Opening KasWare…');
+          setSheetStatus(openingSignerStatus(wallet));
           await ensureKaswareSigner(wallet);
         } else {
           hydrateNativeKey(wallet);
@@ -8701,7 +8701,7 @@ function openBoost() {
     </label>
     <p class="muted" style="text-align:left;">Sends ${BOOST_KAS} KAS to this same wallet. Features the ticker here for 24h. Points stack. We never take the KAS.</p>
   `, {
-    confirm: kaswareEnabled() ? 'Pay with KasWare' : 'Boost ' + BOOST_KAS + ' KAS',
+    confirm: kaswareSigning(wallet) ? payWithSignerLabel(wallet) : 'Boost ' + BOOST_KAS + ' KAS',
     gold: true,
     onConfirm: async () => {
       const tick = ($('boost-tick')?.value || '').trim().toUpperCase();
@@ -9450,7 +9450,7 @@ async function reviewTrade() {
       <div class="kv"><span class="k">Cell</span><span class="v">0.50 KAS once</span></div>` : ''}
       <p class="muted" style="text-align:left;padding-top:8px;">Buy-now pays KRON protocol once. DCA pays it on every slice (covenant). Cell is once. Capsules prefund later ${esc(plan.tick)} buys only.</p>
     `, {
-      confirm: kaswareEnabled() ? 'Buy now + lock (KasWare)' : 'Buy now + lock with PIN',
+      confirm: kaswareSigning(wallet) ? 'Buy now + lock (' + signerName(wallet) + ')' : 'Buy now + lock with PIN',
       gold: true,
       onConfirm: async () => { closeSheet(); await startDcaFromForm(); }
     });
@@ -9476,12 +9476,12 @@ async function reviewTrade() {
   hydrateNativeKey(wallet);
   const kw = kaswareSigning(wallet);
   openSheet('Review ' + q.tick + ' ' + q.side, buyBits, {
-    confirm: kw ? 'Pay with KasWare' : 'Pay with PIN',
+    confirm: payWithSignerLabel(wallet),
     gold: true,
     onConfirm: async () => {
       try {
         if (kw) {
-          setSheetStatus('Opening KasWare…');
+          setSheetStatus(openingSignerStatus(wallet));
           await ensureKaswareSigner(wallet);
         } else {
           hydrateNativeKey(wallet);
@@ -9662,7 +9662,7 @@ async function openCompound() {
     <div class="kv"><span class="k">Balance</span><span class="v">${formatAmount(bag.reduce((a, e) => a + Number(e.amount || 0n), 0))} KAS</span></div>
     <div class="kv"><span class="k">Network fee</span><span class="v">~${feeEst.toFixed(4)} KAS</span></div>
     <p class="muted" style="text-align:left;">Merges every native <b>kaspa:q</b> coin in this wallet into <b>one</b> UTXO. Token cells and privacy coins stay put. ${kw ? 'Approve the PSKT in KasWare — it must show one output.' : 'PIN signs.'}</p>
-  `, { confirm: kw ? 'Pay with KasWare' : 'Compound now', gold: true, onConfirm: () => runCompound() });
+  `, { confirm: kw ? payWithSignerLabel(wallet) : 'Compound now', gold: true, onConfirm: () => runCompound() });
 }
 
 function applyCompoundLocal(result) {

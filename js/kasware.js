@@ -99,8 +99,24 @@ export async function syncKaswareNetwork() {
   return want;
 }
 
-export function payWithKaswareLabel() {
-  return kaswareEnabled() ? 'Pay with KasWare' : '';
+export function signerName(wallet) {
+  if (kaspireSigning(wallet)) return 'Kaspire';
+  if (kaswareSigningOnly(wallet)) return 'KasWare';
+  return 'PIN';
+}
+
+export function payWithSignerLabel(wallet) {
+  const n = signerName(wallet);
+  return n === 'PIN' ? 'Pay with PIN' : 'Pay with ' + n;
+}
+
+export function openingSignerStatus(wallet) {
+  const n = signerName(wallet);
+  return n === 'PIN' ? 'Signing…' : 'Opening ' + n + '…';
+}
+
+export function payWithKaswareLabel(wallet) {
+  return payWithSignerLabel(wallet);
 }
 
 function firstAddr(accounts) {

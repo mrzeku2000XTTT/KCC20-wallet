@@ -81,8 +81,9 @@ import {
 } from './ksocial.js?v=207';
 import { loadVprogLobby, renderVprogLobby, bindVprogLobby, startVprogPoll, stopVprogPoll, renderVprogPlay, bindVprogPlay } from './vprogTtt.js?v=4';
 import { vprogCreate, vprogJoin, vprogTurn } from './vprogLane.js?v=1';
+import { bootWalletForge } from './walletForge.js?v=1';
 
-export const BUILD = '272';
+export const BUILD = '273';
 const DESK_ID_KEY = 'kcc20_desk_id_v1';
 const DESK_VAULT_KEY = 'kcc20_desk_vault_v1';
 
@@ -3702,7 +3703,7 @@ function showBuildApp(name) {
     openKaspaBrowser({ fromApps: true });
     return;
   }
-  ['home', 'studio', 'truth', 'ksocial', 'vprog'].forEach(v => {
+  ['home', 'studio', 'truth', 'ksocial', 'vprog', 'forge'].forEach(v => {
     $('app-' + v)?.classList.toggle('hidden', v !== view);
   });
   $('build-back')?.classList.toggle('hidden', view === 'home');
@@ -3710,7 +3711,8 @@ function showBuildApp(name) {
     $('build-title').textContent = view === 'studio' ? 'Faceless Studio'
       : (view === 'truth' ? 'Proof of Fact'
         : (view === 'ksocial' ? 'K Social'
-          : (view === 'vprog' ? 'vProg TTT' : 'Apps')));
+          : (view === 'vprog' ? 'vProg TTT'
+            : (view === 'forge' ? 'Wallet Forge' : 'Apps'))));
   }
   if (view === 'truth') setBuildPhase(0);
   if (view === 'studio') {
@@ -3726,6 +3728,8 @@ function showBuildApp(name) {
   }
   if (view === 'vprog') startVprogApp();
   else stopVprogPoll();
+  if (view === 'forge') startWalletForge();
+  else stopWalletForge();
   if (view !== 'studio') {
     $('app-studio')?.classList.remove('playing', 'working');
     const v = $('studio-video');
@@ -3792,6 +3796,35 @@ async function runVprogLive(act) {
   } else return;
   toast('Carrier sent ' + String(txId).slice(0, 12) + '…');
   setTimeout(() => paintVprogApp().catch(() => {}), 2500);
+}
+
+let forgeCtl = null;
+function startWalletForge() {
+  stopWalletForge();
+  forgeCtl = bootWalletForge($('forge-root'), {
+    toast,
+    getLive: () => {
+      const rec = (activityLogPayload(wallet?.address)?.records || []).map(r => ({
+        title: r.title || r.label || r.tick || 'Tx',
+        at: r.time || r.at
+      }));
+      return {
+        wallet,
+        kns: walletPublicName(wallet) || '',
+        balanceSompi,
+        holdings: [...(kccHoldings || []), ...(krcHoldings || [])],
+        activity: rec,
+        network: networkId()
+      };
+    },
+    onSend: () => { closeBuildRoadmap(); openSend(); },
+    onReceive: () => { closeBuildRoadmap(); openReceive(); },
+    onApps: () => showBuildApp('home')
+  });
+}
+function stopWalletForge() {
+  try { forgeCtl?.destroy?.(); } catch {}
+  forgeCtl = null;
 }
 
 function startVprogApp() {

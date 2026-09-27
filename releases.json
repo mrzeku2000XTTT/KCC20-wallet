@@ -1,10 +1,21 @@
 {
-  "sdk": "174",
-  "build": "272",
+  "sdk": "175",
+  "build": "273",
   "wallet": "https://kcc-20-wallet.vercel.app",
-  "sdkUrl": "https://kcc-20-wallet.vercel.app/sdk.js?v=174",
+  "sdkUrl": "https://kcc-20-wallet.vercel.app/sdk.js?v=175",
   "rule": "Every SDK_VERSION bump gets an entry here the same day. Pin sdk.js?v=NNN and require window.kcc20.sdkVersion === that NNN.",
   "entries": [
+    {
+      "date": "2026-09-27",
+      "sdk": "175",
+      "build": "273",
+      "title": "Wallet Forge — drag live Kaspa primitives",
+      "breaking": false,
+      "notes": [
+        "You → Apps → Wallet Forge. Drag brand (official Kaspa mark), identity, KAS, KCC20, activity, receive, send, TTT, network onto a canvas. Dropped blocks read this wallet for real. Edit/delete in preview. Export HTML that uses sdk.js?v=175.",
+        "window.kcc20.forge and request('forge'). AI does not generate keys. Pin sdk.js?v=175."
+      ]
+    },
     {
       "date": "2026-09-25",
       "sdk": "174",

@@ -7,11 +7,12 @@
    with rdns app.kcc20.wallet. provider.request({ method: 'kaspa_requestAccounts' }).
    Existing window.kcc20.connect / signPskt / buyKron / getActivityLog stay.
    VEYRA (TTT Phase 6): window.kcc20.veyra and request('veyra') — silent descriptor.
+   Wallet Forge: window.kcc20.forge — drag-drop UI on the Scorpion core (no AI in the signer).
    When bumping SDK_VERSION, add an entry to releases.json (and it shows on /whats-new.html).
 */
 (function (root) {
   'use strict';
-  var SDK_VERSION = '174';
+  var SDK_VERSION = '175';
   if (root.kcc20 && root.kcc20.isKcc20 && String(root.kcc20.sdkVersion || '') === SDK_VERSION) return;
 
   function scriptOrigin() {
@@ -615,6 +616,7 @@
     principle: 'DApps request. Wallets authorize. Users decide. Kaspa settles.',
     wallet: 'scorpion',
     sdk: SDK_VERSION,
+    forge: ORIGIN + '/docs.html#forge',
     rdns: 'app.kcc20.wallet',
     origin: ORIGIN,
     spec: ORIGIN + '/veyra.html',
@@ -636,6 +638,16 @@
     sdkVersion: SDK_VERSION,
     origin: ORIGIN,
     veyra: VEYRA,
+    forge: Object.freeze({
+      name: 'Wallet Forge',
+      url: ORIGIN,
+      open: 'You → Apps → Wallet Forge',
+      markdown: ORIGIN + '/FORGE.md',
+      primitives: Object.freeze([
+        'brand', 'identity', 'kas', 'tokens', 'activity', 'receive', 'send', 'apps', 'network'
+      ]),
+      rule: 'AI generates presentation only. Keys, UTXOs, signing stay in the Scorpion core.'
+    }),
     on: on,
     off: off,
     connect: function () {
@@ -850,6 +862,7 @@
       var m = String(method || '');
       var p = params || {};
       if (m === 'veyra' || m === 'getVeyra') return Promise.resolve(VEYRA);
+      if (m === 'forge' || m === 'getForge') return Promise.resolve(api.forge);
       if (m === 'connect' || m === 'requestAccounts') {
         return api.connect().then(function (acc) {
           var s = lastState || {};
@@ -1040,6 +1053,7 @@
       return Promise.reject(providerError(4200, 'kaspa_signMessage (KIP-5) is not on this KCC20 build yet.'));
     }
     if (m === 'veyra' || m === 'getVeyra' || m === 'app.kcc20.wallet_veyra') return Promise.resolve(VEYRA);
+    if (m === 'forge' || m === 'getForge' || m === 'app.kcc20.wallet_forge') return Promise.resolve(api.forge);
     if (m === 'app.kcc20.wallet_buyKron' || m === 'buyKron') return api.buyKron(p);
     if (m === 'app.kcc20.wallet_getActivityLog' || m === 'getActivityLog') return api.getActivityLog(p.address);
     if (m === 'app.kcc20.wallet_sendKas' || m === 'sendKaspa') return api.sendKaspa(p);

@@ -53,16 +53,21 @@
     </nav>
   </header>
   <main>
-    <p class="pill">sdkVersion 174 · VEYRA</p>
+    <p class="pill">sdkVersion 175 · VEYRA · Forge</p>
     <h1>Connect KCC20 Wallet in any app</h1>
     <p>One script. Creates <code>window.kcc20</code>. This is the <a href="veyra.html">VEYRA</a> signing boundary: dApps request, this wallet authorizes, the user decides, Kaspa settles. Hosted PWA — keys never leave <code>kcc-20-wallet.vercel.app</code>. Your app builds the unsigned transaction. The user Approves in our window. Fork the wallet: <a href="FORK.md">FORK.md</a>.</p>
 
     <div class="ok">
       <b>Install (one line)</b>
-      <pre style="margin:10px 0 0">script src="https://kcc-20-wallet.vercel.app/sdk.js?v=174"</pre>
-      After load: <code>window.kcc20.sdkVersion === "174"</code>
+      <pre style="margin:10px 0 0">script src="https://kcc-20-wallet.vercel.app/sdk.js?v=175"</pre>
+      After load: <code>window.kcc20.sdkVersion === "175"</code>
       · <code>window.kcc20.veyra.principle</code>
+      · <code>window.kcc20.forge</code>
     </div>
+
+    <h2 id="forge">Wallet Forge</h2>
+    <p>You → Apps → <b>Wallet Forge</b>. Drag Kaspa primitives (official mark, identity, KAS, KCC20, activity, receive QR, send, TTT, network) onto a canvas. They bind to the live Scorpion core. Edit/delete in the preview. Export HTML that Connects with this SDK. Keys stay in the core. Spec: <a href="FORGE.md">FORGE.md</a>.</p>
+<pre>await window.kcc20.request('forge')</pre>
 
     <h2>VEYRA</h2>
     <p>TTT Phase 6. Silent descriptor — no popup:</p>
@@ -73,8 +78,8 @@
     <h2>1. Getting started</h2>
     <p>Only call Connect from a <b>user click</b>. Never on page load. Never on app switch. That is the same rule KasWare documents.</p>
 <pre>const s = document.createElement('script');
-s.src = 'https://kcc-20-wallet.vercel.app/sdk.js?v=174';
-s.onload = () => console.log(window.kcc20.sdkVersion); // "174"
+s.src = 'https://kcc-20-wallet.vercel.app/sdk.js?v=175';
+s.onload = () => console.log(window.kcc20.sdkVersion); // "175"
 document.head.appendChild(s);
 
 // or wait for:

@@ -2138,3 +2138,45 @@ button.tx { width: 100%; max-width: 100%; text-align: left; color: inherit; over
   }
   .sheen { display: none; }
 }
+
+#app-forge { overflow: auto; -webkit-overflow-scrolling: touch; }
+.fg-shell { display: grid; grid-template-columns: 132px 1fr 140px; gap: 10px; min-height: 420px; }
+@media (max-width: 720px) {
+  .fg-shell { grid-template-columns: 1fr; }
+}
+.fg-pal, .fg-insp { background: rgba(0,0,0,.28); border: 0.5px solid var(--hairline); border-radius: 16px; padding: 10px; }
+.fg-pal b, .fg-insp b { display: block; font-size: 11px; letter-spacing: .08em; text-transform: uppercase; color: var(--gold); margin-bottom: 8px; }
+.fg-chip {
+  display: block; width: 100%; text-align: left; margin: 0 0 6px; padding: 8px 10px;
+  border-radius: 12px; border: 0.5px solid var(--hairline); background: rgba(255,255,255,.04);
+  color: var(--label); font-size: 13px; cursor: grab;
+}
+.fg-chip i { display: block; font-style: normal; font-size: 11px; color: var(--label-2); }
+.fg-canvas {
+  min-height: 380px; border-radius: 22px; border: 1px dashed rgba(201,163,106,.35);
+  background: radial-gradient(800px 400px at 50% -20%, #1c2436, #07080c); padding: 12px;
+}
+.fg-canvas.over { border-color: var(--gold); }
+.fg-phone { max-width: 360px; margin: 0 auto; }
+.fg-top { font-weight: 800; margin: 0 0 10px; color: var(--gold-2); }
+.fg-card {
+  position: relative; background: rgba(18,20,28,.92); border: 0.5px solid var(--hairline);
+  border-radius: 16px; padding: 12px 14px; margin: 0 0 8px; text-align: left;
+}
+.fg-card.on { outline: 1px solid var(--gold); }
+.fg-k { display: block; font-size: 10px; letter-spacing: .08em; text-transform: uppercase; color: var(--gold); margin-bottom: 4px; }
+.fg-brand { display: flex; gap: 10px; align-items: center; }
+.fg-kas { width: 34px; height: 34px; }
+.fg-id { display: block; font-size: 18px; }
+.fg-card code { font-size: 11px; color: var(--label-2); }
+.fg-kas-bal strong { font-size: 26px; letter-spacing: -.4px; }
+.fg-row { display: flex; justify-content: space-between; font-size: 13px; padding: 5px 0; border-top: 0.5px solid var(--hairline); }
+.fg-empty { color: var(--label-2); font-size: 13px; }
+.fg-cta {
+  margin-top: 8px; height: 40px; width: 100%; border: 0; border-radius: 12px;
+  background: linear-gradient(180deg, #e8c98a, #c9a36a); color: #1a1408; font-weight: 700;
+}
+.fg-x {
+  position: absolute; top: 6px; right: 8px; width: 24px; height: 24px; border: 0;
+  border-radius: 8px; background: transparent; color: var(--label-2); font-size: 16px;
+}

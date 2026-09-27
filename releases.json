@@ -1,10 +1,21 @@
 {
   "sdk": "176",
-  "build": "276",
+  "build": "277",
   "wallet": "https://kcc-20-wallet.vercel.app",
   "sdkUrl": "https://kcc-20-wallet.vercel.app/sdk.js?v=176",
   "rule": "Every SDK_VERSION bump gets an entry here the same day. Pin sdk.js?v=NNN and require window.kcc20.sdkVersion === that NNN.",
   "entries": [
+    {
+      "date": "2026-09-27",
+      "sdk": "176",
+      "build": "277",
+      "title": "Forge presets: Scorpion, Pay me, Family, Terminal, Trader, Artist, .k",
+      "breaking": false,
+      "notes": [
+        "One-click layout templates with real structure and palettes. Tap Scorpion desk, Pay me, Family, Terminal, Trader, Artist, or .k identity. Then drag, restyle, Test.",
+        "SDK 176 unchanged."
+      ]
+    },
     {
       "date": "2026-09-27",
       "sdk": "176",

@@ -21,6 +21,141 @@ const DEFAULT_THEME = {
 
 function uid() { return 'b' + Math.random().toString(36).slice(2, 9); }
 
+function spec(type, title, col) {
+  return { id: uid(), type, title, col };
+}
+
+export const FORGE_PRESETS = [
+  {
+    id: 'scorpion',
+    label: 'Scorpion desk',
+    blurb: 'Gold · bag · QR · send · TTT',
+    layout: () => ({
+      name: 'Scorpion',
+      preset: 'scorpion',
+      theme: { bg: '#0b0b0c', card: '#16140f', accent: '#d4b07a', gold: '#f3e2bf', text: '#f5f5f7', radius: 18 },
+      blocks: [
+        spec('brand', 'Kaspa', 'full'),
+        spec('identity', '.k / you', 'full'),
+        spec('kas', 'KAS', '0'),
+        spec('network', 'Network', '1'),
+        spec('tokens', 'KCC20', 'full'),
+        spec('receive', 'Receive', 'full'),
+        spec('send', 'Send', 'full'),
+        spec('activity', 'Activity', 'full'),
+        spec('apps', 'TTT', 'full')
+      ]
+    })
+  },
+  {
+    id: 'receive',
+    label: 'Pay me',
+    blurb: 'QR first · then balance',
+    layout: () => ({
+      name: 'Pay me',
+      preset: 'receive',
+      theme: { bg: '#05070a', card: '#101820', accent: '#49eacb', gold: '#49eacb', text: '#e8fff8', radius: 20 },
+      blocks: [
+        spec('identity', 'Pay', 'full'),
+        spec('receive', 'Scan', 'full'),
+        spec('kas', 'Balance', 'full'),
+        spec('send', 'Send back', 'full')
+      ]
+    })
+  },
+  {
+    id: 'family',
+    label: 'Family',
+    blurb: 'Light · large QR · send',
+    layout: () => ({
+      name: 'Family wallet',
+      preset: 'family',
+      theme: { bg: '#f3efe6', card: '#ffffff', accent: '#0f766e', gold: '#b45309', text: '#1c1917', radius: 20 },
+      blocks: [
+        spec('brand', 'Kaspa', 'full'),
+        spec('identity', 'This wallet', 'full'),
+        spec('kas', 'What we have', 'full'),
+        spec('receive', 'Receive', 'full'),
+        spec('send', 'Send to family', 'full')
+      ]
+    })
+  },
+  {
+    id: 'terminal',
+    label: 'Terminal',
+    blurb: 'Green on black · stacked',
+    layout: () => ({
+      name: 'kaspa@wallet',
+      preset: 'terminal',
+      theme: { bg: '#010302', card: '#07140a', accent: '#39ff14', gold: '#39ff14', text: '#c8ffc8', radius: 2 },
+      blocks: [
+        spec('brand', 'KASPA', 'full'),
+        spec('network', 'NET', 'full'),
+        spec('identity', 'ADDR', 'full'),
+        spec('kas', 'BAL', 'full'),
+        spec('tokens', 'BAG', 'full'),
+        spec('receive', 'IN', 'full'),
+        spec('send', 'OUT', 'full'),
+        spec('activity', 'LOG', 'full')
+      ]
+    })
+  },
+  {
+    id: 'trader',
+    label: 'Trader',
+    blurb: 'KAS + tokens + tape',
+    layout: () => ({
+      name: 'Desk',
+      preset: 'trader',
+      theme: { bg: '#0a0c10', card: '#141820', accent: '#f59e0b', gold: '#fbbf24', text: '#f8fafc', radius: 12 },
+      blocks: [
+        spec('kas', 'Spot KAS', '0'),
+        spec('network', 'Venue', '1'),
+        spec('tokens', 'KCC20 book', 'full'),
+        spec('activity', 'Tape', 'full'),
+        spec('send', 'Ticket', 'full'),
+        spec('apps', 'KRON / TTT', 'full')
+      ]
+    })
+  },
+  {
+    id: 'artist',
+    label: 'Artist',
+    blurb: 'Gallery · tokens · QR',
+    layout: () => ({
+      name: 'Studio',
+      preset: 'artist',
+      theme: { bg: '#140a12', card: '#241018', accent: '#e879f9', gold: '#f0abfc', text: '#fdf4ff', radius: 24 },
+      blocks: [
+        spec('identity', 'Maker', 'full'),
+        spec('tokens', 'Works', 'full'),
+        spec('receive', 'Tip jar', 'full'),
+        spec('kas', 'Float', '0'),
+        spec('apps', 'Show', '1')
+      ]
+    })
+  },
+  {
+    id: 'dotk',
+    label: '.k identity',
+    blurb: 'Name hero · then money',
+    layout: () => ({
+      name: 'alice.k',
+      preset: 'dotk',
+      theme: { bg: '#0c1220', card: '#152038', accent: '#60a5fa', gold: '#93c5fd', text: '#eff6ff', radius: 16 },
+      blocks: [
+        spec('identity', '.k', 'full'),
+        spec('brand', 'Kaspa', 'full'),
+        spec('kas', 'KAS', '0'),
+        spec('tokens', 'Assets', '1'),
+        spec('receive', 'Pay', 'full'),
+        spec('apps', 'Apps', 'full'),
+        spec('network', 'Chain', 'full')
+      ]
+    })
+  }
+];
+
 function loadLayout() {
   try {
     const raw = JSON.parse(localStorage.getItem(STORE) || 'null');
@@ -29,16 +164,7 @@ function loadLayout() {
       return raw;
     }
   } catch {}
-  return {
-    name: 'My Kaspa wallet',
-    theme: { ...DEFAULT_THEME },
-    blocks: [
-      { id: uid(), type: 'brand', title: 'Kaspa', col: 'full' },
-      { id: uid(), type: 'identity', title: 'Identity', col: 'full' },
-      { id: uid(), type: 'kas', title: 'Balance', col: '0' },
-      { id: uid(), type: 'receive', title: 'Receive', col: '1' }
-    ]
-  };
+  return FORGE_PRESETS[0].layout();
 }
 
 function saveLayout(layout) {
@@ -128,7 +254,7 @@ function blockHtml(b, live, selected, { preview }) {
   const wrap = (inner) =>
     `<article class="fg-card${sel}${col}" data-fg="${esc(b.id)}" data-fg-type="${t}"${drag}>${x}${inner}</article>`;
   if (t === 'brand') {
-    return wrap(`<div class="fg-brand"><img src="${KAS_LOGO}" alt="Kaspa" class="fg-kas"><div><b>${title}</b><em>Layer 1 · BlockDAG</em></div></div>`);
+    return wrap(`<div class="fg-brand"><img src="${KAS_LOGO}" alt="Kaspa" class="fg-kas"><div><b>${title}</b> <em>Layer 1 · BlockDAG</em></div></div>`);
   }
   if (t === 'identity') {
     return wrap(`<span class="fg-k">${title}</span><strong class="fg-id">${esc(live.kns || live.name)}</strong><code>${esc(shortA(live.address))}</code>`);
@@ -317,6 +443,9 @@ export function bootWalletForge(root, hooks) {
   const live = () => forgeStateFromWallet(hooks.getLive?.() || {});
 
   root.innerHTML = `
+    <div class="fg-presets" id="fg-presets">
+      ${FORGE_PRESETS.map(p => `<button type="button" class="fg-preset" data-fg-preset="${esc(p.id)}"><b>${esc(p.label)}</b><i>${esc(p.blurb)}</i></button>`).join('')}
+    </div>
     <div class="fg-shell fg-pro">
       <aside class="fg-pal">
         <b>Primitives</b>
@@ -444,6 +573,18 @@ export function bootWalletForge(root, hooks) {
     paint();
   }
 
+  function applyPreset(id) {
+    const p = FORGE_PRESETS.find(x => x.id === id);
+    if (!p) return;
+    layout = p.layout();
+    selected = layout.blocks[0]?.id || '';
+    paint();
+    logLine('ai', 'Loaded template: ' + p.label);
+    hooks.toast?.(p.label);
+  }
+  root.querySelectorAll('[data-fg-preset]').forEach(btn => {
+    btn.addEventListener('click', () => applyPreset(btn.dataset.fgPreset));
+  });
   root.querySelectorAll('[data-fg-add]').forEach(btn => {
     btn.addEventListener('dragstart', (e) => {
       e.dataTransfer.setData('text/plain', 'add:' + btn.dataset.fgAdd);
@@ -548,7 +689,7 @@ export function bootWalletForge(root, hooks) {
   });
   root.querySelector('#fg-reset')?.addEventListener('click', () => {
     localStorage.removeItem(STORE);
-    layout = loadLayout();
+    layout = FORGE_PRESETS[0].layout();
     selected = layout.blocks[0]?.id || '';
     paint();
   });

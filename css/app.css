@@ -2140,6 +2140,15 @@ button.tx { width: 100%; max-width: 100%; text-align: left; color: inherit; over
 }
 
 #app-forge { overflow: auto; -webkit-overflow-scrolling: touch; }
+.fg-presets { display: flex; gap: 8px; overflow-x: auto; padding: 0 0 12px; -webkit-overflow-scrolling: touch; }
+.fg-preset {
+  flex: 0 0 auto; min-width: 132px; text-align: left; padding: 10px 12px;
+  border-radius: 14px; border: 0.5px solid var(--hairline); background: rgba(255,255,255,.05);
+  color: var(--label); cursor: pointer;
+}
+.fg-preset b { display: block; font-size: 13px; }
+.fg-preset i { display: block; font-style: normal; font-size: 11px; color: var(--label-2); margin-top: 2px; }
+.fg-preset:hover { border-color: var(--gold); }
 .fg-shell { display: grid; grid-template-columns: 132px 1fr 140px; gap: 10px; min-height: 420px; }
 .fg-shell.fg-pro { grid-template-columns: 132px 1fr 200px; }
 @media (max-width: 720px) {

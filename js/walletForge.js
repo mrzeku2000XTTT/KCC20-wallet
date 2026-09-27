@@ -84,14 +84,38 @@ export function forgeStateFromWallet(ctx) {
   };
 }
 
-function applyTheme(el, theme) {
-  if (!el || !theme) return;
-  el.style.setProperty('--fg-bg', theme.bg || DEFAULT_THEME.bg);
-  el.style.setProperty('--fg-card', theme.card || DEFAULT_THEME.card);
-  el.style.setProperty('--fg-accent', theme.accent || DEFAULT_THEME.accent);
-  el.style.setProperty('--fg-gold', theme.gold || DEFAULT_THEME.gold);
-  el.style.setProperty('--fg-text', theme.text || DEFAULT_THEME.text);
-  el.style.setProperty('--fg-radius', (Number(theme.radius) || 16) + 'px');
+function hexOf(r, g, b) {
+  return '#' + [r, g, b].map(n => Math.max(0, Math.min(255, n | 0)).toString(16).padStart(2, '0')).join('');
+}
+
+function stampTheme(root, theme) {
+  if (!root) return;
+  const t = { ...DEFAULT_THEME, ...(theme || {}) };
+  root.style.setProperty('--fg-bg', t.bg);
+  root.style.setProperty('--fg-card', t.card);
+  root.style.setProperty('--fg-accent', t.accent);
+  root.style.setProperty('--fg-gold', t.gold);
+  root.style.setProperty('--fg-text', t.text);
+  root.style.setProperty('--fg-radius', (Number(t.radius) || 16) + 'px');
+  if (root.classList.contains('fg-canvas') || root.id === 'fg-canvas' || root.classList.contains('fg-modal-in')) {
+    root.style.background = t.bg;
+  }
+  root.querySelectorAll('.fg-card').forEach((c) => {
+    c.style.background = t.card;
+    c.style.color = t.text;
+    c.style.border = '1px solid ' + t.accent;
+    c.style.borderRadius = (Number(t.radius) || 16) + 'px';
+  });
+  root.querySelectorAll('.fg-cta').forEach((b) => {
+    b.style.background = t.accent;
+    b.style.color = '#111';
+  });
+  root.querySelectorAll('.fg-k, .fg-top').forEach((el) => { el.style.color = t.gold || t.accent; });
+  root.querySelectorAll('.fg-kas-n, .fg-id').forEach((el) => { el.style.color = t.accent; });
+  root.querySelectorAll('.fg-brand em, .fg-empty, .fg-qr-addr, code').forEach((el) => {
+    el.style.color = t.text;
+    el.style.opacity = '0.7';
+  });
 }
 
 function blockHtml(b, live, selected, { preview }) {
@@ -166,24 +190,29 @@ function paletteFromFile(file) {
     const url = URL.createObjectURL(file);
     img.onload = () => {
       const c = document.createElement('canvas');
-      c.width = 48; c.height = 48;
-      const x = c.getContext('2d');
-      x.drawImage(img, 0, 0, 48, 48);
-      const d = x.getImageData(0, 0, 48, 48).data;
-      let dark = [7, 8, 12], acc = [73, 234, 203], nAcc = 0;
-      for (let i = 0; i < d.length; i += 16) {
-        const r = d[i], g = d[i + 1], b = d[i + 2];
-        const l = (r + g + b) / 3;
-        if (l < 80) dark = [r, g, b];
-        const sat = Math.max(r, g, b) - Math.min(r, g, b);
-        if (sat > 40 && l > 40 && l < 220) {
-          acc = [r, g, b];
-          nAcc++;
-        }
+      c.width = 64; c.height = 64;
+      const x = c.getContext('2d', { willReadFrequently: true });
+      x.drawImage(img, 0, 0, 64, 64);
+      const d = x.getImageData(0, 0, 64, 64).data;
+      const px = [];
+      for (let i = 0; i < d.length; i += 4) {
+        const r = d[i], g = d[i + 1], b = d[i + 2], a = d[i + 3];
+        if (a < 80) continue;
+        px.push({ r, g, b, l: (r + g + b) / 3, s: Math.max(r, g, b) - Math.min(r, g, b) });
       }
       URL.revokeObjectURL(url);
-      const hex = (a) => '#' + a.map(n => n.toString(16).padStart(2, '0')).join('');
-      resolve({ bg: hex(dark), accent: hex(acc), card: hex(dark.map(n => Math.min(255, n + 18))), text: '#f5f5f7', gold: '#c9a36a', samples: nAcc });
+      if (!px.length) { resolve(null); return; }
+      px.sort((a, b) => a.l - b.l);
+      const dark = px[Math.floor(px.length * 0.12)];
+      const light = px[Math.floor(px.length * 0.88)];
+      const vivid = px.reduce((m, p) => (p.s > m.s ? p : m), px[0]);
+      const mean = (a, k) => Math.min(255, a[k] + 22);
+      const bg = hexOf(dark.r, dark.g, dark.b);
+      const card = hexOf(mean(dark, 'r'), mean(dark, 'g'), mean(dark, 'b'));
+      const accent = hexOf(vivid.r, vivid.g, vivid.b);
+      const text = light.l > 140 ? hexOf(light.r, light.g, light.b) : '#f5f5f7';
+      const gold = accent;
+      resolve({ bg, card, accent, text, gold, radius: 16 });
     };
     img.onerror = () => { URL.revokeObjectURL(url); resolve(null); };
     img.src = url;
@@ -199,43 +228,53 @@ function fileToDataUrl(file) {
   });
 }
 
+function ensureType(blocks, type, col) {
+  let b = blocks.find(x => x.type === type);
+  if (!b) {
+    const prim = FORGE_PRIMS.find(p => p.id === type);
+    b = { id: uid(), type, title: prim.label, col: col || 'full' };
+    blocks.push(b);
+  }
+  return b;
+}
+
+function moveType(blocks, type, index) {
+  const i = blocks.findIndex(b => b.type === type);
+  if (i < 0) return;
+  const [x] = blocks.splice(i, 1);
+  blocks.splice(Math.max(0, Math.min(index, blocks.length)), 0, x);
+}
+
 function localRestyle(layout, text, palette) {
   const t = String(text || '').toLowerCase();
   const next = JSON.parse(JSON.stringify(layout));
-  if (palette) next.theme = { ...next.theme, ...palette, radius: /round|soft/.test(t) ? 22 : next.theme.radius };
+  if (palette) {
+    next.theme = { ...next.theme, ...palette };
+    if (/round|soft|pill/.test(t)) next.theme.radius = 22;
+  }
   if (/terminal|green on black|matrix/.test(t)) {
     next.theme = { bg: '#020402', card: '#071108', accent: '#39ff14', gold: '#39ff14', text: '#c8ffc8', radius: 4 };
-    next.name = next.name || 'TERM.KAS';
   }
-  if (/white|light|paper/.test(t)) {
-    next.theme = { bg: '#f4f1ea', card: '#ffffff', accent: '#111', gold: '#b45309', text: '#111', radius: 14 };
+  if (/\bwhite\b|\blight\b|paper/.test(t)) {
+    next.theme = { bg: '#f4f1ea', card: '#ffffff', accent: '#111111', gold: '#b45309', text: '#111111', radius: 14 };
   }
-  if (/teal|kaspa/.test(t)) next.theme.accent = '#49eacb';
-  const want = [];
-  if (/qr|receive/.test(t)) want.push('receive');
-  if (/token|kcc/.test(t)) want.push('tokens');
-  if (/activit|history/.test(t)) want.push('activity');
-  if (/send/.test(t)) want.push('send');
-  if (/ttt|apps/.test(t)) want.push('apps');
-  for (const type of want) {
-    if (!next.blocks.some(b => b.type === type)) {
-      const prim = FORGE_PRIMS.find(p => p.id === type);
-      next.blocks.push({ id: uid(), type, title: prim.label, col: type === 'receive' || type === 'kas' ? '0' : 'full' });
-    }
+  if (/teal|kaspa green/.test(t)) next.theme.accent = '#49eacb';
+  if (/\bqr\b|receive/.test(t)) ensureType(next.blocks, 'receive', '1');
+  if (/token|kcc/.test(t)) ensureType(next.blocks, 'tokens', 'full');
+  if (/activit|history/.test(t)) ensureType(next.blocks, 'activity', 'full');
+  if (/\bsend\b/.test(t)) ensureType(next.blocks, 'send', 'full');
+  if (/ttt|apps/.test(t)) ensureType(next.blocks, 'apps', 'full');
+  if (/\bqr\b/.test(t) && /\btop\b/.test(t)) {
+    ensureType(next.blocks, 'receive', 'full');
+    const recv = next.blocks.find(b => b.type === 'receive');
+    if (recv) recv.col = 'full';
+    moveType(next.blocks, 'receive', 1);
   }
-  if (/qr (at )?top|receive (at )?top/.test(t)) {
-    const i = next.blocks.findIndex(b => b.type === 'receive');
-    if (i > 0) {
-      const [x] = next.blocks.splice(i, 1);
-      next.blocks.splice(1, 0, x);
-    }
-  }
-  if (/balance (at )?top/.test(t)) {
-    const i = next.blocks.findIndex(b => b.type === 'kas');
-    if (i > 0) {
-      const [x] = next.blocks.splice(i, 1);
-      next.blocks.splice(1, 0, x);
-    }
+  if (/token/.test(t) && /(under|below|after)/.test(t)) {
+    const ki = next.blocks.findIndex(b => b.type === 'kas');
+    moveType(next.blocks, 'tokens', ki < 0 ? next.blocks.length : ki + 1);
+    const tok = next.blocks.find(b => b.type === 'tokens');
+    if (tok) tok.col = 'full';
   }
   return next;
 }
@@ -332,10 +371,11 @@ export function bootWalletForge(root, hooks) {
   function paint(previewRoot, preview) {
     const host = previewRoot || phone;
     const L = live();
-    applyTheme(canvas, layout.theme);
-    applyTheme(modal, layout.theme);
     host.innerHTML = `<header class="fg-top">${esc(layout.name)}</header>`
       + `<div class="fg-grid">${layout.blocks.map(b => blockHtml(b, L, selected, { preview: !!preview })).join('')}</div>`;
+    stampTheme(canvas, layout.theme);
+    stampTheme(host, layout.theme);
+    stampTheme(modal, layout.theme);
     paintQrs(host, L.address);
     if (preview) return;
     saveLayout(layout);
@@ -461,9 +501,12 @@ export function bootWalletForge(root, hooks) {
       palette = await paletteFromFile(pendingImage);
       try { dataUrl = await fileToDataUrl(pendingImage); } catch {}
     }
-    layout = localRestyle(layout, ask, palette);
+    layout = localRestyle(layout, ask || 'qr on top tokens under kas', palette);
     paint();
-    const origin = (hooks.apiOrigin || (typeof location !== 'undefined' ? location.origin : '') || 'https://kcc-20-wallet.vercel.app').replace(/\/$/, '');
+    stampTheme(canvas, layout.theme);
+    stampTheme(phone, layout.theme);
+    logLine('ai', 'Applied ' + (layout.theme.bg || '') + ' / ' + (layout.theme.accent || '') + '. QR and tokens follow your prompt.');
+    const origin = (hooks.apiOrigin || 'https://kcc-20-wallet.vercel.app').replace(/\/$/, '');
     try {
       const res = await fetch(origin + '/api/forge', {
         method: 'POST',

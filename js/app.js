@@ -81,9 +81,9 @@ import {
 } from './ksocial.js?v=207';
 import { loadVprogLobby, renderVprogLobby, bindVprogLobby, startVprogPoll, stopVprogPoll, renderVprogPlay, bindVprogPlay } from './vprogTtt.js?v=4';
 import { vprogCreate, vprogJoin, vprogTurn } from './vprogLane.js?v=1';
-import { bootWalletForge } from './walletForge.js?v=2';
+import { bootWalletForge } from './walletForge.js?v=3';
 
-export const BUILD = '275';
+export const BUILD = '276';
 const DESK_ID_KEY = 'kcc20_desk_id_v1';
 const DESK_VAULT_KEY = 'kcc20_desk_vault_v1';
 

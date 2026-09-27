@@ -1,10 +1,21 @@
 {
   "sdk": "176",
-  "build": "275",
+  "build": "276",
   "wallet": "https://kcc-20-wallet.vercel.app",
   "sdkUrl": "https://kcc-20-wallet.vercel.app/sdk.js?v=176",
   "rule": "Every SDK_VERSION bump gets an entry here the same day. Pin sdk.js?v=NNN and require window.kcc20.sdkVersion === that NNN.",
   "entries": [
+    {
+      "date": "2026-09-27",
+      "sdk": "176",
+      "build": "276",
+      "title": "Forge restyle actually paints the canvas",
+      "breaking": false,
+      "notes": [
+        "Restyle stamps screenshot colors onto every card (inline styles). QR on top / tokens under KAS move blocks. Works without XAI_API_KEY.",
+        "SDK 176 unchanged."
+      ]
+    },
     {
       "date": "2026-09-27",
       "sdk": "176",

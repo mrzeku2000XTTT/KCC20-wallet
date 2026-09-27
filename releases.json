@@ -1,10 +1,21 @@
 {
   "sdk": "174",
-  "build": "271",
+  "build": "272",
   "wallet": "https://kcc-20-wallet.vercel.app",
   "sdkUrl": "https://kcc-20-wallet.vercel.app/sdk.js?v=174",
   "rule": "Every SDK_VERSION bump gets an entry here the same day. Pin sdk.js?v=NNN and require window.kcc20.sdkVersion === that NNN.",
   "entries": [
+    {
+      "date": "2026-09-25",
+      "sdk": "174",
+      "build": "272",
+      "title": "KasSigner dual QR + Face ID",
+      "breaking": false,
+      "notes": [
+        "You → KasSigner: optional dual sign. Desktop PIN, then QR. iPhone Scorpion scans, Face ID (WebAuthn) or PIN, signs, QR back. Pattern from InKasWeRust KasSigner (M5), without flashing an M5.",
+        "Applies to dApp signPskt when the toggle is on and you are on desktop. KasWare/Kaspire path unchanged. SDK 174 unchanged."
+      ]
+    },
     {
       "date": "2026-09-25",
       "sdk": "174",

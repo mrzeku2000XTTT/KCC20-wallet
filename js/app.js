@@ -24,9 +24,10 @@ import {
   fetchOwnedUtxos, collectSpendableUtxos, nativeP2pkUtxos, buildSentinelChain, buildRecurringChain, buildHashlockCovenant,
   newHashlockSecret, checkinHop, currentHop, parseXmssKit, p2shFromRedeemHex, spendXmssVault,
   spendSilverVault, isSilverScriptVault,
-  disconnectRpc, buildDcaDrips, sendKasMany, releaseDcaDrip, cancelDcaDrip, isMassError
+  disconnectRpc, buildDcaDrips, sendKasMany, releaseDcaDrip, cancelDcaDrip, isMassError,
+  signPsktJson
 } from './tx.js?v=232';
-import { bootDappConnect, pingTttDappFrame, pingKasdistroDappFrame, TTT_TREASURY, listConnectedSites, disconnectSite, disconnectAllSites, dappSourceOrigin } from './dappConnect.js?v=204';
+import { bootDappConnect, pingTttDappFrame, pingKasdistroDappFrame, TTT_TREASURY, listConnectedSites, disconnectSite, disconnectAllSites, dappSourceOrigin } from './dappConnect.js?v=205';
 import { changenowEstimate, changenowCreate, changenowWidgetUrl, cnFrom } from './changenow.js?v=180';
 import { schedulePersistIframeVault, bootIframeVaultWatch } from './iframeVault.js?v=122';
 import { kronMarkets, quoteKronTrade, executeKronTrade, formatKasSompi, lookupKronTick, liveQuote, tradeCostLines, attachKronLogos, kronCandles, kronLogoFor, quoteKcc20Bridge, executeKcc20Bridge, formatTokenRaw } from './kronTrade.js?v=233';
@@ -59,6 +60,11 @@ import {
   kaspireStoreUrl, sameKaspireAddr
 } from './kaspire.js?v=1';
 import {
+  kassignerEnabled, setKassignerEnabled, kassignerFaceOn, kassignerDesktopActive,
+  isIosDevice, webauthnOk, enrollFaceId, assertFaceId,
+  splitKsFrames, ksFrameFeed, encodeKsRequest, encodeKsReply, parseKsPayload
+} from './kassigner.js?v=1';
+import {
   cookMarkets, cookQuote, cookWrappers, pickWrappedMarketId, cookOrderbook, cookCandles,
   cookDeploy, cookBuildOrder, cookFillOrder, cookSweep, cookWrap, cookMint,
   extractSigning, signAndBroadcastPskt, cookTokenId, isTestnetAddr,
@@ -76,7 +82,7 @@ import {
 import { loadVprogLobby, renderVprogLobby, bindVprogLobby, startVprogPoll, stopVprogPoll, renderVprogPlay, bindVprogPlay } from './vprogTtt.js?v=4';
 import { vprogCreate, vprogJoin, vprogTurn } from './vprogLane.js?v=1';
 
-export const BUILD = '271';
+export const BUILD = '272';
 const DESK_ID_KEY = 'kcc20_desk_id_v1';
 const DESK_VAULT_KEY = 'kcc20_desk_vault_v1';
 
@@ -1916,7 +1922,8 @@ function dappHooks() {
     compileVaults: dappCompileVaults,
     sendKas: dappSendKas,
     openWallet: dappOpenWallet,
-    afterTx
+    afterTx,
+    kassignerSign: kassignerSignFromDapp
   };
 }
 
@@ -10749,6 +10756,241 @@ function openKaspireSheet() {
   });
 }
 
+let ksAnim = 0;
+let ksScanStop = null;
+
+function stopKsAnim() {
+  if (ksAnim) { clearInterval(ksAnim); ksAnim = 0; }
+}
+
+function stopKsScan() {
+  if (typeof ksScanStop === 'function') {
+    try { ksScanStop(); } catch {}
+  }
+  ksScanStop = null;
+  stopQrScan();
+}
+
+async function paintKsQr(el, text) {
+  if (!el) return;
+  const frames = splitKsFrames(text);
+  const QR = await import('https://esm.sh/qrcode@1.5.4');
+  let i = 0;
+  const draw = async () => {
+    const canvas = document.createElement('canvas');
+    await QR.toCanvas(canvas, frames[i % frames.length], {
+      width: 220, margin: 1, color: { dark: '#111111', light: '#ffffff' }
+    });
+    el.innerHTML = '';
+    el.appendChild(canvas);
+    const lab = $('ks-frame-lab');
+    if (lab) lab.textContent = (i % frames.length) + 1 + ' / ' + frames.length;
+    i++;
+  };
+  stopKsAnim();
+  await draw();
+  if (frames.length > 1) ksAnim = setInterval(() => { draw().catch(() => {}); }, 450);
+}
+
+function openKassignerSheet() {
+  haptic();
+  const on = kassignerEnabled();
+  const desk = isDesktopBrowser();
+  const ios = isIosDevice();
+  const face = kassignerFaceOn();
+  openSheet('KasSigner', `
+    <p class="muted" style="text-align:left;padding:0 0 10px;"><b>KasSigner</b> (InKasWeRust) is an air-gapped M5Stack / Waveshare device that signs Kaspa via QR. This toggle is Scorpion’s version of that pattern: desktop PIN, then your iPhone signs with Face ID over QR. Keys stay in Scorpion. It does not flash an M5.</p>
+    <div class="kv"><span class="k">This device</span><span class="v">${desk ? 'Desktop' : (ios ? 'iPhone' : 'Mobile')}</span></div>
+    <div class="kv"><span class="k">Face ID</span><span class="v">${face ? 'On' : (webauthnOk() ? 'Off' : 'Unavailable')}</span></div>
+    <label class="kw-toggle">
+      <input type="checkbox" id="ks-on" ${on ? 'checked' : ''}>
+      <span>Dual QR sign (PIN + phone)</span>
+    </label>
+    <p class="muted" style="text-align:left;padding:8px 0 0;">On desktop, a dApp or TRADE that would PIN-sign once will PIN, then show a QR. Scan it in this wallet on iPhone. Face ID (or PIN) signs. Show the result QR back to the desktop.</p>
+    <div class="vprog-acts" style="margin-top:12px;">
+      ${ios || !desk ? `<button type="button" class="btn btn-gold" id="ks-enroll">${face ? 'Re-enroll Face ID' : 'Turn on Face ID'}</button>
+      <button type="button" class="btn btn-glass" id="ks-scan">Scan to sign</button>` : `<button type="button" class="btn btn-glass" id="ks-scan">Scan phone signature</button>`}
+    </div>
+  `, { confirm: 'Done', cancel: false });
+  $('ks-on')?.addEventListener('change', (e) => {
+    setKassignerEnabled(!!e.target.checked);
+    toast(e.target.checked ? 'KasSigner dual QR on' : 'KasSigner dual QR off');
+  });
+  $('ks-enroll')?.addEventListener('click', async () => {
+    try {
+      await enrollFaceId(wallet?.address || '');
+      toast('Face ID enrolled for KasSigner');
+      closeSheet();
+      openKassignerSheet();
+    } catch (err) {
+      toast(errText(err));
+    }
+  });
+  $('ks-scan')?.addEventListener('click', () => {
+    closeSheet();
+    startKsScan({ mode: desk ? 'reply' : 'request' }).catch(e => toast(errText(e)));
+  });
+}
+
+async function startKsScan({ mode, onDone }) {
+  const box = $('qr-scan-box');
+  const video = $('qr-video');
+  if (!box || !video) throw new Error('No camera UI');
+  if (!navigator.mediaDevices?.getUserMedia) throw new Error('Camera is not available');
+  stopQrScan();
+  box.classList.remove('hidden');
+  if ($('qr-scan-status')) $('qr-scan-status').textContent = mode === 'reply' ? 'Point at the phone’s signature QR' : 'Point at the desktop QR';
+  const stream = await navigator.mediaDevices.getUserMedia({
+    video: { facingMode: { ideal: 'environment' } },
+    audio: false
+  });
+  qrStream = stream;
+  video.setAttribute('playsinline', 'true');
+  video.muted = true;
+  video.srcObject = stream;
+  await video.play().catch(() => {});
+  const feed = ksFrameFeed();
+  let detector = null;
+  if (typeof window.BarcodeDetector === 'function') {
+    try { detector = new window.BarcodeDetector({ formats: ['qr_code'] }); } catch {}
+  }
+  let jsQR = null;
+  if (!detector) {
+    const mod = await import('https://esm.sh/jsqr@1.4.0');
+    jsQR = mod.default || mod.jsQR || mod;
+  }
+  const canvas = document.createElement('canvas');
+  const ctx = canvas.getContext('2d', { willReadFrequently: true });
+  let last = 0;
+  let stopped = false;
+  const finish = (val) => {
+    if (stopped) return;
+    stopped = true;
+    stopQrScan();
+    if (onDone) onDone(val);
+    else handleKsScanned(val).catch(e => toast(errText(e)));
+  };
+  ksScanStop = () => { stopped = true; };
+  const tick = async () => {
+    if (stopped || !qrStream) return;
+    qrRaf = requestAnimationFrame(tick);
+    if (Date.now() - last < 160) return;
+    last = Date.now();
+    try {
+      let value = '';
+      if (detector) {
+        const codes = await detector.detect(video);
+        value = codes?.[0]?.rawValue || '';
+      } else if (typeof jsQR === 'function' && video.readyState >= 2) {
+        const w = video.videoWidth || 640;
+        const h = video.videoHeight || 480;
+        if (!w || !h) return;
+        canvas.width = w; canvas.height = h;
+        ctx.drawImage(video, 0, 0, w, h);
+        const img = ctx.getImageData(0, 0, w, h);
+        const code = jsQR(img.data, img.width, img.height);
+        value = code?.data || '';
+      }
+      if (!value) return;
+      const step = feed(value);
+      if (step?.partial) {
+        if ($('qr-scan-status')) $('qr-scan-status').textContent = 'Frames ' + step.have + ' / ' + step.n;
+        return;
+      }
+      if (step?.done) finish(step.text);
+    } catch {}
+  };
+  qrRaf = requestAnimationFrame(tick);
+}
+
+async function handleKsScanned(text) {
+  const o = parseKsPayload(text);
+  if (!o) { toast('Not a Scorpion KasSigner QR'); return; }
+  if (o.k === 'sig') {
+    toast('Got phone signature — paste is not needed. Re-open the desktop QR sheet if it is still waiting.');
+    window.__ksReply = o.j;
+    return;
+  }
+  if (o.k !== 'req') return;
+  if (o.a && wallet?.address && !sameAddrPayload(o.a, wallet.address)) {
+    throw new Error('This phone wallet is a different address than the desktop QR.');
+  }
+  hydrateNativeKey(wallet);
+  try {
+    if (kassignerFaceOn()) await assertFaceId();
+    else await requirePin('KasSigner phone sign');
+  } catch (e) {
+    if (errText(e) === 'cancelled') return;
+    throw e;
+  }
+  const signed = await signPsktJson({
+    wallet,
+    txJsonString: o.j,
+    signInputs: o.i || []
+  });
+  const reply = encodeKsReply({ json: signed, address: wallet.address });
+  openSheet('Phone signed', `
+    <p class="muted" style="text-align:left;padding:0 0 8px;">Face ID / PIN approved. Show this QR to the desktop Scorpion.</p>
+    <div id="ks-qr" style="display:flex;justify-content:center;padding:8px 0;"></div>
+    <p class="muted" id="ks-frame-lab" style="text-align:center;"></p>
+  `, { confirm: 'Done', cancel: false, onConfirm: () => { stopKsAnim(); closeSheet(); } });
+  await paintKsQr($('ks-qr'), reply);
+}
+
+async function openKassignerDesktopQr({ json, signInputs, summary }) {
+  const payload = encodeKsRequest({
+    json, signInputs, summary,
+    address: wallet?.address || '',
+    network: networkId()
+  });
+  window.__ksReply = '';
+  openSheet('KasSigner · 2nd sign', `
+    <p class="muted" style="text-align:left;padding:0 0 8px;">PIN is done. Scan this with Scorpion on iPhone (You → KasSigner → Scan to sign). Face ID signs. Then scan the phone’s QR here.</p>
+    <div id="ks-qr" style="display:flex;justify-content:center;padding:8px 0;"></div>
+    <p class="muted" id="ks-frame-lab" style="text-align:center;"></p>
+    <button type="button" class="btn btn-gold" id="ks-got" style="margin-top:10px;">Scan phone signature</button>
+  `, { confirm: false, cancelLabel: 'Cancel' });
+  await paintKsQr($('ks-qr'), payload);
+  return await new Promise((resolve, reject) => {
+    const prev = $('sheet-cancel') || $('sheet-x');
+    const fail = () => { stopKsAnim(); stopKsScan(); reject(new Error('cancelled')); };
+    $('ks-got')?.addEventListener('click', async () => {
+      try {
+        await startKsScan({
+          mode: 'reply',
+          onDone: (text) => {
+            const o = parseKsPayload(text);
+            stopKsAnim();
+            if (!o || o.k !== 'sig' || !o.j) { toast('Not a signature QR'); return; }
+            closeSheet();
+            resolve(o.j);
+          }
+        });
+      } catch (e) { toast(errText(e)); }
+    });
+    const t = setInterval(() => {
+      if (window.__ksReply) {
+        const j = window.__ksReply;
+        window.__ksReply = '';
+        clearInterval(t);
+        stopKsAnim();
+        closeSheet();
+        resolve(j);
+      }
+    }, 400);
+    prev?.addEventListener('click', () => { clearInterval(t); fail(); }, { once: true });
+  });
+}
+
+async function kassignerSignFromDapp({ json, signInputs, origin }) {
+  if (!kassignerDesktopActive() || kaswareSigning(wallet)) return null;
+  return openKassignerDesktopQr({
+    json,
+    signInputs,
+    summary: 'dApp ' + (origin || '')
+  });
+}
+
 async function adoptKaswareAccount(linked) {
   const addr = String(linked?.address || '');
   if (!addr) return;
@@ -12528,6 +12770,7 @@ function bind() {
   click('profile-keys', openSettings);
   click('profile-kasware', openKaswareSheet);
   click('profile-kaspire', openKaspireSheet);
+  click('profile-kassigner', openKassignerSheet);
   click('profile-connected', openConnectedSheet);
   click('btn-connected', openConnectedSheet);
   click('profile-net', openNetworkSheet);

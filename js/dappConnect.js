@@ -480,6 +480,10 @@ async function handleSign(req) {
   if (kaswareSigning(w) && !hexKey(w.privKey)) {
     return await signPsktWithKasware(json, inputs);
   }
+  if (typeof hooks.kassignerSign === 'function' && !kaswareSigning(w)) {
+    const second = await hooks.kassignerSign({ json, signInputs: inputs, origin });
+    if (second) return second;
+  }
   return await signPsktJson({ wallet: w, txJsonString: json, signInputs: inputs });
 }
 

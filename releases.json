@@ -1,10 +1,21 @@
 {
   "sdk": "176",
-  "build": "274",
+  "build": "275",
   "wallet": "https://kcc-20-wallet.vercel.app",
   "sdkUrl": "https://kcc-20-wallet.vercel.app/sdk.js?v=176",
   "rule": "Every SDK_VERSION bump gets an entry here the same day. Pin sdk.js?v=NNN and require window.kcc20.sdkVersion === that NNN.",
   "entries": [
+    {
+      "date": "2026-09-27",
+      "sdk": "176",
+      "build": "275",
+      "title": "Forge agent, drag-place, own-wallet Test",
+      "breaking": false,
+      "notes": [
+        "Forge chat + screenshot upload restyles the face (palette locally, Grok /api/forge when keyed). Drag cards to reorder; left/right/full columns. Receive QR draws in the preview. Test opens YOUR generated wallet overlay, not Scorpion chrome.",
+        "SDK 176 unchanged."
+      ]
+    },
     {
       "date": "2026-09-27",
       "sdk": "176",

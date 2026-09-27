@@ -39,6 +39,20 @@
     .fg-empty { color:var(--muted); font-size:13px; }
     .fg-cta { margin-top:8px; height:40px; width:100%; border:0; border-radius:12px; background:linear-gradient(180deg,#e8c98a,#c9a36a); color:#1a1408; font-weight:700; cursor:pointer; }
     .fg-x { position:absolute; top:6px; right:8px; width:24px; height:24px; border:0; border-radius:8px; background:transparent; color:var(--muted); font-size:16px; cursor:pointer; }
+    .fg-shell.fg-pro { grid-template-columns: 150px 1fr 220px; }
+    .fg-grid { display:grid; grid-template-columns:1fr 1fr; gap:8px; }
+    .fg-card.full { grid-column:1/-1; } .fg-card.col0 { grid-column:1; } .fg-card.col1 { grid-column:2; }
+    .fg-side { display:flex; flex-direction:column; gap:10px; }
+    .fg-chat { background:#101012; border:1px solid var(--line); border-radius:16px; padding:12px; }
+    .fg-log { max-height:120px; overflow:auto; font-size:12px; color:var(--muted); }
+    .fg-up, .fg-hint { font-size:11px; color:var(--muted); }
+    #fg-ask { width:100%; border-radius:10px; border:1px solid var(--line); background:#0b0b0c; color:#fff; padding:8px; }
+    .fg-in { width:100%; margin-top:6px; height:36px; border-radius:10px; border:1px solid var(--line); background:#0b0b0c; color:#fff; padding:0 8px; }
+    .fg-qr { display:flex; justify-content:center; padding:8px 0; }
+    .fg-modal { position:fixed; inset:0; z-index:80; background:rgba(0,0,0,.72); display:flex; align-items:center; justify-content:center; padding:16px; }
+    .fg-modal.hidden { display:none !important; }
+    .fg-modal-in { width:min(420px,100%); max-height:92vh; overflow:auto; background:#07080c; border-radius:24px; padding:16px; position:relative; }
+    .fg-modal-x { position:absolute; top:10px; right:10px; }
     .field { display:block; margin:8px 0; font-size:13px; color:var(--muted); }
     .field input { width:100%; margin-top:4px; height:36px; border-radius:10px; border:1px solid var(--line); background:#0b0b0c; color:#f5f5f7; padding:0 10px; }
     .vprog-acts { display:flex; flex-wrap:wrap; gap:8px; margin-top:14px; }
@@ -108,9 +122,11 @@
     ctl = bootWalletForge(document.getElementById('forge-root'), {
       toast: (m) => { status.textContent = m; },
       getLive: () => cache,
-      onSend: () => window.kcc20?.openWallet?.({ screen: 'send' }),
-      onReceive: () => window.kcc20?.openWallet?.({ screen: 'home' }),
-      onApps: () => window.open('https://kcc-20-wallet.vercel.app', '_blank')
+      apiOrigin: 'https://kcc-20-wallet.vercel.app',
+      sendKas: async (dest, amt) => {
+        status.textContent = 'Signing stays in Scorpion. Connect, then Pay with PIN in the wallet.';
+        try { await window.kcc20.sendKaspa({ dest, amount: amt }); } catch (e) { status.textContent = e.message || 'send failed'; }
+      }
     });
     document.getElementById('fg-connect').onclick = async () => {
       try {

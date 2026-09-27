@@ -1,6 +1,7 @@
-/* Wallet Forge — AI-safe customizer. UI only. Signing stays in Scorpion core. */
-const STORE = 'kcc20_forge_v1';
+/* Wallet Forge — presentation only. Keys stay in Scorpion. */
+const STORE = 'kcc20_forge_v2';
 const KAS_LOGO = new URL('../assets/kas.svg', import.meta.url).href;
+const TYPES = ['brand', 'identity', 'kas', 'tokens', 'activity', 'receive', 'send', 'apps', 'network'];
 
 export const FORGE_PRIMS = [
   { id: 'brand', label: 'Kaspa brand', hint: 'Official Kaspa mark' },
@@ -8,35 +9,40 @@ export const FORGE_PRIMS = [
   { id: 'kas', label: 'KAS balance', hint: 'Live native balance' },
   { id: 'tokens', label: 'KCC20 tokens', hint: 'Live holdings' },
   { id: 'activity', label: 'Activity', hint: 'Local log' },
-  { id: 'receive', label: 'Receive QR', hint: 'This address' },
-  { id: 'send', label: 'Send', hint: 'Opens Send' },
-  { id: 'apps', label: 'TTT apps', hint: 'Opens Apps' },
+  { id: 'receive', label: 'Receive QR', hint: 'QR in this wallet' },
+  { id: 'send', label: 'Send', hint: 'Send in this wallet' },
+  { id: 'apps', label: 'TTT apps', hint: 'Link row' },
   { id: 'network', label: 'Network', hint: 'mainnet / TN10' }
 ];
+
+const DEFAULT_THEME = {
+  bg: '#07080c', card: '#12141c', accent: '#49eacb', gold: '#c9a36a', text: '#f5f5f7', radius: 16
+};
+
+function uid() { return 'b' + Math.random().toString(36).slice(2, 9); }
 
 function loadLayout() {
   try {
     const raw = JSON.parse(localStorage.getItem(STORE) || 'null');
-    if (raw && Array.isArray(raw.blocks) && raw.blocks.length) return raw;
+    if (raw && Array.isArray(raw.blocks) && raw.blocks.length) {
+      raw.theme = { ...DEFAULT_THEME, ...(raw.theme || {}) };
+      return raw;
+    }
   } catch {}
   return {
     name: 'My Kaspa wallet',
-    theme: 'fintech',
+    theme: { ...DEFAULT_THEME },
     blocks: [
-      { id: uid(), type: 'brand', title: 'Kaspa' },
-      { id: uid(), type: 'identity', title: 'Identity' },
-      { id: uid(), type: 'kas', title: 'Balance' },
-      { id: uid(), type: 'receive', title: 'Receive' }
+      { id: uid(), type: 'brand', title: 'Kaspa', col: 'full' },
+      { id: uid(), type: 'identity', title: 'Identity', col: 'full' },
+      { id: uid(), type: 'kas', title: 'Balance', col: '0' },
+      { id: uid(), type: 'receive', title: 'Receive', col: '1' }
     ]
   };
 }
 
 function saveLayout(layout) {
   try { localStorage.setItem(STORE, JSON.stringify(layout)); } catch {}
-}
-
-function uid() {
-  return 'b' + Math.random().toString(36).slice(2, 9);
 }
 
 function esc(s) {
@@ -72,152 +78,304 @@ export function forgeStateFromWallet(ctx) {
     network: ctx.network || 'mainnet',
     holdings: holds.map(t => ({
       tick: String(t.ticker || '').toUpperCase(),
-      bal: String(t.balance || '0'),
-      image: t.image || ''
+      bal: String(t.balance || '0')
     })),
-    activity: acts.map(a => ({
-      title: a.title || a.label || a.tick || 'Tx',
-      when: a.at || a.ts || ''
-    }))
+    activity: acts.map(a => ({ title: a.title || a.label || a.tick || 'Tx' }))
   };
 }
 
-function blockHtml(b, live, selected) {
+function applyTheme(el, theme) {
+  if (!el || !theme) return;
+  el.style.setProperty('--fg-bg', theme.bg || DEFAULT_THEME.bg);
+  el.style.setProperty('--fg-card', theme.card || DEFAULT_THEME.card);
+  el.style.setProperty('--fg-accent', theme.accent || DEFAULT_THEME.accent);
+  el.style.setProperty('--fg-gold', theme.gold || DEFAULT_THEME.gold);
+  el.style.setProperty('--fg-text', theme.text || DEFAULT_THEME.text);
+  el.style.setProperty('--fg-radius', (Number(theme.radius) || 16) + 'px');
+}
+
+function blockHtml(b, live, selected, { preview }) {
   const t = b.type;
   const title = esc(b.title || t);
-  const sel = selected === b.id ? ' on' : '';
+  const sel = !preview && selected === b.id ? ' on' : '';
+  const col = b.col === '1' ? ' col1' : (b.col === '0' ? ' col0' : ' full');
+  const drag = preview ? '' : ` draggable="true"`;
+  const x = preview ? '' : `<button type="button" class="fg-x" data-fg-del="${esc(b.id)}">×</button>`;
+  const wrap = (inner) =>
+    `<article class="fg-card${sel}${col}" data-fg="${esc(b.id)}" data-fg-type="${t}"${drag}>${x}${inner}</article>`;
   if (t === 'brand') {
-    return `<article class="fg-card fg-brand${sel}" data-fg="${esc(b.id)}">
-      <img src="${KAS_LOGO}" alt="Kaspa" class="fg-kas">
-      <div><b>${title}</b><em>Layer 1 · BlockDAG</em></div>
-      <button type="button" class="fg-x" data-fg-del="${esc(b.id)}" aria-label="Remove">×</button>
-    </article>`;
+    return wrap(`<div class="fg-brand"><img src="${KAS_LOGO}" alt="Kaspa" class="fg-kas"><div><b>${title}</b><em>Layer 1 · BlockDAG</em></div></div>`);
   }
   if (t === 'identity') {
-    return `<article class="fg-card${sel}" data-fg="${esc(b.id)}">
-      <span class="fg-k">${title}</span>
-      <strong class="fg-id">${esc(live.kns || live.name)}</strong>
-      <code>${esc(shortA(live.address))}</code>
-      <button type="button" class="fg-x" data-fg-del="${esc(b.id)}">×</button>
-    </article>`;
+    return wrap(`<span class="fg-k">${title}</span><strong class="fg-id">${esc(live.kns || live.name)}</strong><code>${esc(shortA(live.address))}</code>`);
   }
   if (t === 'kas') {
-    return `<article class="fg-card fg-kas-bal${sel}" data-fg="${esc(b.id)}">
-      <span class="fg-k">${title}</span>
-      <strong>${esc(live.kas)} <small>KAS</small></strong>
-      <button type="button" class="fg-x" data-fg-del="${esc(b.id)}">×</button>
-    </article>`;
+    return wrap(`<span class="fg-k">${title}</span><strong class="fg-kas-n">${esc(live.kas)} <small>KAS</small></strong>`);
   }
   if (t === 'tokens') {
     const rows = (live.holdings || []).slice(0, 6).map(h =>
       `<div class="fg-row"><span>${esc(h.tick)}</span><span>${esc(h.bal)}</span></div>`
-    ).join('') || '<em class="fg-empty">No KCC20 on this address yet</em>';
-    return `<article class="fg-card${sel}" data-fg="${esc(b.id)}">
-      <span class="fg-k">${title}</span>${rows}
-      <button type="button" class="fg-x" data-fg-del="${esc(b.id)}">×</button>
-    </article>`;
+    ).join('') || '<em class="fg-empty">No KCC20 yet</em>';
+    return wrap(`<span class="fg-k">${title}</span>${rows}`);
   }
   if (t === 'activity') {
     const rows = (live.activity || []).slice(0, 5).map(h =>
       `<div class="fg-row"><span>${esc(h.title)}</span></div>`
-    ).join('') || '<em class="fg-empty">No local activity yet</em>';
-    return `<article class="fg-card${sel}" data-fg="${esc(b.id)}">
-      <span class="fg-k">${title}</span>${rows}
-      <button type="button" class="fg-x" data-fg-del="${esc(b.id)}">×</button>
-    </article>`;
+    ).join('') || '<em class="fg-empty">No activity yet</em>';
+    return wrap(`<span class="fg-k">${title}</span>${rows}`);
   }
   if (t === 'receive') {
-    return `<article class="fg-card fg-recv${sel}" data-fg="${esc(b.id)}">
-      <span class="fg-k">${title}</span>
-      <button type="button" class="fg-cta" data-fg-act="receive">Show QR</button>
-      <button type="button" class="fg-x" data-fg-del="${esc(b.id)}">×</button>
-    </article>`;
+    return wrap(`<span class="fg-k">${title}</span><div class="fg-qr" data-fg-qr="${esc(live.address || '')}"></div><p class="fg-qr-addr">${esc(live.address || 'Connect to see address')}</p>`);
   }
   if (t === 'send') {
-    return `<article class="fg-card${sel}" data-fg="${esc(b.id)}">
-      <span class="fg-k">${title}</span>
-      <button type="button" class="fg-cta" data-fg-act="send">Send KAS</button>
-      <button type="button" class="fg-x" data-fg-del="${esc(b.id)}">×</button>
-    </article>`;
+    return wrap(`<span class="fg-k">${title}</span>
+      <input class="fg-in" data-fg-dest placeholder="kaspa:q…" spellcheck="false">
+      <input class="fg-in" data-fg-amt placeholder="Amount KAS" inputmode="decimal">
+      <button type="button" class="fg-cta" data-fg-act="send">Send from this wallet</button>`);
   }
   if (t === 'apps') {
-    return `<article class="fg-card${sel}" data-fg="${esc(b.id)}">
-      <span class="fg-k">${title}</span>
-      <button type="button" class="fg-cta" data-fg-act="apps">Open TTT / Apps</button>
-      <button type="button" class="fg-x" data-fg-del="${esc(b.id)}">×</button>
-    </article>`;
+    return wrap(`<span class="fg-k">${title}</span><p class="fg-empty">TTT · KasDistro · K Social</p>`);
   }
   if (t === 'network') {
-    return `<article class="fg-card${sel}" data-fg="${esc(b.id)}">
-      <span class="fg-k">${title}</span>
-      <strong>${esc(live.network === 'testnet-10' ? 'Testnet-10' : 'Mainnet')}</strong>
-      <button type="button" class="fg-x" data-fg-del="${esc(b.id)}">×</button>
-    </article>`;
+    return wrap(`<span class="fg-k">${title}</span><strong>${esc(live.network === 'testnet-10' ? 'Testnet-10' : 'Mainnet')}</strong>`);
   }
   return '';
+}
+
+async function paintQrs(root, address) {
+  if (!address) return;
+  const nodes = [...root.querySelectorAll('[data-fg-qr]')];
+  if (!nodes.length) return;
+  let QR;
+  try { QR = await import('https://esm.sh/qrcode@1.5.4'); } catch { return; }
+  for (const el of nodes) {
+    const addr = el.dataset.fgQr || address;
+    if (!addr) continue;
+    el.innerHTML = '';
+    const canvas = document.createElement('canvas');
+    try {
+      await QR.toCanvas(canvas, addr, { width: 168, margin: 1, color: { dark: '#111111', light: '#ffffff' } });
+      el.appendChild(canvas);
+    } catch {}
+  }
+}
+
+function paletteFromFile(file) {
+  return new Promise((resolve) => {
+    const img = new Image();
+    const url = URL.createObjectURL(file);
+    img.onload = () => {
+      const c = document.createElement('canvas');
+      c.width = 48; c.height = 48;
+      const x = c.getContext('2d');
+      x.drawImage(img, 0, 0, 48, 48);
+      const d = x.getImageData(0, 0, 48, 48).data;
+      let dark = [7, 8, 12], acc = [73, 234, 203], nAcc = 0;
+      for (let i = 0; i < d.length; i += 16) {
+        const r = d[i], g = d[i + 1], b = d[i + 2];
+        const l = (r + g + b) / 3;
+        if (l < 80) dark = [r, g, b];
+        const sat = Math.max(r, g, b) - Math.min(r, g, b);
+        if (sat > 40 && l > 40 && l < 220) {
+          acc = [r, g, b];
+          nAcc++;
+        }
+      }
+      URL.revokeObjectURL(url);
+      const hex = (a) => '#' + a.map(n => n.toString(16).padStart(2, '0')).join('');
+      resolve({ bg: hex(dark), accent: hex(acc), card: hex(dark.map(n => Math.min(255, n + 18))), text: '#f5f5f7', gold: '#c9a36a', samples: nAcc });
+    };
+    img.onerror = () => { URL.revokeObjectURL(url); resolve(null); };
+    img.src = url;
+  });
+}
+
+function fileToDataUrl(file) {
+  return new Promise((resolve, reject) => {
+    const r = new FileReader();
+    r.onload = () => resolve(String(r.result || ''));
+    r.onerror = () => reject(new Error('read failed'));
+    r.readAsDataURL(file);
+  });
+}
+
+function localRestyle(layout, text, palette) {
+  const t = String(text || '').toLowerCase();
+  const next = JSON.parse(JSON.stringify(layout));
+  if (palette) next.theme = { ...next.theme, ...palette, radius: /round|soft/.test(t) ? 22 : next.theme.radius };
+  if (/terminal|green on black|matrix/.test(t)) {
+    next.theme = { bg: '#020402', card: '#071108', accent: '#39ff14', gold: '#39ff14', text: '#c8ffc8', radius: 4 };
+    next.name = next.name || 'TERM.KAS';
+  }
+  if (/white|light|paper/.test(t)) {
+    next.theme = { bg: '#f4f1ea', card: '#ffffff', accent: '#111', gold: '#b45309', text: '#111', radius: 14 };
+  }
+  if (/teal|kaspa/.test(t)) next.theme.accent = '#49eacb';
+  const want = [];
+  if (/qr|receive/.test(t)) want.push('receive');
+  if (/token|kcc/.test(t)) want.push('tokens');
+  if (/activit|history/.test(t)) want.push('activity');
+  if (/send/.test(t)) want.push('send');
+  if (/ttt|apps/.test(t)) want.push('apps');
+  for (const type of want) {
+    if (!next.blocks.some(b => b.type === type)) {
+      const prim = FORGE_PRIMS.find(p => p.id === type);
+      next.blocks.push({ id: uid(), type, title: prim.label, col: type === 'receive' || type === 'kas' ? '0' : 'full' });
+    }
+  }
+  if (/qr (at )?top|receive (at )?top/.test(t)) {
+    const i = next.blocks.findIndex(b => b.type === 'receive');
+    if (i > 0) {
+      const [x] = next.blocks.splice(i, 1);
+      next.blocks.splice(1, 0, x);
+    }
+  }
+  if (/balance (at )?top/.test(t)) {
+    const i = next.blocks.findIndex(b => b.type === 'kas');
+    if (i > 0) {
+      const [x] = next.blocks.splice(i, 1);
+      next.blocks.splice(1, 0, x);
+    }
+  }
+  return next;
+}
+
+function applyLlm(layout, parsed) {
+  const next = JSON.parse(JSON.stringify(layout));
+  if (parsed.name) next.name = String(parsed.name).slice(0, 40);
+  if (parsed.theme && typeof parsed.theme === 'object') {
+    next.theme = { ...next.theme };
+    for (const k of ['bg', 'card', 'accent', 'text', 'gold']) {
+      const v = String(parsed.theme[k] || '');
+      if (/^#[0-9a-fA-F]{3,8}$/.test(v)) next.theme[k] = v;
+    }
+    if (Number(parsed.theme.radius) > 0) next.theme.radius = Math.min(32, Number(parsed.theme.radius));
+  }
+  if (Array.isArray(parsed.order) && parsed.order.length) {
+    const blocks = [];
+    for (const row of parsed.order) {
+      const type = String(row.type || row);
+      if (!TYPES.includes(type)) continue;
+      const col = row.col === 1 || row.col === '1' ? '1' : (row.col === 0 || row.col === '0' ? '0' : 'full');
+      blocks.push({
+        id: uid(),
+        type,
+        title: String(row.title || FORGE_PRIMS.find(p => p.id === type)?.label || type).slice(0, 32),
+        col
+      });
+    }
+    if (blocks.length) next.blocks = blocks;
+  }
+  return next;
 }
 
 export function bootWalletForge(root, hooks) {
   if (!root) return { destroy() {} };
   let layout = loadLayout();
   let selected = layout.blocks[0]?.id || '';
+  let chat = [];
+  let pendingImage = null;
   const live = () => forgeStateFromWallet(hooks.getLive?.() || {});
 
   root.innerHTML = `
-    <p class="build-lede">Wallet Forge. Drag a primitive onto the canvas. Dropped blocks are live against this Scorpion core — balance, tokens, QR, send. AI never writes keys. Export a skin you can host.</p>
-    <div class="fg-shell">
+    <div class="fg-shell fg-pro">
       <aside class="fg-pal">
         <b>Primitives</b>
         ${FORGE_PRIMS.map(p => `<button type="button" class="fg-chip" draggable="true" data-fg-add="${p.id}">${esc(p.label)}<i>${esc(p.hint)}</i></button>`).join('')}
+        <p class="fg-hint">Drag onto the phone. Drag a card onto another card to move it.</p>
       </aside>
-      <section class="fg-canvas" id="fg-canvas" tabindex="0">
+      <section class="fg-canvas" id="fg-canvas">
         <div class="fg-phone" id="fg-phone"></div>
       </section>
-      <aside class="fg-insp" id="fg-insp"></aside>
+      <aside class="fg-side">
+        <div class="fg-insp" id="fg-insp"></div>
+        <div class="fg-chat">
+          <b>Agent</b>
+          <div class="fg-log" id="fg-log"></div>
+          <label class="fg-up">Upload a wallet screenshot
+            <input type="file" id="fg-img" accept="image/*">
+          </label>
+          <p class="fg-img-name" id="fg-img-name"></p>
+          <textarea id="fg-ask" rows="2" maxlength="500" placeholder="Restyle from my screenshot. QR on top, tokens under KAS."></textarea>
+          <button type="button" class="fg-cta" id="fg-go">Restyle</button>
+        </div>
+      </aside>
     </div>
     <div class="vprog-acts">
-      <button type="button" class="btn btn-gold" id="fg-test">Test live</button>
+      <button type="button" class="btn btn-gold" id="fg-test">Test this wallet</button>
       <button type="button" class="btn btn-glass" id="fg-export">Export HTML</button>
-      <button type="button" class="btn btn-glass" id="fg-reset">Reset layout</button>
+      <button type="button" class="btn btn-glass" id="fg-reset">Reset</button>
+    </div>
+    <div class="fg-modal hidden" id="fg-modal" aria-hidden="true">
+      <div class="fg-modal-in">
+        <button type="button" class="fg-modal-x" id="fg-modal-x">Close</button>
+        <div id="fg-live"></div>
+      </div>
     </div>
   `;
 
   const phone = root.querySelector('#fg-phone');
-  const insp = root.querySelector('#fg-insp');
   const canvas = root.querySelector('#fg-canvas');
+  const insp = root.querySelector('#fg-insp');
+  const log = root.querySelector('#fg-log');
+  const modal = root.querySelector('#fg-modal');
+  const liveBox = root.querySelector('#fg-live');
 
-  function paint() {
-    saveLayout(layout);
+  function logLine(who, text) {
+    chat.push({ who, text });
+    log.innerHTML = chat.slice(-8).map(m =>
+      `<p class="fg-msg ${m.who}"><b>${m.who === 'you' ? 'You' : 'Forge'}</b> ${esc(m.text)}</p>`
+    ).join('');
+    log.scrollTop = log.scrollHeight;
+  }
+
+  function paint(previewRoot, preview) {
+    const host = previewRoot || phone;
     const L = live();
-    phone.innerHTML = `<header class="fg-top">${esc(layout.name)}</header>`
-      + layout.blocks.map(b => blockHtml(b, L, selected)).join('');
+    applyTheme(canvas, layout.theme);
+    applyTheme(modal, layout.theme);
+    host.innerHTML = `<header class="fg-top">${esc(layout.name)}</header>`
+      + `<div class="fg-grid">${layout.blocks.map(b => blockHtml(b, L, selected, { preview: !!preview })).join('')}</div>`;
+    paintQrs(host, L.address);
+    if (preview) return;
+    saveLayout(layout);
     const b = layout.blocks.find(x => x.id === selected);
     insp.innerHTML = b ? `
       <b>Edit</b>
-      <label class="field"><span>Label</span>
-        <input id="fg-title" value="${esc(b.title || '')}" maxlength="32">
+      <label class="field"><span>Label</span><input id="fg-title" value="${esc(b.title || '')}" maxlength="32"></label>
+      <label class="field"><span>Column</span>
+        <select id="fg-col">
+          <option value="full"${b.col === 'full' || !b.col ? ' selected' : ''}>Full width</option>
+          <option value="0"${b.col === '0' ? ' selected' : ''}>Left</option>
+          <option value="1"${b.col === '1' ? ' selected' : ''}>Right</option>
+        </select>
       </label>
-      <p class="muted">Type: ${esc(b.type)}. This block reads the real wallet core.</p>
+      <button type="button" class="btn btn-glass" id="fg-up">Move up</button>
+      <button type="button" class="btn btn-glass" id="fg-dn">Move down</button>
       <button type="button" class="btn btn-glass" id="fg-del-insp">Delete</button>
-    ` : `<p class="muted">Tap a block to edit. Drag primitives in.</p>`;
+    ` : `<p class="muted">Tap a block. Drag it onto another to place it.</p>`;
     insp.querySelector('#fg-title')?.addEventListener('input', (e) => {
       if (!b) return;
       b.title = e.target.value;
-      saveLayout(layout);
-      const lab = phone.querySelector(`[data-fg="${b.id}"] .fg-k, [data-fg="${b.id}"] b`);
-      if (lab) lab.textContent = b.title || b.type;
+      paint();
     });
+    insp.querySelector('#fg-col')?.addEventListener('change', (e) => {
+      if (!b) return;
+      b.col = e.target.value;
+      paint();
+    });
+    insp.querySelector('#fg-up')?.addEventListener('click', () => move(selected, -1));
+    insp.querySelector('#fg-dn')?.addEventListener('click', () => move(selected, 1));
     insp.querySelector('#fg-del-insp')?.addEventListener('click', () => del(selected));
   }
 
-  function add(type) {
+  function add(type, col) {
     const prim = FORGE_PRIMS.find(p => p.id === type);
     if (!prim) return;
-    const block = { id: uid(), type, title: prim.label };
+    const block = { id: uid(), type, title: prim.label, col: col || 'full' };
     layout.blocks.push(block);
     selected = block.id;
     paint();
-    hooks.toast?.('Live: ' + prim.label);
   }
 
   function del(id) {
@@ -226,9 +384,29 @@ export function bootWalletForge(root, hooks) {
     paint();
   }
 
+  function move(id, dir) {
+    const i = layout.blocks.findIndex(b => b.id === id);
+    const j = i + dir;
+    if (i < 0 || j < 0 || j >= layout.blocks.length) return;
+    const [x] = layout.blocks.splice(i, 1);
+    layout.blocks.splice(j, 0, x);
+    paint();
+  }
+
+  function insertBefore(srcId, destId) {
+    if (!srcId || srcId === destId) return;
+    const i = layout.blocks.findIndex(b => b.id === srcId);
+    if (i < 0) return;
+    const [x] = layout.blocks.splice(i, 1);
+    const j = layout.blocks.findIndex(b => b.id === destId);
+    layout.blocks.splice(j < 0 ? layout.blocks.length : j, 0, x);
+    selected = x.id;
+    paint();
+  }
+
   root.querySelectorAll('[data-fg-add]').forEach(btn => {
     btn.addEventListener('dragstart', (e) => {
-      e.dataTransfer.setData('text/plain', btn.dataset.fgAdd);
+      e.dataTransfer.setData('text/plain', 'add:' + btn.dataset.fgAdd);
       e.dataTransfer.effectAllowed = 'copy';
     });
     btn.addEventListener('click', () => add(btn.dataset.fgAdd));
@@ -238,31 +416,98 @@ export function bootWalletForge(root, hooks) {
   canvas.addEventListener('drop', (e) => {
     e.preventDefault();
     canvas.classList.remove('over');
-    add(e.dataTransfer.getData('text/plain'));
+    const raw = e.dataTransfer.getData('text/plain');
+    const card = e.target.closest('[data-fg]');
+    if (raw.startsWith('add:')) {
+      add(raw.slice(4), card?.classList.contains('col1') ? '1' : (card ? 'full' : 'full'));
+      if (card) insertBefore(selected, card.dataset.fg);
+      return;
+    }
+    if (raw.startsWith('move:') && card) insertBefore(raw.slice(5), card.dataset.fg);
+  });
+  phone.addEventListener('dragstart', (e) => {
+    const card = e.target.closest('[data-fg]');
+    if (!card) return;
+    e.dataTransfer.setData('text/plain', 'move:' + card.dataset.fg);
+    e.dataTransfer.effectAllowed = 'move';
   });
   phone.addEventListener('click', (e) => {
     const kill = e.target.closest('[data-fg-del]');
     if (kill) { e.stopPropagation(); del(kill.dataset.fgDel); return; }
     const act = e.target.closest('[data-fg-act]');
-    if (act) {
-      const a = act.dataset.fgAct;
-      if (a === 'send') hooks.onSend?.();
-      if (a === 'receive') hooks.onReceive?.();
-      if (a === 'apps') hooks.onApps?.();
+    if (act && act.dataset.fgAct === 'send') {
+      const card = act.closest('[data-fg]');
+      const dest = card?.querySelector('[data-fg-dest]')?.value || '';
+      const amt = card?.querySelector('[data-fg-amt]')?.value || '';
+      hooks.sendKas?.(dest, amt);
       return;
     }
     const card = e.target.closest('[data-fg]');
     if (card) { selected = card.dataset.fg; paint(); }
+  });
+
+  root.querySelector('#fg-img')?.addEventListener('change', (e) => {
+    pendingImage = e.target.files && e.target.files[0];
+    root.querySelector('#fg-img-name').textContent = pendingImage ? pendingImage.name : '';
+  });
+
+  root.querySelector('#fg-go')?.addEventListener('click', async () => {
+    const ask = String(root.querySelector('#fg-ask')?.value || '').trim();
+    if (!ask && !pendingImage) { hooks.toast?.('Type a restyle or upload a screenshot'); return; }
+    logLine('you', ask || '(screenshot)');
+    let palette = null;
+    let dataUrl = '';
+    if (pendingImage) {
+      palette = await paletteFromFile(pendingImage);
+      try { dataUrl = await fileToDataUrl(pendingImage); } catch {}
+    }
+    layout = localRestyle(layout, ask, palette);
+    paint();
+    const origin = (hooks.apiOrigin || (typeof location !== 'undefined' ? location.origin : '') || 'https://kcc-20-wallet.vercel.app').replace(/\/$/, '');
+    try {
+      const res = await fetch(origin + '/api/forge', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ prompt: ask, palette, image: dataUrl.slice(0, 1_200_000) })
+      });
+      const j = await res.json();
+      if (j && Array.isArray(j.order)) {
+        layout = applyLlm(layout, j);
+        paint();
+        logLine('ai', j.reply || 'Restyled from your prompt and screenshot.');
+      } else if (j && j.local) {
+        logLine('ai', 'Applied local restyle (palette + layout). Server Grok key not set.');
+      } else {
+        logLine('ai', j?.error ? ('Local restyle only: ' + j.error) : 'Applied palette and layout from your text.');
+      }
+    } catch {
+      logLine('ai', 'Offline restyle: palette from the image, layout from your words.');
+    }
+  });
+
+  function openTest() {
+    modal.classList.remove('hidden');
+    modal.setAttribute('aria-hidden', 'false');
+    paint(liveBox, true);
+    liveBox.querySelectorAll('[data-fg-act="send"]').forEach(btn => {
+      btn.addEventListener('click', (e) => {
+        const card = e.target.closest('[data-fg]');
+        const dest = card?.querySelector('[data-fg-dest]')?.value || '';
+        const amt = card?.querySelector('[data-fg-amt]')?.value || '';
+        hooks.sendKas?.(dest, amt);
+      });
+    });
+  }
+  root.querySelector('#fg-test')?.addEventListener('click', openTest);
+  root.querySelector('#fg-modal-x')?.addEventListener('click', () => {
+    modal.classList.add('hidden');
+    modal.setAttribute('aria-hidden', 'true');
   });
   root.querySelector('#fg-reset')?.addEventListener('click', () => {
     localStorage.removeItem(STORE);
     layout = loadLayout();
     selected = layout.blocks[0]?.id || '';
     paint();
-  });
-  root.querySelector('#fg-test')?.addEventListener('click', () => {
-    paint();
-    hooks.toast?.('Preview is live on this wallet');
   });
   root.querySelector('#fg-export')?.addEventListener('click', () => {
     const html = exportHtml(layout);
@@ -272,90 +517,60 @@ export function bootWalletForge(root, hooks) {
     a.download = 'kaspa-wallet.html';
     a.click();
     setTimeout(() => URL.revokeObjectURL(a.href), 2000);
-    hooks.toast?.('Downloaded kaspa-wallet.html — host it, then Connect');
+    hooks.toast?.('Downloaded kaspa-wallet.html');
   });
+  logLine('ai', 'Drop primitives. Upload a wallet screenshot and tell me how to restyle. Test opens YOUR wallet, not Scorpion chrome.');
   paint();
-  return {
-    refresh: paint,
-    destroy() { saveLayout(layout); }
-  };
+  return { refresh: paint, destroy() { saveLayout(layout); } };
 }
 
 function exportHtml(layout) {
   const blocks = JSON.stringify(layout);
+  const th = layout.theme || DEFAULT_THEME;
   return `<!DOCTYPE html>
-<html lang="en">
-<head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>${esc(layout.name)} — Kaspa</title>
+<html lang="en"><head>
+<meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>${esc(layout.name)}</title>
 <link rel="icon" href="https://kcc-20-wallet.vercel.app/assets/kas.svg">
-<script src="https://kcc-20-wallet.vercel.app/sdk.js?v=175"><\/script>
+<script src="https://kcc-20-wallet.vercel.app/sdk.js?v=176"><\/script>
 <style>
-:root{color-scheme:dark;--gold:#c9a36a;--bg:#07080c;--card:#12141c;--line:rgba(255,255,255,.08);--txt:#f5f5f7;--mut:rgba(235,235,245,.62)}
-*{box-sizing:border-box}body{margin:0;font:16px/1.45 -apple-system,sans-serif;background:radial-gradient(1200px 600px at 20% -10%,#1a2233,var(--bg));color:var(--txt)}
+:root{--bg:${th.bg};--card:${th.card};--accent:${th.accent};--gold:${th.gold};--txt:${th.text};--radius:${th.radius}px}
+*{box-sizing:border-box}body{margin:0;font:16px/1.45 -apple-system,sans-serif;background:var(--bg);color:var(--txt)}
 .wrap{max-width:420px;margin:0 auto;padding:22px 16px 48px}
-.fg-top{font-weight:800;letter-spacing:-.3px;margin:0 0 14px}
-.fg-card{position:relative;background:var(--card);border:1px solid var(--line);border-radius:16px;padding:14px;margin:0 0 10px}
-.fg-k{display:block;font-size:11px;color:var(--gold);text-transform:uppercase;letter-spacing:.08em;margin-bottom:6px}
-.fg-brand{display:flex;gap:12px;align-items:center}.fg-kas{width:36px;height:36px}
-.fg-id{display:block;font-size:20px}code{font-size:12px;color:var(--mut)}
-.fg-cta{height:44px;border:0;border-radius:12px;background:linear-gradient(180deg,#e8c98a,#c9a36a);color:#1a1408;font-weight:700;width:100%}
-.fg-row{display:flex;justify-content:space-between;padding:6px 0;border-top:1px solid var(--line);font-size:14px}
-.bar{display:flex;gap:8px;margin:0 0 16px}.bar button{flex:1;height:40px;border-radius:12px;border:1px solid var(--line);background:#0e1016;color:var(--txt)}
-</style>
-</head>
-<body>
-<div class="wrap">
-  <div class="bar"><button id="go">Connect Scorpion</button><button id="net">Network</button></div>
-  <div id="app"></div>
-</div>
+.fg-grid{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+.fg-card{background:var(--card);border-radius:var(--radius);padding:14px}
+.full{grid-column:1/-1}.col0{grid-column:1}.col1{grid-column:2}
+.fg-k{font-size:11px;color:var(--gold);letter-spacing:.08em;text-transform:uppercase}
+.fg-cta{height:44px;border:0;border-radius:12px;background:var(--accent);color:#111;font-weight:700;width:100%}
+.fg-in{width:100%;margin:6px 0;height:36px;border-radius:10px;border:0;padding:0 8px}
+</style></head><body>
+<div class="wrap"><div id="app"></div></div>
 <script>
-const LAYOUT = ${blocks};
-const LOGO = 'https://kcc-20-wallet.vercel.app/assets/kas.svg';
+const LAYOUT=${blocks};
+const LOGO='https://kcc-20-wallet.vercel.app/assets/kas.svg';
 function esc(s){return String(s??'').replace(/[&<>"']/g,c=>({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;' }[c]));}
-function shortA(a){const s=String(a||'');return s.length<16?s||'—':s.slice(0,10)+'…'+s.slice(-6);}
 async function live(){
-  const kcc = window.kcc20;
-  if (!kcc) return { address:'', name:'Connect', kns:'', kas:'—', network:'', holdings:[], activity:[] };
-  const st = await kcc.getState().catch(()=>null);
-  const holds = (st && st.holdings) || [];
-  const kas = st && st.balance && st.balance.confirmed != null ? (Number(st.balance.confirmed)/1e8).toLocaleString() : '—';
-  return {
-    address: (st && st.address) || (kcc.getAccounts && (await kcc.getAccounts())[0]) || '',
-    name: (st && st.name) || 'Wallet', kns:'', kas, network: (st && st.network) || '',
-    holdings: holds.map(t => ({ tick: t.ticker || t.tick, bal: t.balance || t.amount || '0' })),
-    activity: []
-  };
+  const kcc=window.kcc20; if(!kcc) return {address:'',name:'Connect',kas:'—',holdings:[],network:''};
+  const st=await kcc.getState().catch(()=>null)||{};
+  const kas=st.balance&&st.balance.confirmed!=null?(Number(st.balance.confirmed)/1e8).toLocaleString():'—';
+  return {address:st.address||'',name:'Wallet',kas,network:st.network||'',holdings:(st.holdings||[]).map(t=>({tick:t.ticker,bal:t.balance}))};
 }
 function render(L){
-  const app = document.getElementById('app');
-  app.innerHTML = '<div class="fg-top">'+esc(LAYOUT.name)+'</div>' + LAYOUT.blocks.map(b => {
-    if (b.type==='brand') return '<article class="fg-card fg-brand"><img class="fg-kas" src="'+LOGO+'" alt="Kaspa"><div><b>'+esc(b.title||'Kaspa')+'</b><em>Layer 1</em></div></article>';
-    if (b.type==='identity') return '<article class="fg-card"><span class="fg-k">'+esc(b.title)+'</span><strong class="fg-id">'+esc(L.kns||L.name)+'</strong><code>'+esc(shortA(L.address))+'</code></article>';
-    if (b.type==='kas') return '<article class="fg-card"><span class="fg-k">'+esc(b.title)+'</span><strong>'+esc(L.kas)+' KAS</strong></article>';
-    if (b.type==='tokens') return '<article class="fg-card"><span class="fg-k">'+esc(b.title)+'</span>'+(L.holdings.map(h=>'<div class="fg-row"><span>'+esc(h.tick)+'</span><span>'+esc(h.bal)+'</span></div>').join('')||'<em>No tokens</em>')+'</article>';
-    if (b.type==='receive') return '<article class="fg-card"><span class="fg-k">'+esc(b.title)+'</span><button class="fg-cta" id="recv">Receive</button></article>';
-    if (b.type==='send') return '<article class="fg-card"><span class="fg-k">'+esc(b.title)+'</span><button class="fg-cta" id="send">Send</button></article>';
-    if (b.type==='apps') return '<article class="fg-card"><span class="fg-k">'+esc(b.title)+'</span><p>TTT · Apps via Scorpion</p></article>';
-    if (b.type==='network') return '<article class="fg-card"><span class="fg-k">'+esc(b.title)+'</span><strong>'+esc(L.network||'—')+'</strong></article>';
-    if (b.type==='activity') return '<article class="fg-card"><span class="fg-k">'+esc(b.title)+'</span><em>Activity lives in Scorpion</em></article>';
-    return '';
-  }).join('');
-  document.getElementById('recv')?.addEventListener('click', () => window.kcc20?.openWallet({ screen:'home' }));
-  document.getElementById('send')?.addEventListener('click', () => window.kcc20?.openWallet({ screen:'send' }));
+  document.getElementById('app').innerHTML='<h2>'+esc(LAYOUT.name)+'</h2><div class="fg-grid">'+LAYOUT.blocks.map(b=>{
+    const col=b.col==='1'?'col1':(b.col==='0'?'col0':'full');
+    if(b.type==='brand') return '<article class="fg-card '+col+'"><img src="'+LOGO+'" width="36" alt="Kaspa"> <b>'+esc(b.title)+'</b></article>';
+    if(b.type==='identity') return '<article class="fg-card '+col+'"><span class="fg-k">'+esc(b.title)+'</span><div>'+esc(L.name)+'</div><code>'+esc(L.address)+'</code></article>';
+    if(b.type==='kas') return '<article class="fg-card '+col+'"><span class="fg-k">'+esc(b.title)+'</span><strong>'+esc(L.kas)+' KAS</strong></article>';
+    if(b.type==='tokens') return '<article class="fg-card '+col+'"><span class="fg-k">'+esc(b.title)+'</span>'+(L.holdings.map(h=>'<div>'+esc(h.tick)+' '+esc(h.bal)+'</div>').join('')||'—')+'</article>';
+    if(b.type==='receive') return '<article class="fg-card '+col+'"><span class="fg-k">'+esc(b.title)+'</span><canvas id="qr"></canvas><p>'+esc(L.address)+'</p></article>';
+    if(b.type==='send') return '<article class="fg-card '+col+'"><span class="fg-k">'+esc(b.title)+'</span><p>Connect Scorpion to sign. This skin never holds keys.</p></article>';
+    return '<article class="fg-card '+col+'"><span class="fg-k">'+esc(b.title||b.type)+'</span></article>';
+  }).join('')+'</div>';
+  if(L.address) import('https://esm.sh/qrcode@1.5.4').then(QR=>QR.toCanvas(document.getElementById('qr'), L.address, {width:168}).catch(()=>{}));
 }
-document.getElementById('go').onclick = async () => {
-  await window.kcc20.connect();
+window.addEventListener('kcc20#initialized', async()=>{
+  try { if(!(window.kcc20.accounts||[]).length) await window.kcc20.connect(); } catch(e) {}
   render(await live());
-};
-document.getElementById('net').onclick = async () => {
-  const n = await window.kcc20.getNetwork();
-  alert(n);
-};
-window.addEventListener('kcc20#initialized', async () => {
-  try { render(await live()); } catch(e) { render({ kas:'—', holdings:[], name:'Connect', address:'' }); }
 });
-</script>
-</body></html>`;
+</script></body></html>`;
 }

@@ -81,9 +81,9 @@ import {
 } from './ksocial.js?v=207';
 import { loadVprogLobby, renderVprogLobby, bindVprogLobby, startVprogPoll, stopVprogPoll, renderVprogPlay, bindVprogPlay } from './vprogTtt.js?v=4';
 import { vprogCreate, vprogJoin, vprogTurn } from './vprogLane.js?v=1';
-import { bootWalletForge } from './walletForge.js?v=1';
+import { bootWalletForge } from './walletForge.js?v=2';
 
-export const BUILD = '274';
+export const BUILD = '275';
 const DESK_ID_KEY = 'kcc20_desk_id_v1';
 const DESK_VAULT_KEY = 'kcc20_desk_vault_v1';
 
@@ -3817,9 +3817,25 @@ function startWalletForge() {
         network: networkId()
       };
     },
-    onSend: () => { closeBuildRoadmap(); openSend(); },
-    onReceive: () => { closeBuildRoadmap(); openReceive(); },
-    onApps: () => showBuildApp('home')
+    apiOrigin: location.origin,
+    sendKas: async (dest, amt) => {
+      try {
+        if (!validateKaspaAddress(dest, networkId())) { toast('Enter a kaspa: address'); return; }
+        if (!(Number(amt) > 0)) { toast('Enter an amount'); return; }
+        await requirePin('Send from your wallet');
+        hydrateNativeKey(wallet);
+        const result = await sendKas({
+          wallet,
+          dest,
+          amountKas: amt,
+          utxos: nativeP2pkUtxos(utxos, wallet.address)
+        });
+        toast('Sent ' + String(result.txId || '').slice(0, 12) + '…');
+        afterTx();
+      } catch (e) {
+        if (errText(e) !== 'cancelled') toast(errText(e));
+      }
+    }
   });
 }
 function stopWalletForge() {

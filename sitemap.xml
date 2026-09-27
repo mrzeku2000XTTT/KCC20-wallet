@@ -16,6 +16,11 @@
     <priority>0.85</priority>
   </url>
   <url>
+    <loc>https://kcc-20-wallet.vercel.app/forge.html</loc>
+    <changefreq>weekly</changefreq>
+    <priority>0.85</priority>
+  </url>
+  <url>
     <loc>https://kcc-20-wallet.vercel.app/docs.html</loc>
     <changefreq>weekly</changefreq>
     <priority>0.8</priority>

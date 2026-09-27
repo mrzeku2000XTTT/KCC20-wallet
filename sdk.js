@@ -12,7 +12,7 @@
 */
 (function (root) {
   'use strict';
-  var SDK_VERSION = '175';
+  var SDK_VERSION = '176';
   if (root.kcc20 && root.kcc20.isKcc20 && String(root.kcc20.sdkVersion || '') === SDK_VERSION) return;
 
   function scriptOrigin() {
@@ -640,7 +640,8 @@
     veyra: VEYRA,
     forge: Object.freeze({
       name: 'Wallet Forge',
-      url: ORIGIN,
+      url: ORIGIN + '/forge.html',
+      sdkPage: 'https://kcc20-sdk.vercel.app/forge.html',
       open: 'You → Apps → Wallet Forge',
       markdown: ORIGIN + '/FORGE.md',
       primitives: Object.freeze([

@@ -1,10 +1,21 @@
 {
-  "sdk": "175",
-  "build": "273",
+  "sdk": "176",
+  "build": "274",
   "wallet": "https://kcc-20-wallet.vercel.app",
-  "sdkUrl": "https://kcc-20-wallet.vercel.app/sdk.js?v=175",
+  "sdkUrl": "https://kcc-20-wallet.vercel.app/sdk.js?v=176",
   "rule": "Every SDK_VERSION bump gets an entry here the same day. Pin sdk.js?v=NNN and require window.kcc20.sdkVersion === that NNN.",
   "entries": [
+    {
+      "date": "2026-09-27",
+      "sdk": "176",
+      "build": "274",
+      "title": "Forge page on the SDK site",
+      "breaking": false,
+      "notes": [
+        "Public page: https://kcc20-sdk.vercel.app/forge.html and https://kcc-20-wallet.vercel.app/forge.html. Nav: Home · Docs · Forge. window.kcc20.forge.url points at /forge.html.",
+        "Pin sdk.js?v=176."
+      ]
+    },
     {
       "date": "2026-09-27",
       "sdk": "175",

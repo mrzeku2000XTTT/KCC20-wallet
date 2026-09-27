@@ -1,0 +1,126 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>Wallet Forge — SCORPION SDK</title>
+  <meta name="description" content="Drag Kaspa primitives onto a canvas. Live KAS, KCC20, QR, send. Export a free wallet skin. Keys stay in Scorpion.">
+  <link rel="canonical" href="https://kcc20-sdk.vercel.app/forge.html">
+  <link rel="icon" href="assets/icon.png">
+  <link rel="stylesheet" href="css/docs.css">
+  <style>
+    :root { --gold:#c9a36a; --gold-2:#f3e2bf; --hairline:rgba(255,255,255,.1); --label:#f5f5f7; --label-2:rgba(235,235,245,.68); }
+    .fg-wrap { max-width: 1180px; margin: 0 auto; padding: 20px 16px 64px; }
+    .fg-hero h1 { font-size: 32px; letter-spacing: -.5px; margin: 8px 0 8px; }
+    .fg-hero p { color: var(--muted); max-width: 640px; }
+    .fg-bar { display:flex; flex-wrap:wrap; gap:8px; margin: 14px 0 18px; }
+    .btn { height:40px; padding:0 14px; border-radius:12px; border:1px solid var(--line); background:#161618; color:#f5f5f7; font-weight:650; cursor:pointer; text-decoration:none; display:inline-flex; align-items:center; }
+    .btn.gold { background:linear-gradient(180deg,#e8c98a,#c9a36a); color:#1a1408; border:0; }
+    #forge-root { min-height: 480px; }
+    .fg-shell { display:grid; grid-template-columns: 150px 1fr 150px; gap:12px; }
+    @media (max-width: 800px) { .fg-shell { grid-template-columns: 1fr; } }
+    .fg-pal, .fg-insp { background:#101012; border:1px solid var(--line); border-radius:16px; padding:12px; }
+    .fg-pal b, .fg-insp b { display:block; font-size:11px; letter-spacing:.08em; text-transform:uppercase; color:var(--gold); margin-bottom:8px; }
+    .fg-chip { display:block; width:100%; text-align:left; margin:0 0 6px; padding:8px 10px; border-radius:12px; border:1px solid var(--line); background:#161618; color:#f5f5f7; font-size:13px; cursor:grab; }
+    .fg-chip i { display:block; font-style:normal; font-size:11px; color:var(--muted); }
+    .fg-canvas { min-height:420px; border-radius:22px; border:1px dashed rgba(201,163,106,.4); background:radial-gradient(800px 400px at 50% -20%,#1c2436,#07080c); padding:14px; }
+    .fg-canvas.over { border-color:var(--gold); }
+    .fg-phone { max-width:380px; margin:0 auto; }
+    .fg-top { font-weight:800; margin:0 0 10px; color:var(--gold-2); }
+    .fg-card { position:relative; background:#12141c; border:1px solid var(--line); border-radius:16px; padding:12px 14px; margin:0 0 8px; text-align:left; }
+    .fg-card.on { outline:1px solid var(--gold); }
+    .fg-k { display:block; font-size:10px; letter-spacing:.08em; text-transform:uppercase; color:var(--gold); margin-bottom:4px; }
+    .fg-brand { display:flex; gap:10px; align-items:center; }
+    .fg-kas { width:34px; height:34px; }
+    .fg-id { display:block; font-size:18px; }
+    .fg-card code { font-size:11px; color:var(--muted); }
+    .fg-kas-bal strong { font-size:26px; }
+    .fg-row { display:flex; justify-content:space-between; font-size:13px; padding:5px 0; border-top:1px solid var(--line); }
+    .fg-empty { color:var(--muted); font-size:13px; }
+    .fg-cta { margin-top:8px; height:40px; width:100%; border:0; border-radius:12px; background:linear-gradient(180deg,#e8c98a,#c9a36a); color:#1a1408; font-weight:700; cursor:pointer; }
+    .fg-x { position:absolute; top:6px; right:8px; width:24px; height:24px; border:0; border-radius:8px; background:transparent; color:var(--muted); font-size:16px; cursor:pointer; }
+    .field { display:block; margin:8px 0; font-size:13px; color:var(--muted); }
+    .field input { width:100%; margin-top:4px; height:36px; border-radius:10px; border:1px solid var(--line); background:#0b0b0c; color:#f5f5f7; padding:0 10px; }
+    .vprog-acts { display:flex; flex-wrap:wrap; gap:8px; margin-top:14px; }
+    .status { font-size:13px; color:var(--muted); min-height:1.4em; }
+    .build-lede { color:var(--muted); }
+  </style>
+</head>
+<body>
+  <header class="top">
+    <div class="brand-wrap">
+      <img src="assets/icon.png" alt="">
+      <div class="brand">KCC20 SDK<small>Wallet Forge · sdk 176</small></div>
+    </div>
+    <nav>
+      <a href="index.html">Home</a>
+      <a href="tokens.html">Tokens</a>
+      <a href="docs.html">Docs</a>
+      <a href="forge.html" class="on">Forge</a>
+      <a href="veyra.html">VEYRA</a>
+      <a href="demo.html">Try it</a>
+      <a href="https://github.com/mrzeku2000XTTT/kcc20-sdk">GitHub</a>
+      <a href="https://kcc-20-wallet.vercel.app">Wallet</a>
+    </nav>
+  </header>
+  <div class="fg-wrap">
+    <div class="fg-hero">
+      <p class="pill">sdk.js?v=176 · live core</p>
+      <h1>Make your own Kaspa wallet face</h1>
+      <p>Drag primitives onto the canvas. They bind to Scorpion for real — KAS, KCC20, QR, send. Edit or delete in the preview. Export HTML. Keys never leave the wallet. Official Kaspa mark is the default brand.</p>
+    </div>
+    <div class="fg-bar">
+      <button class="btn gold" type="button" id="fg-connect">Connect Scorpion</button>
+      <a class="btn" href="https://kcc-20-wallet.vercel.app" target="_blank" rel="noopener">Open wallet</a>
+      <a class="btn" href="FORGE.md">FORGE.md</a>
+      <a class="btn" href="VEYRA.md">VEYRA</a>
+    </div>
+    <p class="status" id="fg-status">Connect to load live KAS and tokens into the canvas.</p>
+    <div id="forge-root"></div>
+  </div>
+  <script src="https://kcc-20-wallet.vercel.app/sdk.js?v=176"></script>
+  <script type="module">
+    import { bootWalletForge } from './js/walletForge.js';
+    const status = document.getElementById('fg-status');
+    let cache = { wallet: {}, balanceSompi: 0, holdings: [], activity: [], network: '', kns: '' };
+    let ctl = null;
+    async function pull() {
+      const kcc = window.kcc20;
+      if (!kcc) return;
+      try {
+        const st = await kcc.getState();
+        cache = {
+          wallet: { address: st.address || (kcc.accounts && kcc.accounts[0]) || '', name: 'Wallet' },
+          balanceSompi: Number((st.balance && st.balance.confirmed) || 0),
+          holdings: st.holdings || [],
+          activity: [],
+          network: String(st.network || '').includes('test') ? 'testnet-10' : 'mainnet',
+          kns: ''
+        };
+        status.textContent = cache.wallet.address
+          ? ('Live · ' + cache.wallet.address.slice(0, 12) + '…')
+          : 'Connected — waiting for state';
+        ctl?.refresh?.();
+      } catch (e) {
+        status.textContent = e.message || 'Connect first';
+      }
+    }
+    ctl = bootWalletForge(document.getElementById('forge-root'), {
+      toast: (m) => { status.textContent = m; },
+      getLive: () => cache,
+      onSend: () => window.kcc20?.openWallet?.({ screen: 'send' }),
+      onReceive: () => window.kcc20?.openWallet?.({ screen: 'home' }),
+      onApps: () => window.open('https://kcc-20-wallet.vercel.app', '_blank')
+    });
+    document.getElementById('fg-connect').onclick = async () => {
+      try {
+        await window.kcc20.connect();
+        await pull();
+      } catch (e) {
+        status.textContent = e.message || 'Connect cancelled';
+      }
+    };
+    window.addEventListener('kcc20#initialized', () => pull());
+  </script>
+</body>
+</html>

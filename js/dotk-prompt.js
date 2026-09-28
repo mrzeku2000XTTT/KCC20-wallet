@@ -8,7 +8,8 @@
     'LOOK=Scorpion desk, gold on black, large receive QR',
     'GITHUB_USER=your-github-username',
     '',
-    'Never invent a kaspa: address. Never print a seed, PIN, or 64-hex.'
+    'Never invent a kaspa: address. Never print a seed, PIN, or 64-hex.',
+    'Official .k only: https://dotk.name · github.com/supertypo/dotk-sdk · github.com/supertypo/dotk-sdk-tx'
   ].join('\n');
 
   var P1 = [
@@ -137,6 +138,7 @@
     '',
     'If Add to Home Screen is missing: HTTPS, manifest linked, 192 icon, SW registered.',
     'If Connect missing .k: KCC20_DOTK script tag before sdk.js, hard-refresh.',
+    'You need GitHub + Vercel before step 11. The Connect DOT.K dApp pops HOST, not localhost.',
     'Commit after HOST is real: "deploy: HOST".'
   ].join('\n');
 
@@ -212,7 +214,101 @@
     'Commit: "registry: DOTK_NAME → HOST".'
   ].join('\n');
 
-  var ALL = [FILL, P1, P2, P3, P4, P5, P6, P7, P8, P9].join('\n\n========== NEXT ITERATION ==========\n\n');
+  var P10 = [
+    'ITERATION 10 — Buy the official .k name with THIS wallet\'s address.',
+    '',
+    'DOTK_NAME must be a real L1 covenant name from official Dot.K.',
+    'It identifies the entire wallet: the deed owner IS the Receive address of this PWA.',
+    '',
+    'OFFICIAL ONLY — never a fake JSON name, never .kas inscriptions, never knsdomains.org:',
+    '  Site:     https://dotk.name',
+    '  Read SDK: https://github.com/supertypo/dotk-sdk     npm @dotk/sdk',
+    '  Write:    https://github.com/supertypo/dotk-sdk-tx   npm @dotk/sdk-tx',
+    '  API:      https://api.dotk.name   (TN10: https://api-tn10.dotk.name)',
+    '',
+    '1. Unlock THIS PWA. Copy the Receive address (kaspa:q… or kaspatest:q…).',
+    '   That address is the only owner allowed. Do not buy with KasWare if this PWA has its own PIN key.',
+    '   Do not buy with a different wallet. The deed must sit on THIS key.',
+    '',
+    '2. Add a You → Settings (or Home) tile "Buy .k".',
+    '   Load @dotk/sdk in the browser (esm.sh @dotk/sdk@2.0.0).',
+    '   const dotk = new Dotk()  // mainnet. For TN10: new Dotk({ network: "testnet-10" })',
+    '   const q = dotk.quote("DOTK_NAME")',
+    '   const free = await dotk.available("DOTK_NAME")',
+    '   Show feeKas = q.fee/1e8, totalToFundKas = q.totalToFund/1e8, free yes/no.',
+    '   Prices (plus 2 KAS bond returned on release): 5+ chars 40 KAS, 4=250, 3=1000, 2=2000, 1=4000.',
+    '',
+    '3. Register with @dotk/sdk-tx Registrar. Signer wraps THIS PWA:',
+    '   sign(request) {',
+    '     const indexes = [...(request.fundingInputs||[]), ...(request.ownerSigInputs||[])]',
+    '       .map(i => ({ index: i, sighashType: 1 }));',
+    '     return window.kcc20',
+    '       ? window.kcc20.signPskt({ txJsonString: request.txJson, options: { signInputs: indexes } })',
+    '       : /* in-PWA native: the same Approve sheet this wallet already uses for signPskt */',
+    '         signPsktJson(request.txJson, indexes);',
+    '   }',
+    '   signInputs.index is GLOBAL tx.inputs[]. SIGHASH_ALL only.',
+    '   Do not sign covenant/gap seats that already have scripts unless they are in ownerSigInputs.',
+    '   register() is commit then waitForCommit then reveal. Both halves must be planned before the first Approve.',
+    '',
+    '4. After ACTIVE: await dotk.namesOf(THIS_ADDRESS) must include DOTK_NAME.',
+    '   await dotk.addressFor("DOTK_NAME") must equal THIS_ADDRESS.',
+    '   Stamp window.KCC20_DOTK = "DOTK_NAME" if it was a placeholder.',
+    '',
+    '5. Optional records (still official sdk-tx planRecords):',
+    '   { url: "HOST", primary: true }',
+    '   url is the Vercel origin of THIS PWA. That is how a dApp finds the signer.',
+    '',
+    'If you cannot wire sdk-tx this pass: open https://dotk.name IN A TAB, Connect using THIS PWA',
+    '(sdk 178 connect from that origin — they must add Scorpion; until then use the in-PWA Buy tile).',
+    'Still: the paying address must be THIS Receive address.',
+    '',
+    'Never invent a name in localStorage. Never print a seed.',
+    'Commit: "dotk: bought DOTK_NAME on official registry".',
+    'Done when lookup(DOTK_NAME).kind === "active" and addressFor === this wallet.'
+  ].join('\n');
+
+  var P11 = [
+    'ITERATION 11 — GitHub + Vercel HOST, then the official dApp Connects YOUR PWA.',
+    '',
+    'A dApp cannot pop a wallet that only lives on localhost. Publish HOST.',
+    '',
+    'A. GitHub',
+    '   git remote -v must be github.com/GITHUB_USER/… (the fork from step 1).',
+    '   git add -A && git commit && git push origin main.',
+    '   If there is no remote: gh repo create GITHUB_USER/DOTK_NAME-wallet --public --source=. --remote=origin --push',
+    '',
+    'B. Vercel',
+    '   Import that GitHub repo. Framework: Other. Output: root. HTTPS on.',
+    '   Production URL is HOST, e.g. https://DOTK_NAME-wallet.vercel.app',
+    '   Set in index.html BEFORE sdk.js:',
+    '     window.KCC20_WALLET_ORIGIN = "HOST"',
+    '     window.KCC20_DOTK = "DOTK_NAME"',
+    '     window.KCC20_RDNS = "RDNS"',
+    '   Redeploy. Open HOST. Receive address is the same key as step 10.',
+    '',
+    'C. Bind name → HOST',
+    '   Official records.url = HOST (sdk-tx saveRecords).',
+    '   Add a row to https://kcc20-sdk.vercel.app/dotk-wallets.json :',
+    '     { "identity": "DOTK_NAME", "rdns": "RDNS", "origin": "HOST", "name": "DOTK_NAME" }',
+    '',
+    'D. Prove it on the live dApp',
+    '   Open https://kcc20-sdk.vercel.app/dotk-dapp.html',
+    '   Top right: Connect DOT.K wallet.',
+    '   Identity = DOTK_NAME. Origin = HOST (the Vercel URL from B).',
+    '   Connect must popup HOST/index.html?dapp=1 — inspect the address bar.',
+    '   Approve in YOUR PWA. The dApp shows DOTK_NAME + your kaspa: address.',
+    '   Official lookup: addressFor(DOTK_NAME) must equal the connected account.',
+    '   Tap Prove. sendKaspa dust to self. Approve in YOUR PWA. Print txId.',
+    '',
+    'If popup is kcc-20-wallet.vercel.app you loaded Scorpion sdk without origin. Pass origin: HOST.',
+    'If Connect missing: HOST must be https, allow popups, sdk.js on HOST.',
+    'If name mismatch: you bought the .k with a different key — redo step 10 from THIS PWA.',
+    'Commit: "deploy: HOST + Connect DOT.K".',
+    'Done when the dApp at kcc20-sdk.vercel.app/dotk-dapp.html pops HOST and a Prove tx confirms.'
+  ].join('\n');
+
+  var ALL = [FILL, P1, P2, P3, P4, P5, P6, P7, P8, P9, P10, P11].join('\n\n========== NEXT ITERATION ==========\n\n');
 
   var STEPS = [
     { id: 'fill', n: '0', title: 'Fill this first', blurb: 'Name, host, look. Paste on every later prompt.', text: FILL },
@@ -224,7 +320,9 @@
     { id: 'fix', n: '6', title: 'Fix pass', blurb: 'Only if install or Connect failed.', text: P6 },
     { id: 'notscorpion', n: '7', title: 'Stop looking like Scorpion', blurb: 'Strip Wallet 1, TRADE, Compound, A-Trade. Home is DOTK_NAME.', text: P7 },
     { id: 'popup', n: '8', title: 'Connect pops YOUR PWA', blurb: 'demo-dapp loads HOST/sdk.js. Popup URL is HOST, not kcc-20-wallet.', text: P8 },
-    { id: 'registry', n: '9', title: 'Any dApp can open you', blurb: 'connect({ identity, origin }) or a row in dotk-wallets.json.', text: P9 }
+    { id: 'registry', n: '9', title: 'Any dApp can open you', blurb: 'connect({ identity, origin }) or a row in dotk-wallets.json.', text: P9 },
+    { id: 'buy', n: '10', title: 'Buy official .k with THIS address', blurb: 'dotk.name / @dotk/sdk-tx. Deed owner is this PWA Receive address.', text: P10 },
+    { id: 'vercel', n: '11', title: 'GitHub + Vercel, then Connect DOT.K', blurb: 'Publish HOST. The dApp pops your Vercel PWA and you Approve.', text: P11 }
   ];
 
   root.KCC20_DOTK_PROMPT = ALL;

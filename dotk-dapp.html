@@ -1,0 +1,269 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>Connect DOT.K — live dApp</title>
+  <meta name="description" content="Full-stack dApp: Connect DOT.K wallet. Lookup official .k, pop their Vercel PWA, Approve there.">
+  <link rel="canonical" href="https://kcc20-sdk.vercel.app/dotk-dapp.html">
+  <link rel="icon" href="assets/kas.svg">
+  <style>
+    :root {
+      --bg: #000; --elev: #0b0b0d; --line: rgba(255,255,255,.08);
+      --txt: #f5f5f7; --mut: rgba(245,245,247,.56); --teal: #49eacb; --pad: clamp(16px, 4vw, 40px);
+    }
+    * { box-sizing: border-box; margin: 0; }
+    html, body { background: var(--bg); color: var(--txt); }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "SF Pro Display", "SF Pro Text", "Helvetica Neue", sans-serif;
+      -webkit-font-smoothing: antialiased; min-height: 100dvh; letter-spacing: -0.022em;
+    }
+    a { color: var(--teal); text-decoration: none; }
+    header {
+      position: sticky; top: 0; z-index: 20;
+      display: flex; align-items: center; justify-content: space-between; gap: 12px;
+      padding: 12px var(--pad);
+      background: rgba(0,0,0,.72);
+      backdrop-filter: saturate(180%) blur(20px); -webkit-backdrop-filter: saturate(180%) blur(20px);
+      border-bottom: 1px solid var(--line);
+    }
+    .brand { display: flex; align-items: center; gap: 10px; color: var(--txt); font-weight: 600; font-size: 14px; }
+    .brand img { width: 22px; height: 22px; }
+    .brand small { color: var(--mut); font-weight: 500; }
+    header .right { display: flex; align-items: center; gap: 10px; }
+    .who { font-size: 12px; color: var(--mut); max-width: 42vw; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    button, .btn {
+      height: 36px; padding: 0 14px; border-radius: 999px; border: 0; cursor: pointer;
+      font: 600 13px/1 inherit; color: #000; background: var(--teal);
+    }
+    button.ghost, .btn.ghost {
+      background: transparent; color: var(--txt); border: 1px solid var(--line);
+    }
+    button:disabled { opacity: .45; cursor: default; }
+    main { max-width: 720px; margin: 0 auto; padding: 28px var(--pad) 80px; }
+    h1 { font-size: clamp(28px, 6vw, 42px); letter-spacing: -1.2px; margin: 0 0 8px; }
+    .lede { color: var(--mut); font-size: 16px; line-height: 1.45; margin: 0 0 28px; }
+    .card {
+      background: var(--elev); border: 1px solid var(--line); border-radius: 18px;
+      padding: 18px 18px 16px; margin: 0 0 14px;
+    }
+    label { display: block; font-size: 11px; font-weight: 650; color: var(--mut); letter-spacing: .06em; text-transform: uppercase; margin: 0 0 6px; }
+    input {
+      width: 100%; height: 44px; border-radius: 12px; border: 1px solid var(--line);
+      background: #000; color: var(--txt); padding: 0 12px; font: 15px inherit; margin: 0 0 12px;
+    }
+    .row { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 4px; }
+    .kv { display: flex; justify-content: space-between; gap: 12px; font-size: 13px; padding: 8px 0; border-bottom: 1px solid var(--line); }
+    .kv:last-child { border-bottom: 0; }
+    .kv span { color: var(--mut); }
+    .kv b { font-weight: 600; text-align: right; word-break: break-all; }
+    .ok { color: var(--teal); }
+    .bad { color: #ff8a8a; }
+    pre {
+      margin: 10px 0 0; padding: 12px; border-radius: 12px; background: #000;
+      font: 12px/1.4 ui-monospace, SFMono-Regular, Menlo, monospace;
+      white-space: pre-wrap; word-break: break-word; color: var(--mut); max-height: 240px; overflow: auto;
+    }
+    .hint { font-size: 13px; color: var(--mut); line-height: 1.45; margin: 0 0 12px; }
+    footer { padding: 20px var(--pad); color: var(--mut); font-size: 12px; display: flex; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+  </style>
+</head>
+<body>
+  <header>
+    <a class="brand" href="dotk.html">
+      <img src="assets/kas.svg" alt="">
+      Connect DOT.K
+      <small>official .k</small>
+    </a>
+    <div class="right">
+      <span class="who" id="who">Not connected</span>
+      <button type="button" id="connect">Connect DOT.K wallet</button>
+    </div>
+  </header>
+
+  <main>
+    <h1>Their name.<br>Their PWA.</h1>
+    <p class="lede">This dApp never holds a key. Official Dot.K says who owns the name. Connect pops <em>their</em> Vercel wallet. They Approve there.</p>
+
+    <div class="card">
+      <p class="hint">Buy the name in <b>their</b> PWA (step 10) with that PWA’s Receive address. Publish the fork to GitHub → Vercel (step 11). Paste the Vercel URL as origin.</p>
+      <label for="identity">.k identity</label>
+      <input id="identity" spellcheck="false" placeholder="alice.k" autocomplete="off">
+      <label for="origin">PWA origin (Vercel HTTPS)</label>
+      <input id="origin" spellcheck="false" placeholder="https://alice-k.vercel.app" autocomplete="off">
+      <div class="row">
+        <button type="button" class="ghost" id="lookup">Lookup official .k</button>
+        <button type="button" class="ghost" id="prove" disabled>Prove (self-send)</button>
+        <button type="button" class="ghost" id="disconnect" disabled>Disconnect</button>
+      </div>
+    </div>
+
+    <div class="card" id="status-card">
+      <div class="kv"><span>Official registry</span><b>api.dotk.name · @dotk/sdk</b></div>
+      <div class="kv"><span>Name status</span><b id="st-name">—</b></div>
+      <div class="kv"><span>Deed owner</span><b id="st-owner">—</b></div>
+      <div class="kv"><span>Connected account</span><b id="st-acc">—</b></div>
+      <div class="kv"><span>Match</span><b id="st-match">—</b></div>
+      <div class="kv"><span>Popup origin</span><b id="st-origin">—</b></div>
+      <div class="kv"><span>Records url</span><b id="st-url">—</b></div>
+    </div>
+    <pre id="log">Ready. Pin sdk.js?v=178. Connect only from a click.</pre>
+  </main>
+
+  <footer>
+    <span><a href="dotk.html#guide">Steps 10–11</a> · <a href="https://github.com/supertypo/dotk-sdk">@dotk/sdk</a> · <a href="https://github.com/supertypo/dotk-sdk-tx">@dotk/sdk-tx</a> · <a href="https://dotk.name">dotk.name</a></span>
+    <span>Keys stay in their wallet.</span>
+  </footer>
+
+  <script type="importmap">
+    { "imports": { "@dotk/sdk": "https://esm.sh/@dotk/sdk@2.0.0" } }
+  </script>
+  <script src="https://kcc-20-wallet.vercel.app/sdk.js?v=178"></script>
+  <script type="module">
+    import { Dotk } from '@dotk/sdk';
+
+    const $ = (id) => document.getElementById(id);
+    const logEl = $('log');
+    const dotk = new Dotk();
+    let accounts = [];
+
+    function log(msg, obj) {
+      const line = obj !== undefined ? msg + '\n' + JSON.stringify(obj, (_k, v) => typeof v === 'bigint' ? String(v) : v, 2) : msg;
+      logEl.textContent = line;
+    }
+    function identity() {
+      let n = ($('identity').value || '').trim().toLowerCase();
+      if (n && !n.endsWith('.k')) n += '.k';
+      return n;
+    }
+    function origin() {
+      return ($('origin').value || '').trim().replace(/\/+$/, '');
+    }
+    function paintSession() {
+      const acc = accounts[0] || '';
+      $('who').textContent = acc ? acc.slice(0, 18) + '…' : 'Not connected';
+      $('st-acc').textContent = acc || '—';
+      $('st-origin').textContent = (window.kcc20 && window.kcc20.walletOrigin) || origin() || '—';
+      $('prove').disabled = !acc;
+      $('disconnect').disabled = !acc;
+      $('connect').textContent = acc ? 'Reconnect DOT.K' : 'Connect DOT.K wallet';
+    }
+    function saveFields() {
+      try {
+        localStorage.setItem('dotk_dapp_v1', JSON.stringify({ identity: $('identity').value, origin: $('origin').value }));
+      } catch {}
+    }
+    (function bootFields() {
+      try {
+        const s = JSON.parse(localStorage.getItem('dotk_dapp_v1') || 'null');
+        if (s) {
+          if (s.identity) $('identity').value = s.identity;
+          if (s.origin) $('origin').value = s.origin;
+        }
+      } catch {}
+    })();
+
+    async function lookup() {
+      const name = identity();
+      if (!name) { log('Enter a .k name.'); return; }
+      saveFields();
+      $('st-name').textContent = 'looking up…';
+      try {
+        const found = await dotk.resolveName(name);
+        const look = await dotk.lookup(name);
+        if (!found || look.kind !== 'active') {
+          $('st-name').textContent = look.kind || 'free';
+          $('st-owner').textContent = '—';
+          $('st-url').textContent = '—';
+          $('st-match').textContent = 'Buy this name in THEIR PWA (step 10) with that wallet’s Receive address.';
+          $('st-match').className = 'bad';
+          log('Official lookup', { name, kind: look.kind, hint: 'Not active on api.dotk.name. Official only — github.com/supertypo/dotk-sdk' });
+          return found;
+        }
+        const rec = found.records || {};
+        $('st-name').textContent = found.display + ' · active';
+        $('st-owner').textContent = found.address || 'covenant';
+        $('st-url').textContent = rec.url || '(none — set records.url = HOST in step 11)';
+        if (rec.url && !origin()) $('origin').value = String(rec.url).replace(/\/+$/, '');
+        const acc = accounts[0] || '';
+        if (acc && found.address) {
+          const ok = acc.toLowerCase() === String(found.address).toLowerCase();
+          $('st-match').textContent = ok ? 'Deed owner is this PWA' : 'Mismatch — they bought the name with a different key';
+          $('st-match').className = ok ? 'ok' : 'bad';
+        } else {
+          $('st-match').textContent = 'Connect to compare';
+          $('st-match').className = '';
+        }
+        log('Official resolveName', {
+          display: found.display,
+          address: found.address,
+          proven: found.proven,
+          records: rec,
+          docs: 'https://github.com/supertypo/dotk-sdk'
+        });
+        return found;
+      } catch (e) {
+        $('st-name').textContent = 'error';
+        log((e && e.name ? e.name + ': ' : '') + (e && e.message ? e.message : String(e)));
+        return null;
+      }
+    }
+
+    async function connect() {
+      const kcc = window.kcc20;
+      if (!kcc || String(kcc.sdkVersion) !== '178') {
+        log('Need window.kcc20.sdkVersion === "178". Hard-refresh. Pin sdk.js?v=178.');
+        return;
+      }
+      const name = identity();
+      const host = origin();
+      if (!name) { log('Enter DOTK_NAME (step 10).'); return; }
+      if (!host || !/^https:\/\//i.test(host)) {
+        log('Enter their Vercel HOST (step 11). Example https://alice-k.vercel.app — GitHub push, then Import on Vercel. localhost cannot be a Connect popup for this dApp.');
+        return;
+      }
+      saveFields();
+      try {
+        log('Connecting… popup must be ' + host + '/index.html?dapp=1');
+        const acc = await kcc.connect({ identity: name, origin: host });
+        accounts = acc || [];
+        paintSession();
+        const who = await kcc.getIdentity().catch(() => ({}));
+        const net = await kcc.getNetwork().catch(() => '');
+        log('Connected', { accounts, identity: who, network: net, walletOrigin: kcc.walletOrigin, inspect: 'address bar must be ' + host });
+        await lookup();
+      } catch (e) {
+        log((e && e.message) || String(e));
+      }
+    }
+
+    async function prove() {
+      const kcc = window.kcc20;
+      const acc = accounts[0];
+      if (!kcc || !acc) { log('Connect first.'); return; }
+      try {
+        log('Prove: sendKas 0.2 KAS to self. Approve in THEIR PWA.');
+        const r = await kcc.sendKas({ dest: acc, amount: '0.2' });
+        log('Prove sent', r);
+      } catch (e) {
+        log((e && e.message) || String(e));
+      }
+    }
+
+    async function disconnect() {
+      try { await window.kcc20?.disconnect(); } catch {}
+      accounts = [];
+      paintSession();
+      log('Disconnected.');
+    }
+
+    $('connect').onclick = () => { connect(); };
+    $('lookup').onclick = () => { lookup(); };
+    $('prove').onclick = () => { prove(); };
+    $('disconnect').onclick = () => { disconnect(); };
+    $('identity').addEventListener('change', saveFields);
+    $('origin').addEventListener('change', saveFields);
+    paintSession();
+  </script>
+</body>
+</html>

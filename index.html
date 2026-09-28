@@ -641,6 +641,15 @@
         <iframe id="kasdistro-frame" class="ttt-frame" title="kasdistro.com" referrerpolicy="no-referrer-when-downgrade" allow="clipboard-write; fullscreen; storage-access"></iframe>
       </div>
 
+      <div class="ttt-screen hidden" id="kasodds-screen" aria-hidden="true">
+        <div class="ttt-head">
+          <button type="button" class="trade-x" id="kasodds-close">Close</button>
+          <h2>KasOdds</h2>
+          <img class="ttt-mark" src="assets/kasodds.svg" alt="KasOdds">
+        </div>
+        <iframe id="kasodds-frame" class="ttt-frame" title="kasodds.com" referrerpolicy="no-referrer-when-downgrade" allow="clipboard-write; fullscreen; storage-access"></iframe>
+      </div>
+
       <div class="ttt-screen hidden" id="kbuild-screen" aria-hidden="true">
         <div class="ttt-head">
           <button type="button" class="trade-x" id="kbuild-close">Close</button>
@@ -685,7 +694,7 @@
               <b>KBUILD</b>
             </button>
             <button type="button" class="app-tile" data-app="ksocial">
-              <span class="app-ico app-ico-k">K</span>
+              <span class="app-ico app-ico-img"><img src="assets/ksocial.png" alt=""></span>
               <b>K Social</b>
             </button>
             <button type="button" class="app-tile" data-app="truth">
@@ -1005,7 +1014,7 @@
   <script type="module">
     import('./js/iframeVault.js?v=122').then(function (mod) {
       return (mod.restoreIframeVault ? mod.restoreIframeVault() : Promise.resolve()).then(function () {
-        return import('./js/app.js?v=279');
+        return import('./js/app.js?v=280');
       });
     }).catch(function (err) {
       console.error(err);

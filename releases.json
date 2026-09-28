@@ -1,10 +1,20 @@
 {
   "sdk": "178",
-  "build": "279",
+  "build": "280",
   "wallet": "https://kcc-20-wallet.vercel.app",
   "sdkUrl": "https://kcc-20-wallet.vercel.app/sdk.js?v=178",
   "rule": "Every SDK_VERSION bump gets an entry here the same day. Pin sdk.js?v=NNN and require window.kcc20.sdkVersion === that NNN.",
   "entries": [
+    {
+      "date": "2026-09-28",
+      "sdk": "178",
+      "build": "280",
+      "title": "KasOdds Open App is an iframe · K Social official logo",
+      "breaking": false,
+      "notes": [
+        "Open App for hosted dApps (TTT, KasDistro, KasOdds, KBUILD) loads in an in-wallet iframe — never a new tab. APPS.md. K Social uses the official KaChat mark."
+      ]
+    },
     {
       "date": "2026-09-28",
       "sdk": "178",

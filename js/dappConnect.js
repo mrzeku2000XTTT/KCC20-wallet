@@ -1170,6 +1170,7 @@ function announce() {
 export const TTT_TREASURY = 'kaspa:qq5yhvly6338dspa9mm24g8q6chvy6v0jww3k4dgqywh0lju5mmm5pj334ews';
 const TTT_ORIGINS = ['https://tttz.xyz', 'https://www.tttz.xyz', 'http://127.0.0.1:5173', 'http://localhost:5173', 'http://127.0.0.1:4173', 'http://localhost:4173'];
 const KASDISTRO_ORIGINS = ['https://kasdistro.com', 'https://www.kasdistro.com'];
+const KASODDS_ORIGINS = ['https://kasodds.com', 'https://www.kasodds.com'];
 
 function isTttOrigin(origin) {
   const o = String(origin || '').toLowerCase();
@@ -1191,12 +1192,17 @@ export function pingKasdistroDappFrame(frame) {
   pingDappFrame(frame, KASDISTRO_ORIGINS);
 }
 
+export function pingKasoddsDappFrame(frame) {
+  pingDappFrame(frame, KASODDS_ORIGINS);
+}
+
 export function bootDappConnect(opts) {
   hooks = opts || {};
   if (booted) {
     announce();
     pingTttDappFrame(typeof document !== 'undefined' ? document.getElementById('ttt-frame') : null);
     pingKasdistroDappFrame(typeof document !== 'undefined' ? document.getElementById('kasdistro-frame') : null);
+    pingKasoddsDappFrame(typeof document !== 'undefined' ? document.getElementById('kasodds-frame') : null);
     return;
   }
   booted = true;

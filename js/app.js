@@ -27,7 +27,7 @@ import {
   disconnectRpc, buildDcaDrips, sendKasMany, releaseDcaDrip, cancelDcaDrip, isMassError,
   signPsktJson
 } from './tx.js?v=232';
-import { bootDappConnect, pingTttDappFrame, pingKasdistroDappFrame, TTT_TREASURY, listConnectedSites, disconnectSite, disconnectAllSites, dappSourceOrigin } from './dappConnect.js?v=207';
+import { bootDappConnect, pingTttDappFrame, pingKasdistroDappFrame, pingKasoddsDappFrame, TTT_TREASURY, listConnectedSites, disconnectSite, disconnectAllSites, dappSourceOrigin } from './dappConnect.js?v=208';
 import { changenowEstimate, changenowCreate, changenowWidgetUrl, cnFrom } from './changenow.js?v=180';
 import { schedulePersistIframeVault, bootIframeVaultWatch } from './iframeVault.js?v=122';
 import { kronMarkets, quoteKronTrade, executeKronTrade, formatKasSompi, lookupKronTick, liveQuote, tradeCostLines, attachKronLogos, kronCandles, kronLogoFor, quoteKcc20Bridge, executeKcc20Bridge, formatTokenRaw } from './kronTrade.js?v=233';
@@ -83,7 +83,7 @@ import { loadVprogLobby, renderVprogLobby, bindVprogLobby, startVprogPoll, stopV
 import { vprogCreate, vprogJoin, vprogTurn } from './vprogLane.js?v=1';
 import { bootWalletForge } from './walletForge.js?v=4';
 
-export const BUILD = '279';
+export const BUILD = '280';
 const DESK_ID_KEY = 'kcc20_desk_id_v1';
 const DESK_VAULT_KEY = 'kcc20_desk_vault_v1';
 
@@ -3695,12 +3695,12 @@ const APP_CATALOG = {
   kasodds: {
     id: 'kasodds', name: 'KasOdds', icon: 'assets/kasodds.svg',
     tags: [['Play', ''], ['Available', 'on'], ['Kaspa', '']],
-    lede: 'Two players pick a number. The total decides who takes the pot. Connect Wallet on kasodds.com — this PWA signs.',
-    open: 'external', url: 'https://kasodds.com', source: 'https://github.com/danieliyahu1/kas-odds',
-    overview: 'KasOdds is a Kaspa L1 two-player pot. Each side picks a number. The sum decides the winner. It runs at kasodds.com. The site blocks embedding, so Open App launches the real site in the browser.',
+    lede: 'Two players pick a number. The total decides who takes the pot. Connect Wallet in the iframe — this PWA signs.',
+    open: 'iframe', url: 'https://kasodds.com/?kcc20_browser=1', source: 'https://github.com/danieliyahu1/kas-odds',
+    overview: 'KasOdds is a Kaspa L1 two-player pot. Each side picks a number. The sum decides the winner. Open App loads kasodds.com in this wallet, same as TTT.',
     features: 'Connect Wallet, on-chain pot, Kaspa network footer, public source. Feedback is in-app on their site.',
-    workflow: '1. Tap Open App. 2. kasodds.com opens. 3. Connect Wallet — this PWA pops Approve. 4. Pick a number. 5. Kaspa settles the pot.',
-    start: 'Tap Open App. Allow the new tab. On kasodds.com tap Connect Wallet. Come back here to Approve. They never hold your key.'
+    workflow: '1. Tap Open App. 2. kasodds.com loads in this wallet. 3. Connect Wallet — this PWA pops Approve. 4. Pick a number. 5. Kaspa settles the pot.',
+    start: 'Tap Open App. The game loads here. Connect Wallet, then Approve in Scorpion. They never hold your key.'
   },
   kasdistro: {
     id: 'kasdistro', name: 'KasDistro', icon: 'assets/kasdistro.png',
@@ -3723,7 +3723,7 @@ const APP_CATALOG = {
     start: 'Tap Open App. Stay on this origin. Never paste a seed into KBUILD.'
   },
   ksocial: {
-    id: 'ksocial', name: 'K Social', icon: '', letter: 'K',
+    id: 'ksocial', name: 'K Social', icon: 'assets/ksocial.png',
     tags: [['Feed', ''], ['Available', 'on'], ['L1', '']],
     lede: 'Read and post on Kaspa L1. Fee is a small KAS payload tx from this wallet.',
     open: 'internal',
@@ -3844,10 +3844,7 @@ function launchApp(id) {
     return;
   }
   if (view === 'kasodds') {
-    const url = (app && app.url) || 'https://kasodds.com';
-    const w = window.open(url, '_blank', 'noopener,noreferrer');
-    if (!w) toast('Allow popups to open KasOdds');
-    else toast('KasOdds opened');
+    openKasodds({ fromApps: true });
     return;
   }
   if (view === 'browser') {
@@ -4477,6 +4474,18 @@ function appsScreenOpen() {
   return !!$('build-screen') && !$('build-screen').classList.contains('hidden');
 }
 
+const APP_IFRAME_IDS = ['ttt', 'kasdistro', 'kbuild', 'browser', 'kasodds'];
+
+function showAppIframe(id) {
+  APP_IFRAME_IDS.forEach((name) => {
+    const el = $(name + '-screen');
+    const on = name === id;
+    el?.classList.toggle('hidden', !on);
+    el?.setAttribute('aria-hidden', on ? 'false' : 'true');
+  });
+  $('tabbar')?.classList.remove('show');
+}
+
 function openTtt(opts = {}) {
   haptic();
   openTtt.fromApps = !!(opts.fromApps || appsScreenOpen());
@@ -4489,15 +4498,7 @@ function openTtt(opts = {}) {
     if (!frame.getAttribute('src')) frame.src = 'https://tttz.xyz/?kcc20_browser=1';
     else pingTttDappFrame(frame);
   }
-  $('kasdistro-screen')?.classList.add('hidden');
-  $('kasdistro-screen')?.setAttribute('aria-hidden', 'true');
-  $('kbuild-screen')?.classList.add('hidden');
-  $('kbuild-screen')?.setAttribute('aria-hidden', 'true');
-  $('browser-screen')?.classList.add('hidden');
-  $('browser-screen')?.setAttribute('aria-hidden', 'true');
-  $('ttt-screen')?.classList.remove('hidden');
-  $('ttt-screen')?.setAttribute('aria-hidden', 'false');
-  $('tabbar')?.classList.remove('show');
+  showAppIframe('ttt');
 }
 
 function openKasdistro(opts = {}) {
@@ -4512,15 +4513,7 @@ function openKasdistro(opts = {}) {
     if (!frame.getAttribute('src')) frame.src = 'https://kasdistro.com/?kcc20_browser=1';
     else pingKasdistroDappFrame(frame);
   }
-  $('ttt-screen')?.classList.add('hidden');
-  $('ttt-screen')?.setAttribute('aria-hidden', 'true');
-  $('kbuild-screen')?.classList.add('hidden');
-  $('kbuild-screen')?.setAttribute('aria-hidden', 'true');
-  $('browser-screen')?.classList.add('hidden');
-  $('browser-screen')?.setAttribute('aria-hidden', 'true');
-  $('kasdistro-screen')?.classList.remove('hidden');
-  $('kasdistro-screen')?.setAttribute('aria-hidden', 'false');
-  $('tabbar')?.classList.remove('show');
+  showAppIframe('kasdistro');
 }
 
 function openKbuild(opts = {}) {
@@ -4528,15 +4521,22 @@ function openKbuild(opts = {}) {
   openKbuild.fromApps = !!(opts.fromApps || appsScreenOpen());
   const frame = $('kbuild-frame');
   if (frame && !frame.getAttribute('src')) frame.src = 'kbuild/index.html';
-  $('ttt-screen')?.classList.add('hidden');
-  $('ttt-screen')?.setAttribute('aria-hidden', 'true');
-  $('kasdistro-screen')?.classList.add('hidden');
-  $('kasdistro-screen')?.setAttribute('aria-hidden', 'true');
-  $('browser-screen')?.classList.add('hidden');
-  $('browser-screen')?.setAttribute('aria-hidden', 'true');
-  $('kbuild-screen')?.classList.remove('hidden');
-  $('kbuild-screen')?.setAttribute('aria-hidden', 'false');
-  $('tabbar')?.classList.remove('show');
+  showAppIframe('kbuild');
+}
+
+function openKasodds(opts = {}) {
+  haptic();
+  openKasodds.fromApps = !!(opts.fromApps || appsScreenOpen());
+  const frame = $('kasodds-frame');
+  if (frame) {
+    if (!frame.dataset.kcc20Bound) {
+      frame.dataset.kcc20Bound = '1';
+      frame.addEventListener('load', () => pingKasoddsDappFrame(frame));
+    }
+    if (!frame.getAttribute('src')) frame.src = 'https://kasodds.com/?kcc20_browser=1';
+    else pingKasoddsDappFrame(frame);
+  }
+  showAppIframe('kasodds');
 }
 
 function openKaspaBrowser(opts = {}) {
@@ -4548,15 +4548,7 @@ function openKaspaBrowser(opts = {}) {
   openKaspaBrowser.fromApps = !!(opts.fromApps || appsScreenOpen());
   const frame = $('browser-frame');
   if (frame) frame.src = 'browser/index.html?v=244';
-  $('ttt-screen')?.classList.add('hidden');
-  $('ttt-screen')?.setAttribute('aria-hidden', 'true');
-  $('kasdistro-screen')?.classList.add('hidden');
-  $('kasdistro-screen')?.setAttribute('aria-hidden', 'true');
-  $('kbuild-screen')?.classList.add('hidden');
-  $('kbuild-screen')?.setAttribute('aria-hidden', 'true');
-  $('browser-screen')?.classList.remove('hidden');
-  $('browser-screen')?.setAttribute('aria-hidden', 'false');
-  $('tabbar')?.classList.remove('show');
+  showAppIframe('browser');
 }
 
 function notifyTttTokenSent(payload) {
@@ -4782,6 +4774,17 @@ function closeKbuild() {
   $('kbuild-screen')?.setAttribute('aria-hidden', 'true');
   if (openKbuild.fromApps) {
     openKbuild.fromApps = false;
+    openApps();
+    return;
+  }
+  if (wallet && sessionOpen()) $('tabbar')?.classList.add('show');
+}
+
+function closeKasodds() {
+  $('kasodds-screen')?.classList.add('hidden');
+  $('kasodds-screen')?.setAttribute('aria-hidden', 'true');
+  if (openKasodds.fromApps) {
+    openKasodds.fromApps = false;
     openApps();
     return;
   }
@@ -12882,6 +12885,7 @@ function bind() {
   click('profile-build', openTtt);
   click('ttt-close', closeTtt);
   click('kasdistro-close', closeKasdistro);
+  click('kasodds-close', closeKasodds);
   click('kbuild-close', closeKbuild);
   click('browser-close', closeKaspaBrowser);
   click('ttt-fund', openTttFund);

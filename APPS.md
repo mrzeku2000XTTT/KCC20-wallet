@@ -30,7 +30,7 @@ Do not fall back to a new tab if they send `X-Frame-Options: DENY`. Keep the ifr
 
 K Social, Proof of Fact, vProg TTT, Wallet Forge stay in `#app-*` inside `#build-screen`.
 
-K Social is the Kaposts / KaChat L1 feed. Icon is the official KaChat mark `assets/ksocial.png` (https://kachat.app/kachat-logo.png). Do not iframe k-social.network.
+K Social is the Kaposts / KaChat L1 feed. Icon is the black rounded square with the white Kaspa K (`assets/ksocial.svg`). Do not iframe k-social.network.
 
 ## Icons
 
@@ -38,7 +38,7 @@ K Social is the Kaposts / KaChat L1 feed. Icon is the official KaChat mark `asse
 - KasOdds: `assets/kasodds.svg` (their `/icon.svg`)
 - KasDistro: `assets/kasdistro.png`
 - KBUILD / vProg TTT / Forge: official Kaspa mark `assets/kas.svg`
-- K Social: `assets/ksocial.png`
+- K Social: `assets/ksocial.svg` (black tile, white Kaspa K)
 - Proof of Fact: `assets/proof.svg`
 
 ## Catalog

@@ -83,7 +83,7 @@ import { loadVprogLobby, renderVprogLobby, bindVprogLobby, startVprogPoll, stopV
 import { vprogCreate, vprogJoin, vprogTurn } from './vprogLane.js?v=1';
 import { bootWalletForge } from './walletForge.js?v=4';
 
-export const BUILD = '280';
+export const BUILD = '281';
 const DESK_ID_KEY = 'kcc20_desk_id_v1';
 const DESK_VAULT_KEY = 'kcc20_desk_vault_v1';
 
@@ -3723,7 +3723,7 @@ const APP_CATALOG = {
     start: 'Tap Open App. Stay on this origin. Never paste a seed into KBUILD.'
   },
   ksocial: {
-    id: 'ksocial', name: 'K Social', icon: 'assets/ksocial.png',
+    id: 'ksocial', name: 'K Social', icon: 'assets/ksocial.svg',
     tags: [['Feed', ''], ['Available', 'on'], ['L1', '']],
     lede: 'Read and post on Kaspa L1. Fee is a small KAS payload tx from this wallet.',
     open: 'internal',

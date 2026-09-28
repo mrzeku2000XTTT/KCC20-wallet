@@ -12,7 +12,7 @@
 */
 (function (root) {
   'use strict';
-  var SDK_VERSION = '176';
+  var SDK_VERSION = '177';
   if (root.kcc20 && root.kcc20.isKcc20 && String(root.kcc20.sdkVersion || '') === SDK_VERSION) return;
 
   function scriptOrigin() {
@@ -34,6 +34,16 @@
 
   var ORIGIN = scriptOrigin();
   var hostOrigin = ORIGIN;
+  function dotkName() {
+    try { return String(root.KCC20_DOTK || '').trim(); } catch (e) { return ''; }
+  }
+  function walletRdns() {
+    try {
+      var r = String(root.KCC20_RDNS || '').trim();
+      if (r) return r;
+    } catch (e) {}
+    return 'app.kcc20.wallet';
+  }
   var pending = {};
   var seq = 1;
   var child = null;
@@ -638,6 +648,14 @@
     sdkVersion: SDK_VERSION,
     origin: ORIGIN,
     veyra: VEYRA,
+    dotk: Object.freeze({
+      page: 'https://kcc20-sdk.vercel.app/dotk.html',
+      spec: 'https://kcc20-sdk.vercel.app/DOTK.md',
+      fork: 'https://github.com/mrzeku2000XTTT/KCC20-wallet',
+      identity: dotkName() || null,
+      rdns: walletRdns(),
+      rule: '.k is who. Wallet signs. dApps detect identity on kaspa:announceProvider.'
+    }),
     forge: Object.freeze({
       name: 'Wallet Forge',
       url: ORIGIN + '/forge.html',
@@ -651,14 +669,15 @@
     }),
     on: on,
     off: off,
-    connect: function () {
-      if (accounts.length && lastState && (lastState.publicKey || lastState.pubKey)) {
+    connect: function (opts) {
+      opts = opts && typeof opts === 'object' ? opts : {};
+      if (accounts.length && lastState && (lastState.publicKey || lastState.pubKey) && !opts.identity) {
         return Promise.resolve(accounts.slice());
       }
       if (!inWalletBrowser() && !userClicked()) {
         return Promise.reject(new Error('Tap Connect KCC20 Wallet'));
       }
-      return rpc('connect').then(function (r) {
+      return rpc('connect', opts.identity ? { identity: opts.identity } : undefined).then(function (r) {
         accounts = (r && r.accounts) || [];
         network = (r && r.network) || '';
         lastState = r || {};
@@ -859,11 +878,48 @@
     getVeyra: function () {
       return Promise.resolve(VEYRA);
     },
+    getIdentity: function () {
+      return rpc('getIdentity').then(function (r) {
+        return r || { name: dotkName(), address: (accounts[0] || ''), rdns: walletRdns() };
+      }).catch(function () {
+        return { name: dotkName(), address: (accounts[0] || ''), rdns: walletRdns() };
+      });
+    },
+    discoverWallets: function () {
+      return new Promise(function (resolve) {
+        var found = [];
+        function onAnn(e) {
+          var d = (e && e.detail) || {};
+          var info = d.info || d;
+          found.push({
+            info: info,
+            provider: d.provider || api,
+            identity: info && info.identity,
+            rdns: info && info.rdns
+          });
+        }
+        try { root.addEventListener('kaspa:announceProvider', onAnn); } catch (e) {}
+        try { root.addEventListener('kaspa:provider', onAnn); } catch (e) {}
+        try { root.dispatchEvent(new Event('kaspa:requestProvider')); } catch (e) {}
+        setTimeout(function () {
+          try { root.removeEventListener('kaspa:announceProvider', onAnn); } catch (e) {}
+          try { root.removeEventListener('kaspa:provider', onAnn); } catch (e) {}
+          resolve(found);
+        }, 400);
+      });
+    },
+    connectDotk: function (name) {
+      return api.connect({ identity: String(name || '') });
+    },
     request: function (method, params) {
       var m = String(method || '');
       var p = params || {};
       if (m === 'veyra' || m === 'getVeyra') return Promise.resolve(VEYRA);
       if (m === 'forge' || m === 'getForge') return Promise.resolve(api.forge);
+      if (m === 'dotk' || m === 'getDotk') return Promise.resolve(api.dotk);
+      if (m === 'getIdentity') return api.getIdentity();
+      if (m === 'discoverWallets') return api.discoverWallets();
+      if (m === 'connectDotk') return api.connect({ identity: (p && (p.identity || p.name)) || '' });
       if (m === 'connect' || m === 'requestAccounts') {
         return api.connect().then(function (acc) {
           var s = lastState || {};
@@ -1055,6 +1111,8 @@
     }
     if (m === 'veyra' || m === 'getVeyra' || m === 'app.kcc20.wallet_veyra') return Promise.resolve(VEYRA);
     if (m === 'forge' || m === 'getForge' || m === 'app.kcc20.wallet_forge') return Promise.resolve(api.forge);
+    if (m === 'dotk' || m === 'getDotk' || m === 'getIdentity') return api.getIdentity();
+    if (m === 'discoverWallets') return api.discoverWallets();
     if (m === 'app.kcc20.wallet_buyKron' || m === 'buyKron') return api.buyKron(p);
     if (m === 'app.kcc20.wallet_getActivityLog' || m === 'getActivityLog') return api.getActivityLog(p.address);
     if (m === 'app.kcc20.wallet_sendKas' || m === 'sendKaspa') return api.sendKaspa(p);
@@ -1090,19 +1148,22 @@
     try {
       var kcc12Info = Object.freeze({
         uuid: kipUuid,
-        name: 'KCC20 Wallet',
+        name: dotkName() || 'KCC20 Wallet',
         icon: kipIcon,
-        rdns: 'app.kcc20.wallet'
+        rdns: walletRdns(),
+        identity: dotkName() || undefined,
+        kind: dotkName() ? 'dotk' : 'scorpion'
       });
       var kcc12Detail = Object.freeze({ info: kcc12Info, provider: kipProvider });
       root.dispatchEvent(new CustomEvent('kaspa:announceProvider', { detail: kcc12Detail }));
       var kipInfo = Object.freeze({
-        id: 'kcc20-wallet',
-        name: 'KCC20 Wallet',
+        id: walletRdns(),
+        name: dotkName() || 'KCC20 Wallet',
         icon: kipIcon,
         methods: ['kaspa:signPskt', 'kaspa:requestAccounts', 'kaspa_signTransaction'],
         uuid: kipUuid,
-        rdns: 'app.kcc20.wallet'
+        rdns: walletRdns(),
+        identity: dotkName() || undefined
       });
       root.dispatchEvent(new CustomEvent('kaspa:provider', {
         detail: Object.freeze({ info: kipInfo, provider: kipProvider })

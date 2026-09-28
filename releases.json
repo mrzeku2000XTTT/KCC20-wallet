@@ -1,10 +1,21 @@
 {
-  "sdk": "176",
-  "build": "277",
+  "sdk": "177",
+  "build": "278",
   "wallet": "https://kcc-20-wallet.vercel.app",
-  "sdkUrl": "https://kcc-20-wallet.vercel.app/sdk.js?v=176",
+  "sdkUrl": "https://kcc-20-wallet.vercel.app/sdk.js?v=177",
   "rule": "Every SDK_VERSION bump gets an entry here the same day. Pin sdk.js?v=NNN and require window.kcc20.sdkVersion === that NNN.",
   "entries": [
+    {
+      "date": "2026-09-27",
+      "sdk": "177",
+      "build": "278",
+      "title": "Dot.K wallets — discover .k on Connect",
+      "breaking": false,
+      "notes": [
+        "Page: kcc20-sdk.vercel.app/dotk.html. Vibe-code a PWA from KCC20-wallet. KCC20_DOTK + KCC20_RDNS announce identity on kaspa:announceProvider.",
+        "dApps: kcc20.discoverWallets(), connect({ identity: 'alice.k' }), getIdentity(). Pin sdk.js?v=177."
+      ]
+    },
     {
       "date": "2026-09-27",
       "sdk": "176",

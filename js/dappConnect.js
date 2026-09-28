@@ -12,7 +12,7 @@ const HOST_METHODS = [
   'getTokenBalance', 'getHoldings', 'getState', 'sendToken', 'sendKcc20', 'payToken', 'payKcc20', 'fundCredits',
   'quoteKron', 'quoteToken', 'buyKron', 'buyToken', 'sellKron', 'sellToken', 'tradeKron', 'tradeToken',
   'compileVault', 'lockVault', 'compileVaults', 'lockVaults', 'sendKas', 'sendKaspa', 'openWallet',
-  'getActivityLog', 'activityLog', 'veyra', 'getVeyra'
+  'getActivityLog', 'activityLog', 'veyra', 'getVeyra', 'getIdentity', 'dotk', 'getDotk'
 ];
 
 let hooks = null;
@@ -375,13 +375,27 @@ function connectBody(w, req, origin) {
     + '<div class="kv"><span class="k">App</span><span class="v">' + esc(req.name || (String(origin).includes('kasdistro.com') ? 'KasDistro' : (String(origin).includes('tttz.xyz') ? 'TTT' : origin))) + '</span></div>'
     + '<div class="kv"><span class="k">Wallet</span><span class="v">' + esc(w?.name || 'Wallet') + '</span></div>'
     + '<div class="kv kv-stack"><span class="k">Address</span><span class="v">' + esc(w?.address || '') + '</span></div>'
-    + '<div class="kv"><span class="k">Network</span><span class="v">' + esc(netName()) + '</span></div>';
+    + '<div class="kv"><span class="k">Network</span><span class="v">' + esc(netName()) + '</span></div>'
+    + (identityOf(w) ? '<div class="kv"><span class="k">.k</span><span class="v">' + esc(identityOf(w)) + '</span></div>' : '');
+}
+
+function identityOf(w) {
+  return String(w?.knsDomain || w?.dotk || w?.name || '').trim();
 }
 
 async function handleConnect(req) {
   await ensureBoundPayer();
   let w = await ensureUnlocked();
   const origin = req.origin;
+  const wantId = String(req.params?.identity || req.params?.dotk || '').trim();
+  if (wantId && w) {
+    const have = identityOf(w);
+    const wantBare = wantId.replace(/\.k$/i, '').toLowerCase();
+    const haveBare = have.replace(/\.k$/i, '').toLowerCase();
+    if (have && haveBare && haveBare !== wantBare && have.toLowerCase() !== wantId.toLowerCase()) {
+      /* still allow connect; overlay shows the requested .k */
+    }
+  }
   const many = (typeof hooks.listWallets === 'function' ? hooks.listWallets() : []).length > 1;
   if (!originAllowed(origin) || many) {
     const fill = () => {
@@ -417,6 +431,7 @@ async function walletSnapshot(w) {
     network: netName(),
     publicKey: w.pubKey || '',
     name: w.name || 'Wallet',
+    identity: identityOf(w) || '',
     balance: {
       confirmed: Number(sompi || 0),
       unconfirmed: 0,
@@ -1068,6 +1083,16 @@ async function dispatch(req) {
   if (method === 'sendKas' || method === 'sendKaspa') return handleSendKas(req);
   if (method === 'openWallet') return handleOpenWallet(req);
   if (method === 'getActivityLog' || method === 'activityLog') return handleGetActivityLog(req);
+  if (method === 'getIdentity' || method === 'dotk' || method === 'getDotk') {
+    const w = hooks?.getWallet?.() || {};
+    const name = identityOf(w);
+    return {
+      name: name || '',
+      address: w.address || '',
+      rdns: 'app.kcc20.wallet',
+      kind: name && /\.k$/i.test(name) ? 'dotk' : 'scorpion'
+    };
+  }
   if (method === 'veyra' || method === 'getVeyra') {
     const origin = String(location.origin || 'https://kcc-20-wallet.vercel.app').replace(/\/$/, '');
     return {

@@ -35,25 +35,23 @@ window.addEventListener('kaspa:announceProvider', (e) => {
 window.dispatchEvent(new Event('kaspa:requestProvider'));
 ```
 
-## Build your own `.k` PWA (Google AI Studio / Cursor / Replit)
+## Build your own `.k` PWA — every prompt
 
-1. Fork https://github.com/mrzeku2000XTTT/KCC20-wallet
-2. Keep `js/tx.js`, `js/crypto.js`, `js/kasware.js`, `vendor/kaspa`, Veyra Approve sheets.
-3. Change the HTML/CSS (Forge templates, or a vibe prompt).
-4. Before `sdk.js`, set:
+Open https://kcc20-sdk.vercel.app/dotk.html#guide and copy **one step at a time**.
 
-```html
-<script>
-  window.KCC20_WALLET_ORIGIN = 'https://YOUR-DEPLOY.vercel.app';
-  window.KCC20_DOTK = 'alice.k';
-  window.KCC20_RDNS = 'k.alice';
-</script>
-<script src="https://YOUR-DEPLOY.vercel.app/sdk.js?v=177"></script>
-```
+| Step | Paste into Google AI Studio / Cursor / Replit | Done when |
+|---|---|---|
+| 0 | Fill-in: `DOTK_NAME`, `RDNS`, `HOST`, `LOOK` | Those four strings exist |
+| 1 | Fork KCC20-wallet. Stamp identity. Do not restyle. | `KCC20_DOTK` in index.html |
+| 2 | Face only (HTML/CSS). Live KAS and QR stay real. | Home matches LOOK |
+| 3 | PWA: manifest, Apple tags, **register `sw.js`**. Delete Scorpion’s `unregister()` block. | Manifest valid, SW activated |
+| 4 | Announce `.k`. Add `demo-dapp.html`. | `discoverWallets()` shows DOTK_NAME |
+| 5 | Vercel HTTPS. iPhone Add to Home Screen. Desktop install. | Standalone icon, Connect works |
+| 6 | Fix pass if install or Connect failed. Do not rewrite `tx.js`. | Installed PWA + PIN sign |
 
-5. Deploy as a PWA. dApps that load that `sdk.js` (or listen for `kaspa:announceProvider`) see **alice.k** next to Scorpion.
+Scorpion **unregisters** service workers on purpose. A Dot.K fork **must register** `sw.js` or it will not become a PWA.
 
-Paste the full agent prompt from https://kcc20-sdk.vercel.app/dotk.html
+Paste the full pack (all 7) with “Copy every prompt” on the page.
 
 ## What `.k` is today
 

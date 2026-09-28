@@ -131,7 +131,7 @@
 
     .prompt-wrap { margin-top: 12px; }
     textarea {
-      width: 100%; min-height: 240px;
+      width: 100%; min-height: 200px;
       border: 1px solid var(--line);
       border-radius: 20px;
       background: #000;
@@ -140,6 +140,20 @@
       font: 12px/1.5 ui-monospace, "SF Mono", Menlo, Consolas, monospace;
       resize: vertical;
     }
+    .steps { display: flex; flex-direction: column; gap: 20px; }
+    .step {
+      background: var(--elev);
+      border: 1px solid var(--line);
+      border-radius: 28px;
+      padding: 28px 26px 22px;
+    }
+    .step-n {
+      font-size: 12px; font-weight: 600; letter-spacing: .16em; text-transform: uppercase;
+      color: var(--teal); margin-bottom: 8px;
+    }
+    .step h4 { font-size: 24px; font-weight: 600; letter-spacing: -.03em; margin-bottom: 8px; }
+    .step .blurb { color: var(--mut); font-size: 16px; margin-bottom: 16px; line-height: 1.45; }
+    .step textarea { min-height: 160px; }
 
     footer {
       padding: 40px var(--pad) 64px;
@@ -177,8 +191,8 @@
     <h1>Your name.<br><em>Your wallet.</em></h1>
     <p>alice.k is who you are. Scorpion is the pen. Kaspa is the notary. Vibe-code the face in Google AI Studio. dApps see .k on Connect — they never learn a thousand UIs.</p>
     <div class="cta">
-      <button class="btn primary" type="button" id="copy">Copy AI Studio prompt</button>
-      <a class="btn ghost" href="https://github.com/mrzeku2000XTTT/KCC20-wallet">Fork Scorpion</a>
+      <a class="btn primary" href="#guide">Step-by-step</a>
+      <button class="btn ghost" type="button" id="copy-all">Copy every prompt</button>
     </div>
   </section>
 
@@ -226,37 +240,15 @@ const who = await kcc20.getIdentity()
     </div>
   </section>
 
-  <section class="section" style="padding-top:0">
-    <h3>Make one in an afternoon</h3>
-    <p class="sub">Google AI Studio, Cursor, or Replit. Fork the Scorpion repo. Keep the signer. Change the face. Deploy a PWA.</p>
-    <div class="split">
-      <div class="card">
-        <h4>Overrides</h4>
-        <p>Set these before sdk.js so dApps announce your name, not ours.</p>
-        <pre>&lt;script&gt;
-  window.KCC20_WALLET_ORIGIN = 'https://YOUR-HOST'
-  window.KCC20_DOTK = 'alice.k'
-  window.KCC20_RDNS = 'k.alice'
-&lt;/script&gt;
-&lt;script src="https://YOUR-HOST/sdk.js?v=177"&gt;&lt;/script&gt;</pre>
-      </div>
-      <div class="card">
-        <h4>Keep / change</h4>
-        <p>Core stays frozen. The room is yours.</p>
-        <p>Keep tx, crypto, KasWare, WASM, Approve.<br>
-           Change HTML, CSS, manifest name, rdns.<br>
-           Templates: <a href="forge.html">Wallet Forge</a>.</p>
-        <a class="btn primary" href="https://github.com/mrzeku2000XTTT/KCC20-wallet" style="margin-top:8px">Open the repo</a>
-      </div>
+  <section class="section" id="guide" style="padding-top:0">
+    <h3>Build yours, step by step</h3>
+    <p class="sub">Google AI Studio, Cursor, or Replit. One prompt per pass. Wait until that pass is done before the next. Fill step 0 first, then paste it above every later prompt.</p>
+    <div class="cta" style="justify-content:flex-start;margin-bottom:28px">
+      <button class="btn primary" type="button" id="copy-all-2">Copy all 7 prompts</button>
+      <a class="btn ghost" href="https://github.com/mrzeku2000XTTT/KCC20-wallet">Fork Scorpion</a>
+      <a class="btn ghost" href="forge.html">Forge templates</a>
     </div>
-    <div class="prompt-wrap card" style="margin-top:28px">
-      <h4>Google AI Studio prompt</h4>
-      <p>Paste this. Fill in the .k name and look. It will fork Scorpion, not invent keys.</p>
-      <div class="cta" style="justify-content:flex-start;margin-bottom:14px">
-        <button class="btn primary" type="button" id="copy2">Copy prompt</button>
-      </div>
-      <textarea id="out" readonly></textarea>
-    </div>
+    <div class="steps" id="steps"></div>
   </section>
 
   <footer>
@@ -266,24 +258,34 @@ const who = await kcc20.getIdentity()
 
   <script src="js/dotk-prompt.js"></script>
   <script>
-    var out = document.getElementById('out');
-    out.value = window.KCC20_DOTK_PROMPT || '';
     function copied(btn) {
       var t = btn.textContent;
       btn.textContent = 'Copied';
       setTimeout(function () { btn.textContent = t; }, 1600);
     }
-    function copy(btn) {
+    function copyId(id, btn) {
       var p = window.KCC20_copyDotkPrompt;
-      if (p) p().then(function () { copied(btn); }).catch(fallback);
-      else fallback();
-      function fallback() {
-        out.select();
-        try { document.execCommand('copy'); copied(btn); } catch (e) {}
-      }
+      if (!p) return;
+      p(id).then(function () { copied(btn); }).catch(function () {});
     }
-    document.getElementById('copy').onclick = function () { copy(this); };
-    document.getElementById('copy2').onclick = function () { copy(this); };
+    document.getElementById('copy-all').onclick = function () { copyId(null, this); };
+    document.getElementById('copy-all-2').onclick = function () { copyId(null, this); };
+    var box = document.getElementById('steps');
+    (window.KCC20_DOTK_STEPS || []).forEach(function (s) {
+      var art = document.createElement('article');
+      art.className = 'step';
+      art.id = 'step-' + s.id;
+      art.innerHTML = '<div class="step-n">Step ' + s.n + '</div><h4>' + s.title + '</h4><p class="blurb">' + s.blurb + '</p>' +
+        '<div class="cta" style="justify-content:flex-start;margin-bottom:12px"><button class="btn primary" type="button" data-copy="' + s.id + '">Copy this prompt</button></div>' +
+        '<textarea readonly></textarea>';
+      art.querySelector('textarea').value = s.text;
+      box.appendChild(art);
+    });
+    box.addEventListener('click', function (e) {
+      var b = e.target.closest('[data-copy]');
+      if (!b) return;
+      copyId(b.getAttribute('data-copy'), b);
+    });
   </script>
 </body>
 </html>

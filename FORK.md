@@ -34,11 +34,14 @@ Read [VEYRA.md](./VEYRA.md) before you rename anything.
 1. Fork **KCC20-wallet**.
 2. Point Vercel at the fork. Custom domain optional.
 3. Replace branding: `index.html` title, `assets/icon.png`, `manifest.json` name, `about.html`.
-4. In `sdk.js` set `WALLET` / origin to **your** host. Bump `SDK_VERSION` and add a `releases.json` entry the same day.
-5. Change KCC-12 `rdns` from `app.kcc20.wallet` to your reverse-DNS (e.g. `app.yourwallet.kaspa`) so pickers can list **both** wallets.
-6. Trusted iframe origins (TTT, KasDistro) live in `dappConnect.js` — add yours; do not silently allow every site.
-7. Keep `web+kcc20:` or add your own protocol handler in `manifest.json`.
-8. Ship `sdk.js` from **your** origin. Tell integrators to pin `https://YOURHOST/sdk.js?v=NNN`.
+4. In `index.html` **before** any other script set `window.KCC20_WALLET_ORIGIN`, `window.KCC20_DOTK` (e.g. `alice.k`), `window.KCC20_RDNS` (unique — never `app.kcc20.wallet`). `sdk.js` reads those.
+5. Bump `SDK_VERSION` and add a `releases.json` entry the same day.
+6. Change KCC-12 `rdns` from `app.kcc20.wallet` to your reverse-DNS so pickers can list **both** wallets.
+7. Trusted iframe origins (TTT, KasDistro) live in `dappConnect.js` — add yours; do not silently allow every site.
+8. Keep `web+kcc20:` or add your own protocol handler in `manifest.json`.
+9. Ship `sdk.js` from **your** origin. Tell integrators to pin `https://YOURHOST/sdk.js?v=178`.
+10. dApps open you with `connect({ identity: 'alice.k', origin: 'https://YOURHOST' })`. Add a row to [dotk-wallets.json](https://kcc20-sdk.vercel.app/dotk-wallets.json) so `connect({ identity })` without origin still finds you.
+11. Replace Scorpion Home chrome (Wallet 1, TRADE KCC20, Compound, A-Trade) unless that is your look. Step-by-step: [dotk.html](https://kcc20-sdk.vercel.app/dotk.html#guide).
 
 Local serve: static files only. WASM `Content-Type` is `application/wasm` (`vercel.json`). `file://` will not load Kaspa WASM.
 

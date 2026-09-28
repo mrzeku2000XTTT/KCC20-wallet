@@ -187,9 +187,9 @@
   </header>
 
   <section class="hero">
-    <p class="kicker">Kaspa · sdk 177</p>
+    <p class="kicker">Kaspa · sdk 178</p>
     <h1>Your name.<br><em>Your wallet.</em></h1>
-    <p>alice.k is who you are. Scorpion is the pen. Kaspa is the notary. Vibe-code the face in Google AI Studio. dApps see .k on Connect — they never learn a thousand UIs.</p>
+    <p>alice.k is who you are. Scorpion is the pen. Kaspa is the notary. Steps 1–6 fork the core. Steps 7–9 replace Scorpion Home and bind Connect to your HOST.</p>
     <div class="cta">
       <a class="btn primary" href="#guide">Step-by-step</a>
       <button class="btn ghost" type="button" id="copy-all">Copy every prompt</button>
@@ -221,22 +221,30 @@
 
   <section class="section">
     <h3>dApps ingest .k</h3>
-    <p class="sub">One handshake. Any generated wallet. If identity ends in .k, show it as Connect.</p>
+    <p class="sub">Pin sdk.js?v=178. Discover merges in-page announces with the registry. Connect must pass origin so the popup is their PWA.</p>
     <div class="split">
       <div class="card">
         <h4>Discover</h4>
-        <p>Listen for announced providers. Scorpion and every Dot.K fork speak the same event.</p>
+        <p>Announced providers plus <a href="dotk-wallets.json">dotk-wallets.json</a>. If identity ends in .k, show it as Connect.</p>
         <pre>const wallets = await kcc20.discoverWallets()
 // identity: "alice.k"
-// rdns: "k.alice"</pre>
+// origin:  "https://alice-k.vercel.app"
+// rdns:    "k.alice"</pre>
       </div>
       <div class="card">
-        <h4>Connect</h4>
-        <p>Ask for a name. The popup still lives in the PWA. You receive an address, never a seed.</p>
-        <pre>await kcc20.connect({ identity: 'alice.k' })
+        <h4>Connect their PWA</h4>
+        <p>Pass origin. The popup URL is HOST/index.html?dapp=1. You receive an address, never a seed.</p>
+        <pre>await kcc20.connect({
+  identity: 'alice.k',
+  origin: 'https://alice-k.vercel.app'
+})
 const who = await kcc20.getIdentity()
 // { name, address, rdns }</pre>
       </div>
+    </div>
+    <div class="card" style="margin-top:28px">
+      <h4>The first screenshot is still Scorpion</h4>
+      <p>The fork starts as KCC20 Wallet. Wallet 1, TRADE KCC20, Compound, A-Trade stay until step 7. Step 8 makes Connect open HOST. Step 9 registers identity → origin so a dApp that loaded the official SDK still pops their PWA.</p>
     </div>
   </section>
 
@@ -244,7 +252,7 @@ const who = await kcc20.getIdentity()
     <h3>Build yours, step by step</h3>
     <p class="sub">Google AI Studio, Cursor, or Replit. One prompt per pass. Wait until that pass is done before the next. Fill step 0 first, then paste it above every later prompt.</p>
     <div class="cta" style="justify-content:flex-start;margin-bottom:28px">
-      <button class="btn primary" type="button" id="copy-all-2">Copy all 7 prompts</button>
+      <button class="btn primary" type="button" id="copy-all-2">Copy all 10 prompts</button>
       <a class="btn ghost" href="https://github.com/mrzeku2000XTTT/KCC20-wallet">Fork Scorpion</a>
       <a class="btn ghost" href="forge.html">Forge templates</a>
     </div>
@@ -252,7 +260,7 @@ const who = await kcc20.getIdentity()
   </section>
 
   <footer>
-    <span>Pin sdk.js?v=177 · <a href="DOTK.md">DOTK.md</a> · <a href="VEYRA.md">VEYRA</a></span>
+    <span>Pin sdk.js?v=178 · <a href="DOTK.md">DOTK.md</a> · <a href="dotk-wallets.json">registry</a> · <a href="VEYRA.md">VEYRA</a></span>
     <span>Keys stay in the wallet.</span>
   </footer>
 

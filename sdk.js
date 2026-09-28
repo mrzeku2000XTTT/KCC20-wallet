@@ -1,6 +1,6 @@
 /* KCC20 Wallet dApp SDK
    Load from the hosted PWA:
-     <script src="https://kcc-20-wallet.vercel.app/sdk.js?v=173"></script>
+     <script src="https://kcc-20-wallet.vercel.app/sdk.js?v=178"></script>
    Then: await window.kcc20.connect()
    Keys never leave the wallet origin. This script only opens the PWA and talks via postMessage.
    KCC-12 (draft): listens for kaspa:requestProvider and announces kaspa:announceProvider
@@ -12,7 +12,7 @@
 */
 (function (root) {
   'use strict';
-  var SDK_VERSION = '177';
+  var SDK_VERSION = '178';
   if (root.kcc20 && root.kcc20.isKcc20 && String(root.kcc20.sdkVersion || '') === SDK_VERSION) return;
 
   function scriptOrigin() {
@@ -34,6 +34,8 @@
 
   var ORIGIN = scriptOrigin();
   var hostOrigin = ORIGIN;
+  var sessionOrigin = ORIGIN;
+  var DOTK_REGISTRY = 'https://kcc20-sdk.vercel.app/dotk-wallets.json';
   function dotkName() {
     try { return String(root.KCC20_DOTK || '').trim(); } catch (e) { return ''; }
   }
@@ -53,6 +55,7 @@
   var listeners = {};
   var embeddedInWallet = false;
   var SESS = 'kcc20_dapp_sess_v1';
+  var ORIGIN_SESS = 'kcc20_wallet_origin_v1';
 
   function loadSess() {
     try { return JSON.parse(sessionStorage.getItem(SESS) || 'null'); } catch (e) { return null; }
@@ -63,19 +66,35 @@
         accounts: accounts,
         network: network,
         lastState: lastState,
+        origin: sessionOrigin,
         at: Date.now()
       }));
     } catch (e) {}
   }
   function clearSess() {
     try { sessionStorage.removeItem(SESS); } catch (e) {}
+    try { sessionStorage.removeItem(ORIGIN_SESS); } catch (e) {}
+  }
+  function persistWalletOrigin(o) {
+    try { sessionStorage.setItem(ORIGIN_SESS, o); } catch (e) {}
   }
   (function bootSess() {
+    try {
+      var savedOrigin = sessionStorage.getItem(ORIGIN_SESS);
+      if (savedOrigin && /^https?:\/\//i.test(savedOrigin)) {
+        sessionOrigin = savedOrigin.replace(/\/+$/, '');
+        hostOrigin = sessionOrigin;
+      }
+    } catch (e) {}
     var s = loadSess();
     if (!s || !Array.isArray(s.accounts) || !s.accounts.length) return;
     accounts = s.accounts;
     network = s.network || '';
     lastState = s.lastState || null;
+    if (s.origin && /^https?:\/\//i.test(s.origin)) {
+      sessionOrigin = String(s.origin).replace(/\/+$/, '');
+      hostOrigin = sessionOrigin;
+    }
   })();
 
   function on(ev, fn) {
@@ -129,7 +148,7 @@
 
   function isWalletOrigin(origin) {
     if (!origin) return false;
-    if (origin === ORIGIN || origin === hostOrigin) return true;
+    if (origin === ORIGIN || origin === hostOrigin || origin === sessionOrigin) return true;
     try {
       var h = new URL(origin).hostname;
       if (h === 'kcc-20-wallet.vercel.app') return true;
@@ -140,7 +159,7 @@
 
   function walletTarget() {
     if (inWalletBrowser()) return hostOrigin && hostOrigin !== ORIGIN ? hostOrigin : '*';
-    return ORIGIN;
+    return sessionOrigin || ORIGIN;
   }
 
   window.addEventListener('message', function (ev) {
@@ -187,8 +206,14 @@
   }
 
   function walletUrl() {
-    return ORIGIN + '/index.html?dapp=1&from=' + encodeURIComponent(location.origin)
+    var base = sessionOrigin || ORIGIN;
+    return base + '/index.html?dapp=1&from=' + encodeURIComponent(location.origin)
       + '&return=' + encodeURIComponent(location.href.split('#')[0]);
+  }
+
+  function popupName() {
+    try { return 'kcc20-' + new URL(sessionOrigin || ORIGIN).hostname.replace(/[^a-z0-9]/gi, ''); }
+    catch (e) { return 'kcc20-wallet'; }
   }
 
   function userClicked() {
@@ -234,10 +259,10 @@
     var url = walletUrl();
     var w = null;
     try {
-      w = window.open(url, 'kcc20-wallet', popupFeatures());
+      w = window.open(url, popupName(), popupFeatures());
     } catch (e) {}
     if (!w) {
-      try { w = window.open(url, 'kcc20-wallet'); } catch (e) {}
+      try { w = window.open(url, popupName()); } catch (e) {}
     }
     if (w && !w.closed) child = w;
     try { if (child && !child.closed) child.focus(); } catch (e) {}
@@ -652,9 +677,10 @@
       page: 'https://kcc20-sdk.vercel.app/dotk.html',
       spec: 'https://kcc20-sdk.vercel.app/DOTK.md',
       fork: 'https://github.com/mrzeku2000XTTT/KCC20-wallet',
+      registry: DOTK_REGISTRY,
       identity: dotkName() || null,
       rdns: walletRdns(),
-      rule: '.k is who. Wallet signs. dApps detect identity on kaspa:announceProvider.'
+      rule: 'connect({ identity, origin }) opens that PWA. discoverWallets() merges the registry.'
     }),
     forge: Object.freeze({
       name: 'Wallet Forge',
@@ -669,15 +695,63 @@
     }),
     on: on,
     off: off,
+    useWallet: function (url) {
+      var o = String(url || '').replace(/\/+$/, '');
+      if (!/^https?:\/\//i.test(o)) return Promise.reject(new Error('Wallet origin must be http(s)'));
+      sessionOrigin = o;
+      hostOrigin = o;
+      persistWalletOrigin(o);
+      if (child && !child.closed) {
+        try { child.close(); } catch (e) {}
+        child = null;
+      }
+      return Promise.resolve(o);
+    },
+    listDotk: function () {
+      return fetch(DOTK_REGISTRY, { cache: 'no-store' }).then(function (r) {
+        if (!r || !r.ok) return [];
+        return r.json();
+      }).then(function (reg) {
+        return (reg && reg.wallets) || [];
+      }).catch(function () { return []; });
+    },
+    resolveDotk: function (name) {
+      var want = String(name || '').trim().toLowerCase();
+      if (want && want.indexOf('.') < 0) want += '.k';
+      return api.listDotk().then(function (rows) {
+        var i, row, id;
+        for (i = 0; i < (rows || []).length; i++) {
+          row = rows[i] || {};
+          id = String(row.identity || '').toLowerCase();
+          if (id === want || id.replace(/\.k$/, '') === want.replace(/\.k$/, '')) {
+            return {
+              identity: want,
+              origin: String(row.origin || sessionOrigin || ORIGIN).replace(/\/+$/, ''),
+              rdns: row.rdns || ''
+            };
+          }
+        }
+        return { identity: want, origin: sessionOrigin || ORIGIN, rdns: walletRdns() };
+      });
+    },
     connect: function (opts) {
       opts = opts && typeof opts === 'object' ? opts : {};
-      if (accounts.length && lastState && (lastState.publicKey || lastState.pubKey) && !opts.identity) {
+      if (accounts.length && lastState && (lastState.publicKey || lastState.pubKey) && !opts.identity && !opts.origin) {
         return Promise.resolve(accounts.slice());
       }
       if (!inWalletBrowser() && !userClicked()) {
         return Promise.reject(new Error('Tap Connect KCC20 Wallet'));
       }
-      return rpc('connect', opts.identity ? { identity: opts.identity } : undefined).then(function (r) {
+      var prep = Promise.resolve();
+      if (opts.origin) prep = api.useWallet(opts.origin);
+      else if (opts.identity) {
+        prep = api.resolveDotk(opts.identity).then(function (row) {
+          if (row && row.origin) return api.useWallet(row.origin);
+        });
+      }
+      return prep.then(function () {
+        return rpc('connect', opts.identity ? { identity: opts.identity } : undefined);
+      }).then(function (r) {
         accounts = (r && r.accounts) || [];
         network = (r && r.network) || '';
         lastState = r || {};
@@ -715,9 +789,11 @@
               method: 'disconnect',
               params: {},
               from: location.origin
-            }, ORIGIN);
+            }, walletTarget());
           } catch (e) {}
         }
+        sessionOrigin = ORIGIN;
+        hostOrigin = ORIGIN;
         try { window.focus(); } catch (e) {}
         setTimeout(function () {
           try { window.focus(); } catch (e) {}
@@ -802,9 +878,11 @@
         available: true,
         isKcc20: true,
         sdkVersion: SDK_VERSION,
-        name: 'KCC20 Wallet',
+        name: dotkName() || 'KCC20 Wallet',
         embedded: inWalletBrowser(),
         origin: ORIGIN,
+        walletOrigin: sessionOrigin || ORIGIN,
+        identity: dotkName() || undefined,
         accounts: accounts.slice(),
         network: network
       };
@@ -862,9 +940,9 @@
     isEmbedded: function () {
       return inWalletBrowser();
     },
-    requestAccounts: function () {
-      if (accounts.length) return Promise.resolve(accounts.slice());
-      return api.connect();
+    requestAccounts: function (opts) {
+      if (accounts.length && !(opts && (opts.identity || opts.origin))) return Promise.resolve(accounts.slice());
+      return api.connect(opts && typeof opts === 'object' ? opts : {});
     },
     removeListener: function (ev, fn) {
       off(ev, fn);
@@ -886,7 +964,7 @@
       });
     },
     discoverWallets: function () {
-      return new Promise(function (resolve) {
+      var announced = new Promise(function (resolve) {
         var found = [];
         function onAnn(e) {
           var d = (e && e.detail) || {};
@@ -895,7 +973,8 @@
             info: info,
             provider: d.provider || api,
             identity: info && info.identity,
-            rdns: info && info.rdns
+            rdns: info && info.rdns,
+            origin: (info && (info.origin || info.url)) || ''
           });
         }
         try { root.addEventListener('kaspa:announceProvider', onAnn); } catch (e) {}
@@ -907,9 +986,46 @@
           resolve(found);
         }, 400);
       });
+      var catalog = api.listDotk();
+      return Promise.all([announced, catalog]).then(function (pair) {
+        var found = pair[0] || [];
+        var rows = pair[1] || [];
+        var seen = {};
+        var i, id;
+        for (i = 0; i < found.length; i++) {
+          id = String(found[i].identity || (found[i].info && found[i].info.identity) || '').toLowerCase();
+          if (id) seen[id] = true;
+        }
+        for (i = 0; i < rows.length; i++) {
+          var row = rows[i] || {};
+          id = String(row.identity || '').toLowerCase();
+          if (!id || seen[id] || !row.origin) continue;
+          seen[id] = true;
+          found.push({
+            info: {
+              name: row.name || row.identity,
+              identity: row.identity,
+              rdns: row.rdns || '',
+              origin: row.origin,
+              kind: 'dotk'
+            },
+            provider: api,
+            identity: row.identity,
+            rdns: row.rdns || '',
+            origin: row.origin
+          });
+        }
+        return found;
+      });
     },
-    connectDotk: function (name) {
-      return api.connect({ identity: String(name || '') });
+    connectDotk: function (name, origin) {
+      if (name && typeof name === 'object') {
+        return api.connect({
+          identity: String(name.identity || name.name || ''),
+          origin: name.origin
+        });
+      }
+      return api.connect({ identity: String(name || ''), origin: origin });
     },
     request: function (method, params) {
       var m = String(method || '');
@@ -919,9 +1035,20 @@
       if (m === 'dotk' || m === 'getDotk') return Promise.resolve(api.dotk);
       if (m === 'getIdentity') return api.getIdentity();
       if (m === 'discoverWallets') return api.discoverWallets();
-      if (m === 'connectDotk') return api.connect({ identity: (p && (p.identity || p.name)) || '' });
+      if (m === 'listDotk') return api.listDotk();
+      if (m === 'resolveDotk') return api.resolveDotk((p && (p.identity || p.name || p.dotk)) || '');
+      if (m === 'useWallet') return api.useWallet((p && (p.origin || p.url)) || p);
+      if (m === 'connectDotk') {
+        return api.connect({
+          identity: (p && (p.identity || p.name || p.dotk)) || '',
+          origin: p && p.origin
+        });
+      }
       if (m === 'connect' || m === 'requestAccounts') {
-        return api.connect().then(function (acc) {
+        return api.connect({
+          identity: p && (p.identity || p.dotk),
+          origin: p && p.origin
+        }).then(function (acc) {
           var s = lastState || {};
           return {
             address: (acc && acc[0]) || s.address || '',
@@ -974,6 +1101,9 @@
 
   Object.defineProperty(api, 'accounts', {
     get: function () { return accounts.slice(); }
+  });
+  Object.defineProperty(api, 'walletOrigin', {
+    get: function () { return sessionOrigin || ORIGIN; }
   });
 
   root.kcc20 = api;
@@ -1072,7 +1202,7 @@
     var m = String(method || '');
     var p = firstParam(params);
     if (m === 'kaspa_requestAccounts' || m === 'wallet_requestPermissions') {
-      return api.connect();
+      return api.connect({ identity: p.identity || p.dotk, origin: p.origin });
     }
     if (m === 'kaspa_accounts') {
       return api.getAccounts();
@@ -1126,7 +1256,7 @@
     return legacyRequest(a, b);
   };
   var kipProvider = {
-    requestAccounts: function () { return api.connect(); },
+    requestAccounts: function (opts) { return api.connect(opts && typeof opts === 'object' ? opts : {}); },
     getAccounts: function () { return api.getAccounts(); },
     getNetwork: function () { return api.getNetwork().then(toKcc12Net); },
     switchNetwork: function (id) { return api.switchNetwork(fromKcc12Net(id)); },
@@ -1152,6 +1282,7 @@
         icon: kipIcon,
         rdns: walletRdns(),
         identity: dotkName() || undefined,
+        origin: sessionOrigin || ORIGIN,
         kind: dotkName() ? 'dotk' : 'scorpion'
       });
       var kcc12Detail = Object.freeze({ info: kcc12Info, provider: kipProvider });
@@ -1163,7 +1294,8 @@
         methods: ['kaspa:signPskt', 'kaspa:requestAccounts', 'kaspa_signTransaction'],
         uuid: kipUuid,
         rdns: walletRdns(),
-        identity: dotkName() || undefined
+        identity: dotkName() || undefined,
+        origin: sessionOrigin || ORIGIN
       });
       root.dispatchEvent(new CustomEvent('kaspa:provider', {
         detail: Object.freeze({ info: kipInfo, provider: kipProvider })

@@ -1,10 +1,20 @@
 {
   "sdk": "178",
-  "build": "281",
+  "build": "282",
   "wallet": "https://kcc-20-wallet.vercel.app",
   "sdkUrl": "https://kcc-20-wallet.vercel.app/sdk.js?v=178",
   "rule": "Every SDK_VERSION bump gets an entry here the same day. Pin sdk.js?v=NNN and require window.kcc20.sdkVersion === that NNN.",
   "entries": [
+    {
+      "date": "2026-09-28",
+      "sdk": "178",
+      "build": "282",
+      "title": "KasOdds Open App is a new tab",
+      "breaking": false,
+      "notes": [
+        "KasOdds opens https://kasodds.com in a new tab. TTT / KasDistro / KBUILD stay in-wallet iframes. APPS.md."
+      ]
+    },
     {
       "date": "2026-09-28",
       "sdk": "178",

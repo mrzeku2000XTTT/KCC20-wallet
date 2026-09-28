@@ -27,7 +27,7 @@ import {
   disconnectRpc, buildDcaDrips, sendKasMany, releaseDcaDrip, cancelDcaDrip, isMassError,
   signPsktJson
 } from './tx.js?v=232';
-import { bootDappConnect, pingTttDappFrame, pingKasdistroDappFrame, pingKasoddsDappFrame, TTT_TREASURY, listConnectedSites, disconnectSite, disconnectAllSites, dappSourceOrigin } from './dappConnect.js?v=208';
+import { bootDappConnect, pingTttDappFrame, pingKasdistroDappFrame, TTT_TREASURY, listConnectedSites, disconnectSite, disconnectAllSites, dappSourceOrigin } from './dappConnect.js?v=208';
 import { changenowEstimate, changenowCreate, changenowWidgetUrl, cnFrom } from './changenow.js?v=180';
 import { schedulePersistIframeVault, bootIframeVaultWatch } from './iframeVault.js?v=122';
 import { kronMarkets, quoteKronTrade, executeKronTrade, formatKasSompi, lookupKronTick, liveQuote, tradeCostLines, attachKronLogos, kronCandles, kronLogoFor, quoteKcc20Bridge, executeKcc20Bridge, formatTokenRaw } from './kronTrade.js?v=233';
@@ -83,7 +83,7 @@ import { loadVprogLobby, renderVprogLobby, bindVprogLobby, startVprogPoll, stopV
 import { vprogCreate, vprogJoin, vprogTurn } from './vprogLane.js?v=1';
 import { bootWalletForge } from './walletForge.js?v=4';
 
-export const BUILD = '281';
+export const BUILD = '282';
 const DESK_ID_KEY = 'kcc20_desk_id_v1';
 const DESK_VAULT_KEY = 'kcc20_desk_vault_v1';
 
@@ -3695,12 +3695,12 @@ const APP_CATALOG = {
   kasodds: {
     id: 'kasodds', name: 'KasOdds', icon: 'assets/kasodds.svg',
     tags: [['Play', ''], ['Available', 'on'], ['Kaspa', '']],
-    lede: 'Two players pick a number. The total decides who takes the pot. Connect Wallet in the iframe — this PWA signs.',
-    open: 'iframe', url: 'https://kasodds.com/?kcc20_browser=1', source: 'https://github.com/danieliyahu1/kas-odds',
-    overview: 'KasOdds is a Kaspa L1 two-player pot. Each side picks a number. The sum decides the winner. Open App loads kasodds.com in this wallet, same as TTT.',
+    lede: 'Two players pick a number. The total decides who takes the pot. Open App opens kasodds.com in a new tab for now.',
+    open: 'tab', url: 'https://kasodds.com', source: 'https://github.com/danieliyahu1/kas-odds',
+    overview: 'KasOdds is a Kaspa L1 two-player pot. Each side picks a number. The sum decides the winner. Open App opens kasodds.com in a new tab until they allow this wallet as a frame ancestor.',
     features: 'Connect Wallet, on-chain pot, Kaspa network footer, public source. Feedback is in-app on their site.',
-    workflow: '1. Tap Open App. 2. kasodds.com loads in this wallet. 3. Connect Wallet — this PWA pops Approve. 4. Pick a number. 5. Kaspa settles the pot.',
-    start: 'Tap Open App. The game loads here. Connect Wallet, then Approve in Scorpion. They never hold your key.'
+    workflow: '1. Tap Open App. 2. kasodds.com opens in a new tab. 3. Connect Wallet — this PWA pops Approve. 4. Pick a number. 5. Kaspa settles the pot.',
+    start: 'Tap Open App. Allow the new tab. On kasodds.com tap Connect Wallet, then Approve in Scorpion. They never hold your key.'
   },
   kasdistro: {
     id: 'kasdistro', name: 'KasDistro', icon: 'assets/kasdistro.png',
@@ -4474,7 +4474,7 @@ function appsScreenOpen() {
   return !!$('build-screen') && !$('build-screen').classList.contains('hidden');
 }
 
-const APP_IFRAME_IDS = ['ttt', 'kasdistro', 'kbuild', 'browser', 'kasodds'];
+const APP_IFRAME_IDS = ['ttt', 'kasdistro', 'kbuild', 'browser'];
 
 function showAppIframe(id) {
   APP_IFRAME_IDS.forEach((name) => {
@@ -4524,19 +4524,10 @@ function openKbuild(opts = {}) {
   showAppIframe('kbuild');
 }
 
-function openKasodds(opts = {}) {
+function openKasodds() {
   haptic();
-  openKasodds.fromApps = !!(opts.fromApps || appsScreenOpen());
-  const frame = $('kasodds-frame');
-  if (frame) {
-    if (!frame.dataset.kcc20Bound) {
-      frame.dataset.kcc20Bound = '1';
-      frame.addEventListener('load', () => pingKasoddsDappFrame(frame));
-    }
-    if (!frame.getAttribute('src')) frame.src = 'https://kasodds.com/?kcc20_browser=1';
-    else pingKasoddsDappFrame(frame);
-  }
-  showAppIframe('kasodds');
+  const w = window.open('https://kasodds.com', '_blank', 'noopener,noreferrer');
+  if (!w) toast('Allow popups to open KasOdds');
 }
 
 function openKaspaBrowser(opts = {}) {

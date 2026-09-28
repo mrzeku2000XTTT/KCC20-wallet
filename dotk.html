@@ -3,93 +3,287 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-  <title>Dot.K wallets — SCORPION SDK</title>
-  <meta name="description" content="Make your own Kaspa PWA as alice.k. Fork Scorpion. Vibe-code the face. dApps detect .k on Connect.">
+  <title>Dot.K — Your name. Your wallet.</title>
+  <meta name="description" content="alice.k is who you are. Scorpion signs. Kaspa settles. Vibe-code your own PWA. dApps detect .k on Connect.">
   <link rel="canonical" href="https://kcc20-sdk.vercel.app/dotk.html">
-  <link rel="icon" href="assets/icon.png">
-  <link rel="stylesheet" href="css/docs.css">
+  <link rel="icon" href="assets/kas.svg">
   <style>
-    .wrap { max-width: 860px; margin: 0 auto; padding: 28px 18px 80px; }
-    h1 { font-size: 34px; letter-spacing: -.6px; margin: 8px 0; }
-    .lede { font-size: 18px; color: #f3e2bf; }
-    .stack { font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 13px; background: #161618; border: 1px solid var(--line); border-radius: 14px; padding: 14px 16px; white-space: pre-wrap; }
-    .row { display: flex; flex-wrap: wrap; gap: 8px; margin: 14px 0; }
-    .btn { height: 40px; padding: 0 14px; border-radius: 12px; border: 1px solid var(--line); background: #161618; color: #f5f5f7; font-weight: 650; cursor: pointer; text-decoration: none; display: inline-flex; align-items: center; }
-    .btn.gold { background: linear-gradient(180deg,#e8c98a,#c9a36a); color: #1a1408; border: 0; }
-    textarea { width: 100%; min-height: 220px; border-radius: 14px; border: 1px solid var(--line); background: #101012; color: #e8e8ed; padding: 12px; font: 12px/1.45 ui-monospace, Menlo, Consolas, monospace; }
-    table { width: 100%; border-collapse: collapse; font-size: 14px; margin: 12px 0 20px; }
-    th, td { text-align: left; padding: 9px 10px; border-bottom: 1px solid var(--line); vertical-align: top; }
-    .pill { display: inline-block; font-size: 11px; font-weight: 700; padding: 3px 8px; border-radius: 999px; background: #2a2318; color: var(--gold); }
+    :root {
+      --bg: #000;
+      --elev: #0b0b0d;
+      --line: rgba(255,255,255,.08);
+      --txt: #f5f5f7;
+      --mut: rgba(245,245,247,.56);
+      --teal: #49eacb;
+      --pad: clamp(20px, 5vw, 72px);
+    }
+    * { box-sizing: border-box; margin: 0; }
+    html, body { background: var(--bg); color: var(--txt); }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "SF Pro Display", "SF Pro Text", "Helvetica Neue", sans-serif;
+      -webkit-font-smoothing: antialiased;
+      letter-spacing: -0.022em;
+    }
+    a { color: var(--teal); text-decoration: none; }
+    a:hover { text-decoration: underline; }
+
+    .nav {
+      position: sticky; top: 0; z-index: 20;
+      display: flex; align-items: center; justify-content: space-between;
+      padding: 14px var(--pad);
+      background: rgba(0,0,0,.72);
+      backdrop-filter: saturate(180%) blur(20px);
+      -webkit-backdrop-filter: saturate(180%) blur(20px);
+      border-bottom: 1px solid var(--line);
+    }
+    .nav-brand { display: flex; align-items: center; gap: 10px; color: var(--txt); text-decoration: none; font-weight: 600; font-size: 14px; }
+    .nav-brand img { width: 22px; height: 22px; }
+    .nav-brand:hover { text-decoration: none; opacity: .8; }
+    .nav-links { display: flex; gap: 22px; flex-wrap: wrap; }
+    .nav-links a { color: var(--mut); font-size: 12px; font-weight: 500; }
+    .nav-links a.on { color: var(--txt); }
+
+    .hero {
+      min-height: 78vh;
+      display: flex; flex-direction: column; justify-content: center;
+      padding: 72px var(--pad) 80px;
+      text-align: center;
+      background:
+        radial-gradient(900px 420px at 50% -10%, rgba(73,234,203,.16), transparent 60%),
+        #000;
+    }
+    .kicker {
+      font-size: 13px; font-weight: 600; letter-spacing: .18em; text-transform: uppercase;
+      color: var(--teal); margin-bottom: 22px;
+    }
+    .hero h1 {
+      font-size: clamp(44px, 8vw, 88px);
+      font-weight: 600;
+      letter-spacing: -0.045em;
+      line-height: .95;
+      margin: 0 auto 22px;
+      max-width: 16ch;
+    }
+    .hero h1 em { font-style: normal; color: var(--teal); }
+    .hero p {
+      font-size: clamp(18px, 2.2vw, 22px);
+      line-height: 1.45;
+      color: var(--mut);
+      max-width: 34em;
+      margin: 0 auto 36px;
+      font-weight: 400;
+    }
+    .cta { display: flex; justify-content: center; gap: 12px; flex-wrap: wrap; }
+    .btn {
+      height: 48px; padding: 0 22px; border-radius: 980px; border: 0;
+      font: 600 15px/1 inherit; cursor: pointer; display: inline-flex; align-items: center;
+      text-decoration: none;
+    }
+    .btn.primary { background: var(--teal); color: #04140f; }
+    .btn.primary:hover { filter: brightness(1.06); text-decoration: none; }
+    .btn.ghost { background: transparent; color: var(--teal); }
+    .btn.ghost:hover { text-decoration: underline; }
+
+    .rail {
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      gap: 1px;
+      background: var(--line);
+      border-top: 1px solid var(--line);
+      border-bottom: 1px solid var(--line);
+    }
+    .rail article {
+      background: var(--bg);
+      padding: 36px 28px 40px;
+    }
+    .rail small { display: block; font-size: 12px; color: var(--teal); font-weight: 600; letter-spacing: .12em; text-transform: uppercase; margin-bottom: 10px; }
+    .rail h2 { font-size: 22px; font-weight: 600; letter-spacing: -.03em; margin-bottom: 8px; }
+    .rail p { font-size: 15px; color: var(--mut); line-height: 1.45; }
+
+    .section { padding: 88px var(--pad); max-width: 1120px; margin: 0 auto; }
+    .section h3 {
+      font-size: clamp(32px, 5vw, 48px);
+      font-weight: 600;
+      letter-spacing: -.038em;
+      margin-bottom: 12px;
+    }
+    .section .sub { font-size: 19px; color: var(--mut); max-width: 36em; margin-bottom: 40px; line-height: 1.45; }
+
+    .split { display: grid; grid-template-columns: 1fr 1fr; gap: 28px; align-items: start; }
+    .card {
+      background: var(--elev);
+      border: 1px solid var(--line);
+      border-radius: 28px;
+      padding: 32px 28px 28px;
+    }
+    .card h4 { font-size: 21px; font-weight: 600; letter-spacing: -.03em; margin-bottom: 10px; }
+    .card p { color: var(--mut); font-size: 15px; line-height: 1.5; margin-bottom: 18px; }
+    pre, .code {
+      font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+      font-size: 12.5px; line-height: 1.55;
+      background: #000;
+      border-radius: 16px;
+      padding: 18px 18px;
+      overflow: auto;
+      color: #d2fff4;
+      border: 1px solid var(--line);
+    }
+
+    .prompt-wrap { margin-top: 12px; }
+    textarea {
+      width: 100%; min-height: 240px;
+      border: 1px solid var(--line);
+      border-radius: 20px;
+      background: #000;
+      color: #cfd3d8;
+      padding: 18px;
+      font: 12px/1.5 ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+      resize: vertical;
+    }
+
+    footer {
+      padding: 40px var(--pad) 64px;
+      color: var(--mut);
+      font-size: 13px;
+      display: flex; justify-content: space-between; gap: 16px; flex-wrap: wrap;
+      border-top: 1px solid var(--line);
+    }
+
+    @media (max-width: 860px) {
+      .rail, .split { grid-template-columns: 1fr; }
+      .hero { min-height: 70vh; padding-top: 56px; }
+      .nav-links { display: none; }
+    }
   </style>
 </head>
 <body>
-  <header class="top">
-    <div class="brand-wrap">
-      <img src="assets/icon.png" alt="">
-      <div class="brand">KCC20 SDK<small>Dot.K wallets · sdk 177</small></div>
-    </div>
-    <nav>
-      <a href="index.html">Home</a>
-      <a href="tokens.html">Tokens</a>
-      <a href="docs.html">Docs</a>
+  <header class="nav">
+    <a class="nav-brand" href="index.html">
+      <img src="assets/kas.svg" alt="">
+      Dot.K
+    </a>
+    <nav class="nav-links">
+      <a href="index.html">SDK</a>
       <a href="forge.html">Forge</a>
       <a href="dotk.html" class="on">Dot.K</a>
-      <a href="veyra.html">VEYRA</a>
-      <a href="demo.html">Try it</a>
-      <a href="https://github.com/mrzeku2000XTTT/kcc20-sdk">GitHub</a>
+      <a href="veyra.html">Veyra</a>
+      <a href="docs.html">Docs</a>
+      <a href="https://github.com/mrzeku2000XTTT/KCC20-wallet">Scorpion</a>
     </nav>
   </header>
-  <div class="wrap">
-    <p class="pill">sdk.js?v=177</p>
-    <h1>Dot.K wallets</h1>
-    <p class="lede">.k is who. Veyra is what they may do. The wallet signs. Kaspa settles.</p>
-    <p>Anyone can vibe-code a Kaspa PWA that <b>looks</b> like theirs — Google AI Studio, Cursor, Replit — by forking Scorpion. dApps do not learn 10,000 UIs. They detect <code>alice.k</code> on Connect the same way they detect Scorpion.</p>
 
-    <h2>1. dApp: Connect a .k wallet</h2>
-<pre>const wallets = await window.kcc20.discoverWallets();
-// { info: { name, identity: 'alice.k', rdns: 'k.alice' }, provider }
-
-await window.kcc20.connect({ identity: 'alice.k' });
-const who = await window.kcc20.getIdentity();
-// { name: 'alice.k', address: 'kaspa:q…', rdns }</pre>
-    <p>Or listen: <code>kaspa:announceProvider</code> then <code>kaspa:requestProvider</code>. If <code>info.identity</code> ends in <code>.k</code>, show it as Connect wallet.</p>
-
-    <h2>2. Make your own (Google AI Studio)</h2>
-    <p>Fork <a href="https://github.com/mrzeku2000XTTT/KCC20-wallet">KCC20-wallet</a>. Keep the signer. Change the face. Set <code>KCC20_DOTK</code> and <code>KCC20_RDNS</code>. Deploy a PWA. Paste this prompt:</p>
-    <div class="row">
-      <button class="btn gold" type="button" id="copy">Copy Google AI Studio prompt</button>
-      <a class="btn" href="https://github.com/mrzeku2000XTTT/KCC20-wallet">Fork Scorpion</a>
-      <a class="btn" href="forge.html">Forge templates</a>
+  <section class="hero">
+    <p class="kicker">Kaspa · sdk 177</p>
+    <h1>Your name.<br><em>Your wallet.</em></h1>
+    <p>alice.k is who you are. Scorpion is the pen. Kaspa is the notary. Vibe-code the face in Google AI Studio. dApps see .k on Connect — they never learn a thousand UIs.</p>
+    <div class="cta">
+      <button class="btn primary" type="button" id="copy">Copy AI Studio prompt</button>
+      <a class="btn ghost" href="https://github.com/mrzeku2000XTTT/KCC20-wallet">Fork Scorpion</a>
     </div>
-    <textarea id="out" readonly></textarea>
+  </section>
 
-    <h2>3. Stack</h2>
-    <div class="stack">USER
-  .k identity     (who)
-  Veyra           (what they may do)
-  Dot.K PWA       (sign — fork of Scorpion)
-  Kaspa L1        (settle)</div>
+  <div class="rail">
+    <article>
+      <small>.k</small>
+      <h2>Who</h2>
+      <p>A human name on Kaspa. Display, discovery, destination. Not a private key.</p>
+    </article>
+    <article>
+      <small>Veyra</small>
+      <h2>May they</h2>
+      <p>Each action is one Approve. Agents prepare. They do not inherit the key.</p>
+    </article>
+    <article>
+      <small>PWA</small>
+      <h2>Sign</h2>
+      <p>A fork of Scorpion. PIN, KasWare, or Kaspire. Keys stay on the origin.</p>
+    </article>
+    <article>
+      <small>Kaspa</small>
+      <h2>Settle</h2>
+      <p>Layer 1. Network fees when you broadcast. Build the face for free.</p>
+    </article>
+  </div>
 
-    <h2>4. Overrides in the generated PWA</h2>
-<pre>&lt;script&gt;
-  window.KCC20_WALLET_ORIGIN = 'https://YOUR-HOST';
-  window.KCC20_DOTK = 'alice.k';
-  window.KCC20_RDNS = 'k.alice';
+  <section class="section">
+    <h3>dApps ingest .k</h3>
+    <p class="sub">One handshake. Any generated wallet. If identity ends in .k, show it as Connect.</p>
+    <div class="split">
+      <div class="card">
+        <h4>Discover</h4>
+        <p>Listen for announced providers. Scorpion and every Dot.K fork speak the same event.</p>
+        <pre>const wallets = await kcc20.discoverWallets()
+// identity: "alice.k"
+// rdns: "k.alice"</pre>
+      </div>
+      <div class="card">
+        <h4>Connect</h4>
+        <p>Ask for a name. The popup still lives in the PWA. You receive an address, never a seed.</p>
+        <pre>await kcc20.connect({ identity: 'alice.k' })
+const who = await kcc20.getIdentity()
+// { name, address, rdns }</pre>
+      </div>
+    </div>
+  </section>
+
+  <section class="section" style="padding-top:0">
+    <h3>Make one in an afternoon</h3>
+    <p class="sub">Google AI Studio, Cursor, or Replit. Fork the Scorpion repo. Keep the signer. Change the face. Deploy a PWA.</p>
+    <div class="split">
+      <div class="card">
+        <h4>Overrides</h4>
+        <p>Set these before sdk.js so dApps announce your name, not ours.</p>
+        <pre>&lt;script&gt;
+  window.KCC20_WALLET_ORIGIN = 'https://YOUR-HOST'
+  window.KCC20_DOTK = 'alice.k'
+  window.KCC20_RDNS = 'k.alice'
 &lt;/script&gt;
 &lt;script src="https://YOUR-HOST/sdk.js?v=177"&gt;&lt;/script&gt;</pre>
-    <p>Full spec: <a href="DOTK.md">DOTK.md</a>. Protocol: <a href="VEYRA.md">VEYRA.md</a>.</p>
-  </div>
+      </div>
+      <div class="card">
+        <h4>Keep / change</h4>
+        <p>Core stays frozen. The room is yours.</p>
+        <p>Keep tx, crypto, KasWare, WASM, Approve.<br>
+           Change HTML, CSS, manifest name, rdns.<br>
+           Templates: <a href="forge.html">Wallet Forge</a>.</p>
+        <a class="btn primary" href="https://github.com/mrzeku2000XTTT/KCC20-wallet" style="margin-top:8px">Open the repo</a>
+      </div>
+    </div>
+    <div class="prompt-wrap card" style="margin-top:28px">
+      <h4>Google AI Studio prompt</h4>
+      <p>Paste this. Fill in the .k name and look. It will fork Scorpion, not invent keys.</p>
+      <div class="cta" style="justify-content:flex-start;margin-bottom:14px">
+        <button class="btn primary" type="button" id="copy2">Copy prompt</button>
+      </div>
+      <textarea id="out" readonly></textarea>
+    </div>
+  </section>
+
+  <footer>
+    <span>Pin sdk.js?v=177 · <a href="DOTK.md">DOTK.md</a> · <a href="VEYRA.md">VEYRA</a></span>
+    <span>Keys stay in the wallet.</span>
+  </footer>
+
   <script src="js/dotk-prompt.js"></script>
   <script>
-    document.getElementById('out').value = window.KCC20_DOTK_PROMPT || '';
-    document.getElementById('copy').onclick = function () {
-      window.KCC20_copyDotkPrompt().then(function () {
-        document.getElementById('copy').textContent = 'Copied';
-      }).catch(function () {
-        document.getElementById('out').select();
-        document.execCommand('copy');
-      });
-    };
+    var out = document.getElementById('out');
+    out.value = window.KCC20_DOTK_PROMPT || '';
+    function copied(btn) {
+      var t = btn.textContent;
+      btn.textContent = 'Copied';
+      setTimeout(function () { btn.textContent = t; }, 1600);
+    }
+    function copy(btn) {
+      var p = window.KCC20_copyDotkPrompt;
+      if (p) p().then(function () { copied(btn); }).catch(fallback);
+      else fallback();
+      function fallback() {
+        out.select();
+        try { document.execCommand('copy'); copied(btn); } catch (e) {}
+      }
+    }
+    document.getElementById('copy').onclick = function () { copy(this); };
+    document.getElementById('copy2').onclick = function () { copy(this); };
   </script>
 </body>
 </html>

@@ -27,7 +27,7 @@ import {
   disconnectRpc, buildDcaDrips, sendKasMany, releaseDcaDrip, cancelDcaDrip, isMassError,
   signPsktJson
 } from './tx.js?v=232';
-import { bootDappConnect, pingTttDappFrame, pingKasdistroDappFrame, TTT_TREASURY, listConnectedSites, disconnectSite, disconnectAllSites, dappSourceOrigin } from './dappConnect.js?v=206';
+import { bootDappConnect, pingTttDappFrame, pingKasdistroDappFrame, TTT_TREASURY, listConnectedSites, disconnectSite, disconnectAllSites, dappSourceOrigin } from './dappConnect.js?v=207';
 import { changenowEstimate, changenowCreate, changenowWidgetUrl, cnFrom } from './changenow.js?v=180';
 import { schedulePersistIframeVault, bootIframeVaultWatch } from './iframeVault.js?v=122';
 import { kronMarkets, quoteKronTrade, executeKronTrade, formatKasSompi, lookupKronTick, liveQuote, tradeCostLines, attachKronLogos, kronCandles, kronLogoFor, quoteKcc20Bridge, executeKcc20Bridge, formatTokenRaw } from './kronTrade.js?v=233';
@@ -83,7 +83,7 @@ import { loadVprogLobby, renderVprogLobby, bindVprogLobby, startVprogPoll, stopV
 import { vprogCreate, vprogJoin, vprogTurn } from './vprogLane.js?v=1';
 import { bootWalletForge } from './walletForge.js?v=4';
 
-export const BUILD = '278';
+export const BUILD = '279';
 const DESK_ID_KEY = 'kcc20_desk_id_v1';
 const DESK_VAULT_KEY = 'kcc20_desk_vault_v1';
 
@@ -3681,8 +3681,156 @@ function setBuildPhase(i) {
   if ($('build-copy')) $('build-copy').textContent = BUILD_PHASES[n];
 }
 
-function showBuildApp(name) {
-  const view = name || 'home';
+const APP_CATALOG = {
+  ttt: {
+    id: 'ttt', name: 'TTT', icon: 'assets/ttt.png',
+    tags: [['Store', ''], ['Available', 'on'], ['Connect', '']],
+    lede: 'The TTT super-app on Kaspa. Your wallet is login. Payments settle on L1.',
+    open: 'iframe', url: 'https://tttz.xyz', source: 'https://github.com/mrzeku2000XTTT/ttt',
+    overview: 'TTT is the store and super-app at tttz.xyz. Open it from this wallet. Connect uses this PWA — keys stay here. Launch from the store, no extra install.',
+    features: 'App store, in-app Connect, KKDAG credits, and Kaspa L1 settlement. Each Approve is one action. The dApp never sees a seed or PIN.',
+    workflow: '1. Tap Open App. 2. Connect with this wallet. 3. Pick an app in TTT. 4. Sign each pay in Scorpion. 5. Kaspa settles.',
+    start: 'Tap Open App. tttz.xyz loads in this wallet. Allow the popup and Connect. Fund with KKDAG from Home when TTT asks.'
+  },
+  kasodds: {
+    id: 'kasodds', name: 'KasOdds', icon: 'assets/kasodds.svg',
+    tags: [['Play', ''], ['Available', 'on'], ['Kaspa', '']],
+    lede: 'Two players pick a number. The total decides who takes the pot. Connect Wallet on kasodds.com — this PWA signs.',
+    open: 'external', url: 'https://kasodds.com', source: 'https://github.com/danieliyahu1/kas-odds',
+    overview: 'KasOdds is a Kaspa L1 two-player pot. Each side picks a number. The sum decides the winner. It runs at kasodds.com. The site blocks embedding, so Open App launches the real site in the browser.',
+    features: 'Connect Wallet, on-chain pot, Kaspa network footer, public source. Feedback is in-app on their site.',
+    workflow: '1. Tap Open App. 2. kasodds.com opens. 3. Connect Wallet — this PWA pops Approve. 4. Pick a number. 5. Kaspa settles the pot.',
+    start: 'Tap Open App. Allow the new tab. On kasodds.com tap Connect Wallet. Come back here to Approve. They never hold your key.'
+  },
+  kasdistro: {
+    id: 'kasdistro', name: 'KasDistro', icon: 'assets/kasdistro.png',
+    tags: [['Pay', ''], ['Available', 'on'], ['Many wallets', '']],
+    lede: 'Pay many kaspa:q addresses in one flow. Connect with this wallet.',
+    open: 'iframe', url: 'https://kasdistro.com', source: 'https://kasdistro.com',
+    overview: 'KasDistro is a Kaspa pay-many tool. Open it here. Connect uses this PWA. Each send is one Approve.',
+    features: 'Multi-pay, Connect, Kaspa L1. Destinations are kaspa: addresses you already know.',
+    workflow: '1. Open App. 2. Connect. 3. Paste recipients. 4. Approve in this wallet. 5. Broadcast.',
+    start: 'Tap Open App. kasdistro.com loads in this wallet. Connect, then send.'
+  },
+  kbuild: {
+    id: 'kbuild', name: 'KBUILD', icon: 'assets/kas.svg', kas: true,
+    tags: [['Build', ''], ['Available', 'on'], ['Covenants', '']],
+    lede: 'Vibe economic builder. Drafts SilverScript v1 covenants++. Compile still happens in this wallet.',
+    open: 'iframe', url: 'kbuild/index.html', source: 'https://github.com/mrzeku2000XTTT/KCC20-wallet/tree/main/kbuild',
+    overview: 'KBUILD writes SilverScript. It does not hold keys. Compile opens the wallet Approve sheet.',
+    features: 'Prompt → .sil draft, constructor args, compile in Scorpion. Official Kaspa mark on the grid.',
+    workflow: '1. Open App. 2. Describe the covenant. 3. Review the .sil. 4. Compile — PIN / KasWare signs here.',
+    start: 'Tap Open App. Stay on this origin. Never paste a seed into KBUILD.'
+  },
+  ksocial: {
+    id: 'ksocial', name: 'K Social', icon: '', letter: 'K',
+    tags: [['Feed', ''], ['Available', 'on'], ['L1', '']],
+    lede: 'Read and post on Kaspa L1. Fee is a small KAS payload tx from this wallet.',
+    open: 'internal',
+    overview: 'K Social is the Kaspa L1 feed inside this PWA. Posts are signed by the unlocked wallet.',
+    features: 'Feed, compose, replies, votes. Each write is a Kaspa fee you Approve.',
+    workflow: '1. Open App. 2. Read the feed. 3. Write. 4. Approve the fee. 5. It lands on L1.',
+    start: 'Tap Open App. Unlock if asked. Post is a real Kaspa tx — keep amounts tiny.'
+  },
+  truth: {
+    id: 'truth', name: 'Proof of Fact', icon: 'assets/proof.svg',
+    tags: [['Anchor', ''], ['Available', 'on'], ['SHA-256', '']],
+    lede: 'Hash AI output locally, then a dust Kaspa tx carries the fingerprint in payload.',
+    open: 'internal',
+    overview: 'Proof of Fact stamps a SHA-256 of model output onto Kaspa L1. Hash stays local until you broadcast.',
+    features: 'Local SHA-256, 1 sompi dust + payload, PIN sign, explorer-visible hash.',
+    workflow: '1. Paste AI text. 2. Stamp hash. 3. Pack dust + payload. 4. Sign. 5. Anchor on the blockDAG.',
+    start: 'Tap Open App. Paste output. Stamp, then broadcast when you mean it. Needs a tiny KAS dust.'
+  },
+  vprog: {
+    id: 'vprog', name: 'vProg TTT', icon: 'assets/kas.svg', kas: true,
+    tags: [['TN10', ''], ['Available', 'on'], ['vProgs', '']],
+    lede: 'Kaspa vProgs tic-tac-toe testing lane. Practice locally, live games on testnet-10.',
+    open: 'internal', source: 'https://github.com/biryukovmaxim/vprog-tictactoe',
+    overview: 'Guest lane for staked tic-tac-toe on Kaspa vProgs. Same TN10 rules as vprogs-tt.izio.fr. Switch You → Network to testnet-10 for live Create / Join / Turn.',
+    features: 'Practice board, TN10 create/join/turn, encoder-wasm. PIN signs carriers. KasWare-only chips cannot sign this lane.',
+    workflow: '1. Open App. 2. Practice, or switch to TN10. 3. Create or join. 4. Approve the carrier. 5. Take turns on L1.',
+    start: 'Tap Open App. Practice works on mainnet display. Live games need testnet-10 and a PIN key.'
+  },
+  forge: {
+    id: 'forge', name: 'Wallet Forge', icon: 'assets/kas.svg', kas: true,
+    tags: [['Face', ''], ['Available', 'on'], ['No keys', '']],
+    lede: 'Drag live Kaspa primitives onto a canvas. AI restyles the face. Keys stay in Scorpion.',
+    open: 'internal', source: 'https://kcc20-sdk.vercel.app/forge.html',
+    overview: 'Wallet Forge is presentation only. Brand, identity, KAS, tokens, QR, send — bound to this wallet. Export HTML that Connects with sdk.js.',
+    features: 'Presets, drag layout, screenshot restyle, in-preview QR, Test overlay, export.',
+    workflow: '1. Open App. 2. Pick a preset. 3. Drag and restyle. 4. Test. 5. Export. Signing never leaves this core.',
+    start: 'Tap Open App. Change look only. Never paste a seed into Forge.'
+  },
+  browser: {
+    id: 'browser', name: 'Kaspa Browser', icon: 'assets/kas.svg', kas: true,
+    tags: [['Admin', ''], ['HTTPS', '']],
+    lede: 'In-wallet chrome for kaspa.org and HTTPS pages. Admin-only.',
+    open: 'iframe',
+    overview: 'Kaspa Browser is a privileged in-wallet web view. It stays hidden unless admin is on.',
+    features: 'HTTPS pages inside the PWA.',
+    workflow: 'Open App only when the Browser tile is visible.',
+    start: 'Admin unlocks the tile on the grid.'
+  }
+};
+
+let appsDocsId = '';
+let appsDocsTab = 'overview';
+
+function appCatalog(id) {
+  return APP_CATALOG[String(id || '')] || null;
+}
+
+function paintAppDocs(app) {
+  const root = $('app-docs');
+  if (!root || !app) return;
+  const tab = appsDocsTab;
+  const body = app[tab] || app.overview || '';
+  const pills = (app.tags || []).map(t => '<span class="' + (t[1] || '') + '">' + esc(t[0]) + '</span>').join('');
+  const markClass = 'app-docs-mark' + (app.kas ? ' kas' : '');
+  const mark = app.icon
+    ? '<span class="' + markClass + '"><img src="' + esc(app.icon) + '" alt=""></span>'
+    : '<span class="app-docs-mark" style="display:grid;place-items:center;background:#15181e;color:#49eacb;font-size:28px;font-weight:750">' + esc(app.letter || app.name[0] || 'A') + '</span>';
+  const srcBtn = app.source
+    ? '<button type="button" class="btn btn-glass" data-app-src="' + esc(app.source) + '">View Source</button>'
+    : '';
+  root.innerHTML = '<div class="app-docs-hero">' + mark
+    + '<div class="app-docs-copy"><h3>' + esc(app.name) + '</h3>'
+    + '<div class="app-docs-pills">' + pills + '</div></div></div>'
+    + '<p class="app-docs-lede">' + esc(app.lede) + '</p>'
+    + '<div class="app-docs-cta"><button type="button" class="btn btn-gold" data-app-open="' + esc(app.id) + '">Open App</button>' + srcBtn + '</div>'
+    + '<div class="app-docs-tabs">'
+    + ['overview', 'features', 'workflow', 'start'].map(k =>
+      '<button type="button" data-app-tab="' + k + '" class="' + (tab === k ? 'on' : '') + '">' + (k[0].toUpperCase() + k.slice(1)) + '</button>'
+    ).join('') + '</div>'
+    + '<div class="app-docs-body"><p>' + esc(body) + '</p></div>';
+}
+
+function showAppDocs(id) {
+  const app = appCatalog(id);
+  if (!app) {
+    launchApp(id);
+    return;
+  }
+  if (app.id === 'browser' && !isWalletAdmin()) {
+    toast('Kaspa Browser is admin-only.');
+    return;
+  }
+  haptic();
+  appsDocsId = app.id;
+  appsDocsTab = 'overview';
+  ['home', 'studio', 'truth', 'ksocial', 'vprog', 'forge'].forEach(v => {
+    $('app-' + v)?.classList.add('hidden');
+  });
+  paintAppDocs(app);
+  $('app-docs')?.classList.remove('hidden');
+  $('build-back')?.classList.remove('hidden');
+  if ($('build-title')) $('build-title').textContent = app.name;
+}
+
+function launchApp(id) {
+  const view = String(id || '');
+  const app = appCatalog(view);
   if (view === 'ttt') {
     openTtt({ fromApps: true });
     return;
@@ -3695,6 +3843,13 @@ function showBuildApp(name) {
     openKbuild({ fromApps: true });
     return;
   }
+  if (view === 'kasodds') {
+    const url = (app && app.url) || 'https://kasodds.com';
+    const w = window.open(url, '_blank', 'noopener,noreferrer');
+    if (!w) toast('Allow popups to open KasOdds');
+    else toast('KasOdds opened');
+    return;
+  }
   if (view === 'browser') {
     if (!isWalletAdmin()) {
       toast('Kaspa Browser is admin-only.');
@@ -3703,9 +3858,20 @@ function showBuildApp(name) {
     openKaspaBrowser({ fromApps: true });
     return;
   }
+  showBuildApp(view);
+}
+
+function showBuildApp(name) {
+  const view = name || 'home';
+  if (view === 'ttt' || view === 'kasdistro' || view === 'kbuild' || view === 'kasodds' || view === 'browser') {
+    launchApp(view);
+    return;
+  }
+  if (view === 'home') appsDocsId = '';
   ['home', 'studio', 'truth', 'ksocial', 'vprog', 'forge'].forEach(v => {
     $('app-' + v)?.classList.toggle('hidden', v !== view);
   });
+  $('app-docs')?.classList.toggle('hidden', true);
   $('build-back')?.classList.toggle('hidden', view === 'home');
   if ($('build-title')) {
     $('build-title').textContent = view === 'studio' ? 'Faceless Studio'
@@ -12743,6 +12909,12 @@ function bind() {
       closeKsocialThread();
       return;
     }
+    const onHome = !$('app-home')?.classList.contains('hidden');
+    const onDocs = !$('app-docs')?.classList.contains('hidden');
+    if (!onHome && !onDocs && appsDocsId) {
+      showAppDocs(appsDocsId);
+      return;
+    }
     showBuildApp('home');
   });
   click('ksocial-refresh', () => loadKsocialFeed().catch(err => toast(errText(err))));
@@ -12802,8 +12974,23 @@ function bind() {
   click('truth-stamp', () => stampTruth().catch(err => toast(errText(err))));
   click('truth-copy', copyTruthHash);
   $('build-screen')?.addEventListener('click', e => {
+    const openBtn = e.target.closest('[data-app-open]');
+    if (openBtn?.dataset.appOpen) { launchApp(openBtn.dataset.appOpen); return; }
+    const srcBtn = e.target.closest('[data-app-src]');
+    if (srcBtn?.dataset.appSrc) {
+      const w = window.open(srcBtn.dataset.appSrc, '_blank', 'noopener,noreferrer');
+      if (!w) toast('Allow popups to view source');
+      return;
+    }
+    const tabBtn = e.target.closest('[data-app-tab]');
+    if (tabBtn?.dataset.appTab) {
+      appsDocsTab = tabBtn.dataset.appTab;
+      const cur = appCatalog(appsDocsId);
+      if (cur) paintAppDocs(cur);
+      return;
+    }
     const app = e.target.closest('[data-app]');
-    if (app?.dataset.app) { showBuildApp(app.dataset.app); return; }
+    if (app?.dataset.app) { showAppDocs(app.dataset.app); return; }
     const b = e.target.closest('[data-phase]');
     if (b) setBuildPhase(Number(b.dataset.phase));
   });

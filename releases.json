@@ -1,10 +1,20 @@
 {
   "sdk": "178",
-  "build": "278",
+  "build": "279",
   "wallet": "https://kcc-20-wallet.vercel.app",
   "sdkUrl": "https://kcc-20-wallet.vercel.app/sdk.js?v=178",
   "rule": "Every SDK_VERSION bump gets an entry here the same day. Pin sdk.js?v=NNN and require window.kcc20.sdkVersion === that NNN.",
   "entries": [
+    {
+      "date": "2026-09-28",
+      "sdk": "178",
+      "build": "279",
+      "title": "Apps grid — iOS icons, KasOdds, docs then Open App",
+      "breaking": false,
+      "notes": [
+        "You → Apps is a compact 4-up icon grid. Tap an app for a docs sheet (Overview / Features / Workflow / Start), then Open App. KasOdds (kasodds.com) added. Faceless Studio removed from the grid. KBUILD, vProg TTT, and Forge use the official Kaspa mark. Proof of Fact has its own icon."
+      ]
+    },
     {
       "date": "2026-09-28",
       "sdk": "178",

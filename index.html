@@ -24,7 +24,7 @@
   <link rel="icon" href="assets/icon.png">
   <title>KCC20 Wallet — Kaspa L1 covenant wallet</title>
   <meta http-equiv="Cache-Control" content="no-store, no-cache, must-revalidate">
-  <link rel="stylesheet" href="css/app.css?v=219">
+  <link rel="stylesheet" href="css/app.css?v=220">
   <script type="application/ld+json">
   {"@context":"https://schema.org","@type":"SoftwareApplication","name":"KCC20 Wallet","alternateName":["KCC20 wallet","KCC-20 Wallet"],"applicationCategory":"FinanceApplication","operatingSystem":"Web","url":"https://kcc-20-wallet.vercel.app/","image":"https://kcc-20-wallet.vercel.app/assets/icon.png","description":"Non-custodial Kaspa Layer-1 wallet for native KAS, KCC20 covenant tokens, KRC-20, and time-lock vaults. Keys never leave the device.","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"}}
   </script>
@@ -539,7 +539,7 @@
             <span class="you-apps-mark"><img src="assets/ttt.png" alt=""></span>
             <span class="you-apps-copy">
               <b>Apps</b>
-              <em>TTT · KasDistro · KBUILD · Browser · K Social</em>
+              <em>TTT · KasOdds · KasDistro · KBUILD</em>
             </span>
             <span class="chev">›</span>
           </button>
@@ -645,7 +645,7 @@
         <div class="ttt-head">
           <button type="button" class="trade-x" id="kbuild-close">Close</button>
           <h2>KBUILD</h2>
-          <img class="ttt-mark" src="assets/ttt.png" alt="KBUILD">
+          <img class="ttt-mark" src="assets/kas.svg" alt="KBUILD">
         </div>
         <iframe id="kbuild-frame" class="ttt-frame" title="KBUILD" src="kbuild/index.html" allow="clipboard-write"></iframe>
       </div>
@@ -667,55 +667,47 @@
         </div>
 
         <div id="app-home" class="app-home">
-          <p class="build-lede">Open an app. TTT first. KBUILD drafts SilverScript v1 covenants++. KasDistro pays many kaspa:q addresses. K Social is the Kaspa L1 feed. vProg TTT is the Kaspa testing lane for staked tic-tac-toe.</p>
           <div class="app-grid">
             <button type="button" class="app-tile" data-app="ttt">
               <span class="app-ico app-ico-img"><img src="assets/ttt.png" alt=""></span>
               <b>TTT</b>
-              <span>tttz.xyz — Connect with this wallet</span>
             </button>
-            <button type="button" class="app-tile" data-app="kbuild">
-              <span class="app-ico">K</span>
-              <b>KBUILD</b>
-              <span>Vibe economic builder · SilverScript v1 covenants++</span>
-            </button>
-            <button type="button" class="app-tile admin-only hidden" data-app="browser" id="app-tile-browser">
-              <span class="app-ico">◎</span>
-              <b>Kaspa Browser</b>
-              <span>In-wallet chrome · kaspa.org · HTTPS</span>
+            <button type="button" class="app-tile" data-app="kasodds">
+              <span class="app-ico app-ico-img"><img src="assets/kasodds.svg" alt=""></span>
+              <b>KasOdds</b>
             </button>
             <button type="button" class="app-tile" data-app="kasdistro">
               <span class="app-ico app-ico-img"><img src="assets/kasdistro.png" alt=""></span>
               <b>KasDistro</b>
-              <span>kasdistro.com — Connect · pay many wallets</span>
+            </button>
+            <button type="button" class="app-tile" data-app="kbuild">
+              <span class="app-ico app-ico-img app-ico-kas"><img src="assets/kas.svg" alt=""></span>
+              <b>KBUILD</b>
             </button>
             <button type="button" class="app-tile" data-app="ksocial">
-              <span class="app-ico">K</span>
+              <span class="app-ico app-ico-k">K</span>
               <b>K Social</b>
-              <span>Read and post on Kaspa L1</span>
-            </button>
-            <button type="button" class="app-tile" data-app="studio">
-              <span class="app-ico" aria-hidden="true">▶</span>
-              <b>Faceless Studio</b>
-              <span>Topic → script → voice → Ken Burns film</span>
             </button>
             <button type="button" class="app-tile" data-app="truth">
-              <span class="app-ico" aria-hidden="true">#</span>
+              <span class="app-ico app-ico-img"><img src="assets/proof.svg" alt=""></span>
               <b>Proof of Fact</b>
-              <span>SHA-256 AI output → Kaspa payload</span>
             </button>
             <button type="button" class="app-tile" data-app="vprog">
-              <span class="app-ico">✕○</span>
+              <span class="app-ico app-ico-img app-ico-kas"><img src="assets/kas.svg" alt=""></span>
               <b>vProg TTT</b>
-              <span>Kaspa vProgs tic-tac-toe testing lane · TN10</span>
             </button>
             <button type="button" class="app-tile" data-app="forge">
-              <span class="app-ico app-ico-img"><img src="assets/kas.svg" alt=""></span>
-              <b>Wallet Forge</b>
-              <span>Drag primitives · live Scorpion core · export HTML</span>
+              <span class="app-ico app-ico-img app-ico-kas"><img src="assets/kas.svg" alt=""></span>
+              <b>Forge</b>
+            </button>
+            <button type="button" class="app-tile admin-only hidden" data-app="browser" id="app-tile-browser">
+              <span class="app-ico app-ico-img app-ico-kas"><img src="assets/kas.svg" alt=""></span>
+              <b>Browser</b>
             </button>
           </div>
         </div>
+
+        <div id="app-docs" class="app-docs hidden"></div>
 
         <div id="app-forge" class="app-pane hidden">
           <div id="forge-root"></div>
@@ -1013,7 +1005,7 @@
   <script type="module">
     import('./js/iframeVault.js?v=122').then(function (mod) {
       return (mod.restoreIframeVault ? mod.restoreIframeVault() : Promise.resolve()).then(function () {
-        return import('./js/app.js?v=278');
+        return import('./js/app.js?v=279');
       });
     }).catch(function (err) {
       console.error(err);

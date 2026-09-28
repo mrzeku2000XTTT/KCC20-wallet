@@ -372,7 +372,7 @@ async function ensureUnlocked() {
 
 function connectBody(w, req, origin) {
   return '<p class="muted" style="text-align:left;padding:0 0 8px;">This dApp wants a Kaspa address. Pick which of your added wallets to use. Keys stay here.</p>'
-    + '<div class="kv"><span class="k">App</span><span class="v">' + esc(req.name || (String(origin).includes('kasdistro.com') ? 'KasDistro' : (String(origin).includes('tttz.xyz') ? 'TTT' : origin))) + '</span></div>'
+    + '<div class="kv"><span class="k">App</span><span class="v">' + esc(req.name || (String(origin).includes('kasodds.com') ? 'KasOdds' : (String(origin).includes('kasdistro.com') ? 'KasDistro' : (String(origin).includes('tttz.xyz') ? 'TTT' : origin)))) + '</span></div>'
     + '<div class="kv"><span class="k">Wallet</span><span class="v">' + esc(w?.name || 'Wallet') + '</span></div>'
     + '<div class="kv kv-stack"><span class="k">Address</span><span class="v">' + esc(w?.address || '') + '</span></div>'
     + '<div class="kv"><span class="k">Network</span><span class="v">' + esc(netName()) + '</span></div>'

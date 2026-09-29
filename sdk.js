@@ -1,6 +1,6 @@
 /* KCC20 Wallet dApp SDK
    Load from the hosted PWA:
-     <script src="https://kcc-20-wallet.vercel.app/sdk.js?v=178"></script>
+     <script src="https://kcc-20-wallet.vercel.app/sdk.js?v=179"></script>
    Then: await window.kcc20.connect()
    Keys never leave the wallet origin. This script only opens the PWA and talks via postMessage.
    KCC-12 (draft): listens for kaspa:requestProvider and announces kaspa:announceProvider
@@ -12,7 +12,7 @@
 */
 (function (root) {
   'use strict';
-  var SDK_VERSION = '178';
+  var SDK_VERSION = '179';
   if (root.kcc20 && root.kcc20.isKcc20 && String(root.kcc20.sdkVersion || '') === SDK_VERSION) return;
 
   function scriptOrigin() {
@@ -36,6 +36,7 @@
   var hostOrigin = ORIGIN;
   var sessionOrigin = ORIGIN;
   var DOTK_REGISTRY = 'https://kcc20-sdk.vercel.app/dotk-wallets.json';
+  var DOTK_API = 'https://api.dotk.name/v1';
   function dotkName() {
     try { return String(root.KCC20_DOTK || '').trim(); } catch (e) { return ''; }
   }
@@ -45,6 +46,47 @@
       if (r) return r;
     } catch (e) {}
     return 'app.kcc20.wallet';
+  }
+  function bareDotk(name) {
+    var n = String(name || '').trim().toLowerCase();
+    if (!n) return '';
+    return n.replace(/\.k$/i, '');
+  }
+  function displayDotk(name) {
+    var n = bareDotk(name);
+    return n ? n + '.k' : '';
+  }
+  function httpsOrigin(u) {
+    try {
+      var x = new URL(String(u || '').trim());
+      if (x.protocol !== 'https:') return '';
+      if (!x.hostname) return '';
+      return x.origin.replace(/\/+$/, '');
+    } catch (e) { return ''; }
+  }
+  function lookupOfficialDotk(name) {
+    var ident = displayDotk(name);
+    var bare = bareDotk(name);
+    if (!bare) return Promise.resolve(null);
+    return fetch(DOTK_API + '/names/' + encodeURIComponent(bare), {
+      cache: 'no-store',
+      headers: { accept: 'application/json' }
+    }).then(function (r) {
+      if (!r || r.status === 404 || !r.ok) return null;
+      return r.json();
+    }).then(function (body) {
+      if (!body) return null;
+      var rec = (body.card && body.card.records) || body.records || {};
+      return {
+        identity: ident,
+        address: String(body.address || ''),
+        recordsUrl: httpsOrigin(rec.url),
+        primary: !!rec.primary,
+        github: rec['com.github'] || '',
+        records: rec,
+        source: 'records'
+      };
+    }).catch(function () { return null; });
   }
   var pending = {};
   var seq = 1;
@@ -680,7 +722,7 @@
       registry: DOTK_REGISTRY,
       identity: dotkName() || null,
       rdns: walletRdns(),
-      rule: 'connect({ identity, origin }) opens that PWA. discoverWallets() merges the registry.'
+      rule: 'connect({ identity }) opens records.url HOST. Verified when deed owner, records.url, and connected account agree.'
     }),
     forge: Object.freeze({
       name: 'Wallet Forge',
@@ -716,22 +758,72 @@
       }).catch(function () { return []; });
     },
     resolveDotk: function (name) {
-      var want = String(name || '').trim().toLowerCase();
-      if (want && want.indexOf('.') < 0) want += '.k';
-      return api.listDotk().then(function (rows) {
-        var i, row, id;
-        for (i = 0; i < (rows || []).length; i++) {
+      var want = displayDotk(name);
+      if (!want) {
+        return Promise.resolve({ identity: '', origin: '', rdns: '', owner: '', recordsUrl: '', source: 'none' });
+      }
+      return Promise.all([lookupOfficialDotk(want), api.listDotk()]).then(function (pair) {
+        var off = pair[0];
+        var rows = pair[1] || [];
+        var recOrigin = off && off.recordsUrl ? off.recordsUrl : '';
+        var i, row, id, hit = null;
+        for (i = 0; i < rows.length; i++) {
           row = rows[i] || {};
           id = String(row.identity || '').toLowerCase();
           if (id === want || id.replace(/\.k$/, '') === want.replace(/\.k$/, '')) {
-            return {
-              identity: want,
-              origin: String(row.origin || sessionOrigin || ORIGIN).replace(/\/+$/, ''),
-              rdns: row.rdns || ''
-            };
+            hit = row;
+            break;
           }
         }
-        return { identity: want, origin: sessionOrigin || ORIGIN, rdns: walletRdns() };
+        var regOrigin = hit ? httpsOrigin(hit.origin) : '';
+        var origin = recOrigin || regOrigin;
+        return {
+          identity: want,
+          origin: origin,
+          rdns: (hit && hit.rdns) || '',
+          owner: (off && off.address) || '',
+          recordsUrl: recOrigin,
+          source: recOrigin ? 'records' : (regOrigin ? 'registry' : 'none')
+        };
+      });
+    },
+    verifyDotk: function (opts) {
+      opts = opts && typeof opts === 'object' ? opts : {};
+      var name = displayDotk(opts.identity || opts.name || dotkName());
+      var host = httpsOrigin(opts.origin || sessionOrigin || '');
+      var account = String(opts.address || (accounts[0] || '')).toLowerCase();
+      if (!name) {
+        return Promise.resolve({
+          verified: false,
+          identity: '',
+          owner: '',
+          origin: host,
+          recordsUrl: '',
+          account: account,
+          source: 'none',
+          checks: { active: false, https: false, originMatch: false, ownerMatch: false }
+        });
+      }
+      return api.resolveDotk(name).then(function (row) {
+        var owner = String((row && row.owner) || '').toLowerCase();
+        var rec = httpsOrigin((row && row.recordsUrl) || '');
+        var claimed = host || httpsOrigin((row && row.origin) || '');
+        var checks = {
+          active: !!(owner || rec),
+          https: !!rec,
+          originMatch: !!(rec && claimed && rec === claimed),
+          ownerMatch: !!(account && owner && account === owner)
+        };
+        return {
+          verified: !!(checks.active && checks.https && checks.originMatch && checks.ownerMatch),
+          identity: name,
+          owner: (row && row.owner) || '',
+          origin: claimed,
+          recordsUrl: rec,
+          account: account,
+          source: (row && row.source) || 'none',
+          checks: checks
+        };
       });
     },
     connect: function (opts) {
@@ -747,6 +839,9 @@
       else if (opts.identity) {
         prep = api.resolveDotk(opts.identity).then(function (row) {
           if (row && row.origin) return api.useWallet(row.origin);
+          return Promise.reject(new Error(
+            displayDotk(opts.identity) + ' is not discoverable. Official records.url must be the HTTPS HOST (step 12).'
+          ));
         });
       }
       return prep.then(function () {
@@ -1037,6 +1132,7 @@
       if (m === 'discoverWallets') return api.discoverWallets();
       if (m === 'listDotk') return api.listDotk();
       if (m === 'resolveDotk') return api.resolveDotk((p && (p.identity || p.name || p.dotk)) || '');
+      if (m === 'verifyDotk') return api.verifyDotk(p || {});
       if (m === 'useWallet') return api.useWallet((p && (p.origin || p.url)) || p);
       if (m === 'connectDotk') {
         return api.connect({
@@ -1243,6 +1339,9 @@
     if (m === 'forge' || m === 'getForge' || m === 'app.kcc20.wallet_forge') return Promise.resolve(api.forge);
     if (m === 'dotk' || m === 'getDotk' || m === 'getIdentity') return api.getIdentity();
     if (m === 'discoverWallets') return api.discoverWallets();
+    if (m === 'listDotk') return api.listDotk();
+    if (m === 'resolveDotk') return api.resolveDotk((p && (p.identity || p.name || p.dotk)) || '');
+    if (m === 'verifyDotk') return api.verifyDotk(p || {});
     if (m === 'app.kcc20.wallet_buyKron' || m === 'buyKron') return api.buyKron(p);
     if (m === 'app.kcc20.wallet_getActivityLog' || m === 'getActivityLog') return api.getActivityLog(p.address);
     if (m === 'app.kcc20.wallet_sendKas' || m === 'sendKaspa') return api.sendKaspa(p);

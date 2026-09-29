@@ -16,7 +16,7 @@ The name itself is **official Dot.K** on Kaspa L1 (a covenant deed), not a nickn
 Page: https://kcc20-sdk.vercel.app/dotk.html  
 Live dApp: https://kcc20-sdk.vercel.app/dotk-dapp.html
 
-Pin `sdk.js?v=178`.
+Pin `sdk.js?v=179`.
 
 ## Why the first build still looks like Scorpion
 
@@ -26,16 +26,17 @@ The fork **starts** as Scorpion. Steps 1–6 stamp identity, restyle, install as
 - **Step 8** makes Connect open **your** `HOST`, not `kcc-20-wallet.vercel.app`.
 - **Step 9** registers `identity → origin` so any dApp that loaded the official SDK can find you.
 - **Step 10** buys the official `.k` with **this PWA’s Receive address** (`@dotk/sdk-tx`). That deed is who they are.
-- **Step 11** pushes GitHub, deploys Vercel `HOST`, sets `records.url`, then [dotk-dapp.html](https://kcc20-sdk.vercel.app/dotk-dapp.html) Connects that HOST.
+- **Step 11** pushes GitHub, deploys Vercel `HOST`, then [dotk-dapp.html](https://kcc20-sdk.vercel.app/dotk-dapp.html) Connects that HOST.
+- **Step 12** writes official `records.url = HOST` so the `.k` domain is discoverable, and paints **Verified** only when deed owner, HOST, and the connected account agree.
 
 ## dApp: detect `.k` and open THAT PWA
 
 ```html
-<script src="https://kcc-20-wallet.vercel.app/sdk.js?v=178"></script>
+<script src="https://kcc-20-wallet.vercel.app/sdk.js?v=179"></script>
 ```
 
 ```js
-const kcc = window.kcc20; // require kcc.sdkVersion === "178"
+const kcc = window.kcc20; // require kcc.sdkVersion === "179"
 
 const wallets = await kcc.discoverWallets();
 // in-page announces + https://kcc20-sdk.vercel.app/dotk-wallets.json
@@ -43,29 +44,26 @@ const wallets = await kcc.discoverWallets();
 // wallets[].origin    e.g. "https://alice-k.vercel.app"
 // wallets[].rdns      e.g. "k.alice"
 
-await kcc.connect({
-  identity: 'alice.k',
-  origin: 'https://alice-k.vercel.app'   // popup URL = origin/index.html?dapp=1
-});
+await kcc.connect({ identity: 'alice.k' });
+// origin from official records.url, then dotk-wallets.json
 
 const who = await kcc.getIdentity();
 // { name: 'alice.k', address: 'kaspa:q…', rdns }
+
+const v = await kcc.verifyDotk({ identity: 'alice.k' });
+// v.verified === true only when deed owner, records.url, and the connected account agree
 ```
 
-`origin` is the popup host. Pass it whenever you know it. If you only have the name:
-
-```js
-await kcc.connect({ identity: 'alice.k' });
-// resolveDotk() uses discoverWallets() then the registry.
-```
+`origin` is the popup host. Pass it when you already know HOST. If you only have the name, `resolveDotk` reads official `records.url` first, then the registry. A name with no `records.url` and no registry row is **not discoverable** — Connect rejects instead of opening Scorpion.
 
 Helpers:
 
 ```js
 await kcc.listDotk();                 // registry rows
-await kcc.resolveDotk('alice.k');     // { identity, origin, rdns }
+await kcc.resolveDotk('alice.k');     // { identity, origin, rdns, owner, recordsUrl, source }
+await kcc.verifyDotk({ identity: 'alice.k' });
 await kcc.useWallet('https://alice-k.vercel.app');
-await kcc.connectDotk({ identity: 'alice.k', origin: 'https://alice-k.vercel.app' });
+await kcc.connectDotk({ identity: 'alice.k' });
 ```
 
 Inspect the popup address bar. It must be `https://alice-k.vercel.app/index.html?dapp=1`. If it is `kcc-20-wallet.vercel.app`, the dApp loaded Scorpion’s `sdk.js` and never passed `origin` / a registry row.
@@ -86,15 +84,18 @@ A dApp that only loaded Scorpion `sdk.js` still opens a listed Dot.K PWA because
 
 ## How a name identifies the whole wallet
 
-Best binding, three facts that must agree:
+Best binding, four facts that must agree. **Verified** is this match, checked live. Never a badge from localStorage.
 
 1. **Deed owner** — official `addressFor('alice.k')` is the PWA’s Receive `kaspa:` address (the key they created in *that* wallet). Buy in step 10 with no other wallet.
-2. **Signer origin** — `HOST` is the Vercel HTTPS origin of that same PWA. `records.url` and `dotk-wallets.json` both store it.
-3. **Connect** — `kcc20.connect({ identity: 'alice.k', origin: HOST })` pops `HOST/index.html?dapp=1`. After Approve, `getAccounts()[0]` must equal the deed owner.
+2. **Domain record** — official `records.url` is `HOST`, the Vercel HTTPS origin of that same PWA. `saveRecords({ url: HOST, primary: true })` via `@dotk/sdk-tx`. This is how the `.k` name is discoverable as a domain.
+3. **Connect** — `kcc20.connect({ identity: 'alice.k' })` pops `HOST/index.html?dapp=1` because `resolveDotk` read `records.url`. After Approve, `getAccounts()[0]` must equal the deed owner.
+4. **Claim** — `window.KCC20_DOTK === 'alice.k'`, `getIdentity().name` matches, and `/.well-known/dotk.json` on HOST repeats `{ identity, origin, rdns }`.
 
-If those three match, the dApp knows which person, which key, and which PWA. A typed `.k` without origin still uses the registry; a live lookup on `@dotk/sdk` is the chain’s word.
+If 1 holds and 2 is empty they own the name and the wallet is **not discoverable**. A dApp that only knows `alice.k` cannot find HOST.
 
-Live check: https://kcc20-sdk.vercel.app/dotk-dapp.html (Connect DOT.K top right).
+`dotk-wallets.json` is a directory so Scorpion `sdk.js` still lists you. Official `records.url` is the source of truth. `javascript:` and `http:` urls are refused.
+
+Live check: https://kcc20-sdk.vercel.app/dotk-dapp.html — enter only the name, leave origin blank, Lookup fills HOST, Connect, status **Verified**.
 
 ## Registry
 
@@ -125,10 +126,11 @@ Open https://kcc20-sdk.vercel.app/dotk.html#guide and copy **one step at a time*
 | 5 | Vercel HTTPS. iPhone Add to Home Screen. Desktop install. | Standalone icon, Connect works |
 | 6 | Fix pass if install or Connect failed. Do not rewrite `tx.js`. | Installed PWA + PIN sign |
 | 7 | Strip Scorpion chrome: Wallet 1, TRADE KCC20, Compound, A-Trade, KRON 24H. | Screenshot is not kcc-20-wallet.vercel.app |
-| 8 | Connect pops **HOST**. demo-dapp loads HOST/sdk.js?v=178. Popup URL is HOST/index.html?dapp=1. | Address bar is HOST |
+| 8 | Connect pops **HOST**. demo-dapp loads HOST/sdk.js?v=179. Popup URL is HOST/index.html?dapp=1. | Address bar is HOST |
 | 9 | Register `{ identity, rdns, origin: HOST }` in `dotk-wallets.json`. | Official sdk.js + `connect({ identity })` opens HOST |
 | 10 | Buy official `.k` via `@dotk/sdk` + `@dotk/sdk-tx` with **this PWA Receive address**. | `lookup(name).kind === 'active'` and `addressFor === this wallet` |
-| 11 | Push GitHub. Vercel HOST. `records.url = HOST`. Open [dotk-dapp.html](https://kcc20-sdk.vercel.app/dotk-dapp.html). | Connect pops HOST. Prove self-send Approves in their PWA |
+| 11 | Push GitHub. Vercel HOST. Open [dotk-dapp.html](https://kcc20-sdk.vercel.app/dotk-dapp.html). | Connect pops HOST. Prove self-send Approves in their PWA |
+| 12 | `saveRecords({ url: HOST, primary: true })`. `/.well-known/dotk.json`. Verified chip. dApp origin field empty. | Live dApp given only the name pops HOST and shows **Verified** |
 
 Scorpion **unregisters** service workers on purpose. A Dot.K fork **must register** `sw.js` or it will not become a PWA.
 

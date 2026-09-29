@@ -188,9 +188,9 @@
   </header>
 
   <section class="hero">
-    <p class="kicker">Kaspa · sdk 178</p>
+    <p class="kicker">Kaspa · sdk 179</p>
     <h1>Your name.<br><em>Your wallet.</em></h1>
-    <p>alice.k is who you are — an official L1 covenant from dotk.name, owned by the Receive address of the PWA you build. Steps 10–11 buy that name and publish HOST so a dApp can Connect DOT.K.</p>
+    <p>alice.k is who you are — an official L1 covenant from dotk.name, owned by the Receive address of the PWA you build. Step 12 publishes records.url so the name itself is discoverable, and Verified only when deed, HOST, and the connected account agree.</p>
     <div class="cta">
       <a class="btn primary" href="#guide">Step-by-step</a>
       <a class="btn ghost" href="dotk-dapp.html">Connect DOT.K dApp</a>
@@ -223,7 +223,7 @@
 
   <section class="section">
     <h3>dApps ingest .k</h3>
-    <p class="sub">Pin sdk.js?v=178. Discover merges in-page announces with the registry. Connect must pass origin so the popup is their PWA.</p>
+    <p class="sub">Pin sdk.js?v=179. Discover merges announces, official records.url, and the registry. connect({ identity }) opens HOST from the name.</p>
     <div class="split">
       <div class="card">
         <h4>Discover</h4>
@@ -236,21 +236,20 @@
       <div class="card">
         <h4>Connect their PWA</h4>
         <p>Pass origin. The popup URL is HOST/index.html?dapp=1. You receive an address, never a seed.</p>
-        <pre>await kcc20.connect({
-  identity: 'alice.k',
-  origin: 'https://alice-k.vercel.app'
-})
+        <pre>await kcc20.connect({ identity: 'alice.k' })
+// origin comes from records.url, then the registry
 const who = await kcc20.getIdentity()
-// { name, address, rdns }</pre>
+const v = await kcc20.verifyDotk({ identity: 'alice.k' })
+// v.verified === true only when deed, HOST, and account agree</pre>
       </div>
     </div>
     <div class="card" style="margin-top:28px">
       <h4>Official Dot.K — no fakes</h4>
-      <p>A .k name is a Kaspa L1 covenant coin. Register it with <a href="https://github.com/supertypo/dotk-sdk">@dotk/sdk</a> + <a href="https://github.com/supertypo/dotk-sdk-tx">@dotk/sdk-tx</a>. Site <a href="https://dotk.name">dotk.name</a>. API <a href="https://api.dotk.name">api.dotk.name</a>. Never knsdomains.org, never a local JSON name. Buy it from the Receive address of the PWA you are building (step 10). GitHub + Vercel HOST is how the dApp pops you (step 11).</p>
-      <pre>WHO    = deed owner = this PWA kaspa: address
-WHERE  = HOST = Vercel origin
-CONNECT = kcc20.connect({ identity: 'alice.k', origin: HOST })
-PROOF  = addressFor('alice.k') === getAccounts()[0]</pre>
+      <p>A .k name is a Kaspa L1 covenant coin. Register it with <a href="https://github.com/supertypo/dotk-sdk">@dotk/sdk</a> + <a href="https://github.com/supertypo/dotk-sdk-tx">@dotk/sdk-tx</a>. Site <a href="https://dotk.name">dotk.name</a>. API <a href="https://api.dotk.name">api.dotk.name</a>. Never knsdomains.org, never a local JSON name. Buy it from the Receive address of the PWA you are building (step 10). GitHub + Vercel HOST is how the dApp pops you (step 11). Step 12 writes <code>records.url = HOST</code> so the name is discoverable, and paints Verified only when all four facts agree.</p>
+      <pre>WHO       = deed owner = this PWA kaspa: address
+WHERE     = records.url = HOST (https origin)
+CONNECT   = kcc20.connect({ identity: 'alice.k' })  // origin from the name
+VERIFIED  = addressFor === getAccounts()[0] && records.url === HOST</pre>
     </div>
   </section>
 
@@ -258,7 +257,7 @@ PROOF  = addressFor('alice.k') === getAccounts()[0]</pre>
     <h3>Build yours, step by step</h3>
     <p class="sub">Google AI Studio, Cursor, or Replit. One prompt per pass. Wait until that pass is done before the next. Fill step 0 first, then paste it above every later prompt.</p>
     <div class="cta" style="justify-content:flex-start;margin-bottom:28px">
-      <button class="btn primary" type="button" id="copy-all-2">Copy all 12 prompts</button>
+      <button class="btn primary" type="button" id="copy-all-2">Copy all 13 prompts</button>
       <a class="btn ghost" href="https://github.com/mrzeku2000XTTT/KCC20-wallet">Fork Scorpion</a>
       <a class="btn ghost" href="dotk-dapp.html">Connect dApp</a>
       <a class="btn ghost" href="https://github.com/supertypo/dotk-sdk">Official SDK</a>
@@ -267,7 +266,7 @@ PROOF  = addressFor('alice.k') === getAccounts()[0]</pre>
   </section>
 
   <footer>
-    <span>Pin sdk.js?v=178 · <a href="DOTK.md">DOTK.md</a> · <a href="dotk-dapp.html">dApp</a> · <a href="https://github.com/supertypo/dotk-sdk">@dotk/sdk</a></span>
+    <span>Pin sdk.js?v=179 · <a href="DOTK.md">DOTK.md</a> · <a href="dotk-dapp.html">dApp</a> · <a href="https://github.com/supertypo/dotk-sdk">@dotk/sdk</a></span>
     <span>Keys stay in the wallet.</span>
   </footer>
 

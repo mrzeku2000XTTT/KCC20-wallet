@@ -39,8 +39,8 @@ Read [VEYRA.md](./VEYRA.md) before you rename anything.
 6. Change KCC-12 `rdns` from `app.kcc20.wallet` to your reverse-DNS so pickers can list **both** wallets.
 7. Trusted iframe origins (TTT, KasDistro) live in `dappConnect.js` — add yours; do not silently allow every site.
 8. Keep `web+kcc20:` or add your own protocol handler in `manifest.json`.
-9. Ship `sdk.js` from **your** origin. Tell integrators to pin `https://YOURHOST/sdk.js?v=178`.
-10. dApps open you with `connect({ identity: 'alice.k', origin: 'https://YOURHOST' })`. Add a row to [dotk-wallets.json](https://kcc20-sdk.vercel.app/dotk-wallets.json) so `connect({ identity })` without origin still finds you.
+9. Ship `sdk.js` from **your** origin. Tell integrators to pin `https://YOURHOST/sdk.js?v=179`.
+10. dApps open you with `connect({ identity: 'alice.k' })`. Official `records.url` must be HOST (`saveRecords` via `@dotk/sdk-tx`). Add a row to [dotk-wallets.json](https://kcc20-sdk.vercel.app/dotk-wallets.json). Verified only when deed owner, records.url, and the connected account agree. Step 12: [dotk.html#step-verified](https://kcc20-sdk.vercel.app/dotk.html#step-verified).
 11. Replace Scorpion Home chrome (Wallet 1, TRADE KCC20, Compound, A-Trade) unless that is your look. Step-by-step: [dotk.html](https://kcc20-sdk.vercel.app/dotk.html#guide).
 
 Local serve: static files only. WASM `Content-Type` is `application/wasm` (`vercel.json`). `file://` will not load Kaspa WASM.

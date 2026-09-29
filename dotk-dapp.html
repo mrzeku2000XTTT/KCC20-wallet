@@ -32,6 +32,12 @@
     .brand small { color: var(--mut); font-weight: 500; }
     header .right { display: flex; align-items: center; gap: 10px; }
     .who { font-size: 12px; color: var(--mut); max-width: 42vw; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .pill {
+      height: 22px; padding: 0 10px; border-radius: 999px; font: 650 11px/22px inherit;
+      letter-spacing: .04em; text-transform: uppercase; border: 1px solid var(--line);
+      color: var(--mut); background: transparent;
+    }
+    .pill.on { color: #04140f; background: var(--teal); border-color: var(--teal); }
     button, .btn {
       height: 36px; padding: 0 14px; border-radius: 999px; border: 0; cursor: pointer;
       font: 600 13px/1 inherit; color: #000; background: var(--teal);
@@ -76,6 +82,7 @@
       <small>official .k</small>
     </a>
     <div class="right">
+      <span class="pill" id="verified-pill">Unverified</span>
       <span class="who" id="who">Not connected</span>
       <button type="button" id="connect">Connect DOT.K wallet</button>
     </div>
@@ -86,11 +93,11 @@
     <p class="lede">This dApp never holds a key. Official Dot.K says who owns the name. Connect pops <em>their</em> Vercel wallet. They Approve there.</p>
 
     <div class="card">
-      <p class="hint">Buy the name in <b>their</b> PWA (step 10) with that PWA’s Receive address. Publish the fork to GitHub → Vercel (step 11). Paste the Vercel URL as origin.</p>
+      <p class="hint">Step 12: a wallet is <b>discoverable</b> when official <code>records.url</code> is HOST. Leave origin blank — Lookup fills it from the .k name. <b>Verified</b> only when deed owner, records.url, and the connected account agree.</p>
       <label for="identity">.k identity</label>
       <input id="identity" spellcheck="false" placeholder="alice.k" autocomplete="off">
-      <label for="origin">PWA origin (Vercel HTTPS)</label>
-      <input id="origin" spellcheck="false" placeholder="https://alice-k.vercel.app" autocomplete="off">
+      <label for="origin">PWA origin (filled from records.url)</label>
+      <input id="origin" spellcheck="false" placeholder="leave blank — Lookup fills from the name" autocomplete="off">
       <div class="row">
         <button type="button" class="ghost" id="lookup">Lookup official .k</button>
         <button type="button" class="ghost" id="prove" disabled>Prove (self-send)</button>
@@ -100,25 +107,27 @@
 
     <div class="card" id="status-card">
       <div class="kv"><span>Official registry</span><b>api.dotk.name · @dotk/sdk</b></div>
+      <div class="kv"><span>Verified</span><b id="st-verified">—</b></div>
       <div class="kv"><span>Name status</span><b id="st-name">—</b></div>
       <div class="kv"><span>Deed owner</span><b id="st-owner">—</b></div>
       <div class="kv"><span>Connected account</span><b id="st-acc">—</b></div>
       <div class="kv"><span>Match</span><b id="st-match">—</b></div>
       <div class="kv"><span>Popup origin</span><b id="st-origin">—</b></div>
       <div class="kv"><span>Records url</span><b id="st-url">—</b></div>
+      <div class="kv"><span>Discovery</span><b id="st-source">—</b></div>
     </div>
-    <pre id="log">Ready. Pin sdk.js?v=178. Connect only from a click.</pre>
+    <pre id="log">Ready. Pin sdk.js?v=179. Enter a .k name. Lookup fills HOST from records.url. Connect only from a click.</pre>
   </main>
 
   <footer>
-    <span><a href="dotk.html#guide">Steps 10–11</a> · <a href="https://github.com/supertypo/dotk-sdk">@dotk/sdk</a> · <a href="https://github.com/supertypo/dotk-sdk-tx">@dotk/sdk-tx</a> · <a href="https://dotk.name">dotk.name</a></span>
+    <span><a href="dotk.html#step-verified">Step 12</a> · <a href="https://github.com/supertypo/dotk-sdk">@dotk/sdk</a> · <a href="https://github.com/supertypo/dotk-sdk-tx">@dotk/sdk-tx</a> · <a href="https://dotk.name">dotk.name</a></span>
     <span>Keys stay in their wallet.</span>
   </footer>
 
   <script type="importmap">
     { "imports": { "@dotk/sdk": "https://esm.sh/@dotk/sdk@2.0.0" } }
   </script>
-  <script src="https://kcc-20-wallet.vercel.app/sdk.js?v=178"></script>
+  <script src="https://kcc-20-wallet.vercel.app/sdk.js?v=179"></script>
   <script type="module">
     import { Dotk } from '@dotk/sdk';
 
@@ -126,6 +135,7 @@
     const logEl = $('log');
     const dotk = new Dotk();
     let accounts = [];
+    let lastFound = null;
 
     function log(msg, obj) {
       const line = obj !== undefined ? msg + '\n' + JSON.stringify(obj, (_k, v) => typeof v === 'bigint' ? String(v) : v, 2) : msg;
@@ -139,6 +149,35 @@
     function origin() {
       return ($('origin').value || '').trim().replace(/\/+$/, '');
     }
+    function httpsOrigin(u) {
+      try {
+        const x = new URL(String(u || '').trim());
+        if (x.protocol !== 'https:') return '';
+        return x.origin.replace(/\/+$/, '');
+      } catch { return ''; }
+    }
+    function paintVerified(found) {
+      const rec = httpsOrigin(found && found.records && found.records.url);
+      const owner = String((found && found.address) || '').toLowerCase();
+      const acc = String(accounts[0] || '').toLowerCase();
+      const host = httpsOrigin(origin() || (window.kcc20 && window.kcc20.walletOrigin) || '');
+      const active = !!(found && owner);
+      const originOk = !!(rec && host && rec === host);
+      const ownerOk = !!(acc && owner && acc === owner);
+      const verified = active && originOk && ownerOk;
+      const pill = $('verified-pill');
+      pill.textContent = verified ? 'Verified' : 'Unverified';
+      pill.classList.toggle('on', verified);
+      $('st-verified').textContent = verified
+        ? 'Verified — deed, records.url, and connected account agree'
+        : (!active ? 'Not active on api.dotk.name'
+          : (!rec ? 'Owned, not discoverable — set records.url = HOST (step 12)'
+            : (!acc ? 'Lookup ok. Connect to finish Verified'
+              : (!ownerOk ? 'Wrong key — deed owner is a different address'
+                : 'HOST mismatch — records.url is not this origin'))));
+      $('st-verified').className = verified ? 'ok' : 'bad';
+      return verified;
+    }
     function paintSession() {
       const acc = accounts[0] || '';
       $('who').textContent = acc ? acc.slice(0, 18) + '…' : 'Not connected';
@@ -147,6 +186,7 @@
       $('prove').disabled = !acc;
       $('disconnect').disabled = !acc;
       $('connect').textContent = acc ? 'Reconnect DOT.K' : 'Connect DOT.K wallet';
+      paintVerified(lastFound);
     }
     function saveFields() {
       try {
@@ -171,34 +211,41 @@
       try {
         const found = await dotk.resolveName(name);
         const look = await dotk.lookup(name);
+        lastFound = found;
         if (!found || look.kind !== 'active') {
           $('st-name').textContent = look.kind || 'free';
           $('st-owner').textContent = '—';
           $('st-url').textContent = '—';
+          $('st-source').textContent = 'none';
           $('st-match').textContent = 'Buy this name in THEIR PWA (step 10) with that wallet’s Receive address.';
           $('st-match').className = 'bad';
+          paintVerified(null);
           log('Official lookup', { name, kind: look.kind, hint: 'Not active on api.dotk.name. Official only — github.com/supertypo/dotk-sdk' });
           return found;
         }
         const rec = found.records || {};
+        const recOrigin = httpsOrigin(rec.url);
         $('st-name').textContent = found.display + ' · active';
         $('st-owner').textContent = found.address || 'covenant';
-        $('st-url').textContent = rec.url || '(none — set records.url = HOST in step 11)';
-        if (rec.url && !origin()) $('origin').value = String(rec.url).replace(/\/+$/, '');
+        $('st-url').textContent = recOrigin || rec.url || '(none — set records.url = HOST in step 12)';
+        if (recOrigin && !origin()) $('origin').value = recOrigin;
+        $('st-source').textContent = recOrigin ? 'official records.url' : 'name owned, no url';
         const acc = accounts[0] || '';
         if (acc && found.address) {
           const ok = acc.toLowerCase() === String(found.address).toLowerCase();
           $('st-match').textContent = ok ? 'Deed owner is this PWA' : 'Mismatch — they bought the name with a different key';
           $('st-match').className = ok ? 'ok' : 'bad';
         } else {
-          $('st-match').textContent = 'Connect to compare';
-          $('st-match').className = '';
+          $('st-match').textContent = recOrigin ? 'Discoverable. Connect to verify the key.' : 'Connect to compare';
+          $('st-match').className = recOrigin ? 'ok' : '';
         }
+        paintVerified(found);
         log('Official resolveName', {
           display: found.display,
           address: found.address,
           proven: found.proven,
           records: rec,
+          discoverable: !!recOrigin,
           docs: 'https://github.com/supertypo/dotk-sdk'
         });
         return found;
@@ -211,15 +258,29 @@
 
     async function connect() {
       const kcc = window.kcc20;
-      if (!kcc || String(kcc.sdkVersion) !== '178') {
-        log('Need window.kcc20.sdkVersion === "178". Hard-refresh. Pin sdk.js?v=178.');
+      if (!kcc || String(kcc.sdkVersion) !== '179') {
+        log('Need window.kcc20.sdkVersion === "179". Hard-refresh. Pin sdk.js?v=179.');
         return;
       }
       const name = identity();
-      const host = origin();
       if (!name) { log('Enter DOTK_NAME (step 10).'); return; }
+      let host = origin();
+      if (!host) {
+        const found = await lookup();
+        host = httpsOrigin(found && found.records && found.records.url) || origin();
+      }
+      if (!host && kcc.resolveDotk) {
+        try {
+          const row = await kcc.resolveDotk(name);
+          if (row && row.origin) {
+            host = httpsOrigin(row.origin);
+            if (host && !origin()) $('origin').value = host;
+            $('st-source').textContent = (row.source === 'records' ? 'official records.url' : row.source || 'registry');
+          }
+        } catch {}
+      }
       if (!host || !/^https:\/\//i.test(host)) {
-        log('Enter their Vercel HOST (step 11). Example https://alice-k.vercel.app — GitHub push, then Import on Vercel. localhost cannot be a Connect popup for this dApp.');
+        log('Not discoverable. Official records.url must be their Vercel HOST (step 12). saveRecords({ url: HOST, primary: true }). Example https://alice-k.vercel.app');
         return;
       }
       saveFields();
@@ -230,7 +291,8 @@
         paintSession();
         const who = await kcc.getIdentity().catch(() => ({}));
         const net = await kcc.getNetwork().catch(() => '');
-        log('Connected', { accounts, identity: who, network: net, walletOrigin: kcc.walletOrigin, inspect: 'address bar must be ' + host });
+        const v = kcc.verifyDotk ? await kcc.verifyDotk({ identity: name, origin: host, address: accounts[0] }).catch(() => null) : null;
+        log('Connected', { accounts, identity: who, network: net, walletOrigin: kcc.walletOrigin, verifyDotk: v, inspect: 'address bar must be ' + host });
         await lookup();
       } catch (e) {
         log((e && e.message) || String(e));

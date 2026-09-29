@@ -1,10 +1,21 @@
 {
-  "sdk": "178",
+  "sdk": "179",
   "build": "282",
   "wallet": "https://kcc-20-wallet.vercel.app",
-  "sdkUrl": "https://kcc-20-wallet.vercel.app/sdk.js?v=178",
+  "sdkUrl": "https://kcc-20-wallet.vercel.app/sdk.js?v=179",
   "rule": "Every SDK_VERSION bump gets an entry here the same day. Pin sdk.js?v=NNN and require window.kcc20.sdkVersion === that NNN.",
   "entries": [
+    {
+      "date": "2026-09-29",
+      "sdk": "179",
+      "build": "282",
+      "title": "Verified Dot.K — discoverable as records.url",
+      "breaking": false,
+      "notes": [
+        "connect({ identity }) opens official records.url HOST, then the registry. A name with neither is not discoverable — Connect does not fall back to Scorpion.",
+        "verifyDotk({ identity }) is true only when deed owner, records.url, and the connected account agree. Guide step 12. Pin sdk.js?v=179."
+      ]
+    },
     {
       "date": "2026-09-28",
       "sdk": "178",

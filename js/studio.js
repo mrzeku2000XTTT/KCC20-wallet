@@ -1,5 +1,5 @@
 /* Faceless Video Studio — in-phone Ken Burns film, H.264 MP4. */
-import { Muxer, ArrayBufferTarget } from '../vendor/mp4-muxer.mjs';
+import { Muxer, ArrayBufferTarget } from '../vendor/mp4-muxer.mjs?v=1';
 
 const PLACES = [
   'a rain-streaked kitchen window at dusk',

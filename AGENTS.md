@@ -15,6 +15,8 @@ No external credentials needed. The wallet is non-custodial and client-side. The
 ## Gotcha: nginx MIME types
 Do NOT add a `types { ... }` block inside the server/location config — it **replaces** the entire MIME map inherited from `mime.types`, so every file (including index.html) gets served as `application/octet-stream` and the browser downloads the HTML instead of rendering it (blank white preview). For WASM, use `default_type application/wasm;` inside the `\.wasm$` location instead.
 
+`nginx:alpine`'s `mime.types` has `js` but **no `mjs`**, so `.mjs` ES modules were served as `application/octet-stream` and broke the whole module graph (`TypeError: Failed to fetch dynamically imported module`). Fixed with a `location ~* \.mjs$ { default_type application/javascript; }` block. Because `.mjs` did not match the `\.(html|js|css|json)$` no-cache location, its response was also heuristically cached as octet-stream and stuck in browsers — so version every module URL (e.g. `?v=1`), which `js/studio.js` now does for `../vendor/mp4-muxer.mjs?v=1`.
+
 ## Healthcheck
 `wget --spider http://127.0.0.1:3000/index.html` — must use 127.0.0.1 (not localhost, which resolves to IPv6 where nginx doesn't listen).
 

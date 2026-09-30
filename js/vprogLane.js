@@ -1,6 +1,6 @@
 /* TN10 vProg tic-tac-toe carriers — same encoder-wasm as vprogs-tt.izio.fr.
    PIN hex signs. Keys stay in this wallet. */
-import { loadKaspaSdk, connectPublicNode, fetchAddressUtxos } from './tx.js?v=232';
+import { loadKaspaSdk, connectPublicNode, fetchAddressUtxos } from './tx.js?v=233';
 import { isTestnet, networkId, validateAndCleanUtxo } from './crypto.js?v=100';
 import initEncoder, {
   UtxoCandidate, create_game_tx, join_game_tx, turn_tx, network_params, my_ids

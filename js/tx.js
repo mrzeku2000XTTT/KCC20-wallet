@@ -1309,14 +1309,30 @@ function prepInputs(tx, { sigOpCount, computeBudget }) {
   }
 }
 
+function addrFromOutput(k, o) {
+  const net = networkId();
+  try {
+    const a = k.addressFromScriptPublicKey(o.scriptPublicKey, net);
+    if (a) return String(a);
+  } catch {}
+  if (net !== 'mainnet') {
+    try {
+      const a = k.addressFromScriptPublicKey(o.scriptPublicKey, 'mainnet');
+      if (a) return String(a);
+    } catch {}
+  }
+  return '';
+}
+
+function outputPays(k, o, want) {
+  return payloadOfKaspaAddr(addrFromOutput(k, o)) === payloadOfKaspaAddr(want);
+}
+
 function bindCovenantOutputs(k, tx, destStr) {
   const idxs = [];
   const outs = tx.outputs;
   for (let i = 0; i < outs.length; i++) {
-    try {
-      const a = k.addressFromScriptPublicKey(outs[i].scriptPublicKey, 'mainnet');
-      if (String(a) === destStr) idxs.push(i);
-    } catch {}
+    if (outputPays(k, outs[i], destStr)) idxs.push(i);
   }
   if (!idxs.length) idxs.push(0);
   tx.populateGenesisCovenants([new k.GenesisCovenantGroup(0, idxs)]);
@@ -1388,22 +1404,29 @@ function assertSimpleSendOutputs(k, tx, destStr, changeAddr, isFinal = true) {
   const addrs = [];
   for (const o of outs) {
     if (BigInt(o.value) <= 0n) throw new Error('Refusing to sign: non-positive output');
-    let a = '';
-    try { a = String(k.addressFromScriptPublicKey(o.scriptPublicKey, 'mainnet')); } catch {}
+    const a = addrFromOutput(k, o);
     if (!a) throw new Error('Refusing to sign: output address could not be decoded');
     addrs.push(a);
   }
   if (!isFinal) {
     for (const a of addrs) {
-      if (a !== changeAddr) throw new Error('Refusing to sign: intermediate output is not change');
+      if (payloadOfKaspaAddr(a) !== payloadOfKaspaAddr(changeAddr)) {
+        throw new Error('Refusing to sign: intermediate output is not change');
+      }
     }
     return;
   }
-  const allowed = new Set([destStr, changeAddr]);
+  const destPay = payloadOfKaspaAddr(destStr);
+  const changePay = payloadOfKaspaAddr(changeAddr);
   for (const a of addrs) {
-    if (!allowed.has(a)) throw new Error('Refusing to sign: unauthorized output to ' + a);
+    const p = payloadOfKaspaAddr(a);
+    if (p !== destPay && p !== changePay) {
+      throw new Error('Refusing to sign: unauthorized output to ' + a);
+    }
   }
-  if (!addrs.includes(destStr)) throw new Error('Refusing to sign: missing recipient output');
+  if (!addrs.some(a => payloadOfKaspaAddr(a) === destPay)) {
+    throw new Error('Refusing to sign: missing recipient output');
+  }
 }
 
 async function submitSignedRpc(k, rpc, url, tx, { sigOpCount, computeBudget, lockTime, scripts }) {
@@ -1798,10 +1821,7 @@ function shrinkOutputsForFee(tx, extra, protectIndex = -1) {
 function destOutputIndex(k, tx, destStr) {
   const outs = tx.outputs;
   for (let i = 0; i < outs.length; i++) {
-    try {
-      const a = String(k.addressFromScriptPublicKey(outs[i].scriptPublicKey, 'mainnet'));
-      if (a === destStr) return i;
-    } catch {}
+    if (outputPays(k, outs[i], destStr)) return i;
   }
   return 0;
 }

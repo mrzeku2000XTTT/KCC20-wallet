@@ -1,10 +1,20 @@
 {
   "sdk": "179",
-  "build": "282",
+  "build": "283",
   "wallet": "https://kcc-20-wallet.vercel.app",
   "sdkUrl": "https://kcc-20-wallet.vercel.app/sdk.js?v=179",
   "rule": "Every SDK_VERSION bump gets an entry here the same day. Pin sdk.js?v=NNN and require window.kcc20.sdkVersion === that NNN.",
   "entries": [
+    {
+      "date": "2026-09-29",
+      "sdk": "179",
+      "build": "283",
+      "title": "TN10 send signs the real kaspatest: destination",
+      "breaking": false,
+      "notes": [
+        "sendKas output allowlist decoded every output as mainnet kaspa:, so TN10 Create Agent / dApp sends refused the kaspatest: payee. Compare by address payload on the active network."
+      ]
+    },
     {
       "date": "2026-09-29",
       "sdk": "179",

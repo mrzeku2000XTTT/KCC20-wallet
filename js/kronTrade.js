@@ -1,7 +1,7 @@
 /* KRON DEX trades via @kronsdk/kron-sdk (v0.18.2). Quotes + builders from the SDK;
    templates via fetchCpTemplates (recipient-bound ABI); live heads from idx + last trade UTXO. */
 import * as kron from '../vendor/kron-sdk/index.js';
-import { loadKaspaSdk, connectPublicNode, disconnectRpc, fetchAddressUtxos, toRpcTransaction } from './tx.js?v=232';
+import { loadKaspaSdk, connectPublicNode, disconnectRpc, fetchAddressUtxos, toRpcTransaction } from './tx.js?v=233';
 import { kaswareSigning, signPsktWithKasware, fetchKaswareUtxos, repairSafeJson } from './kasware.js?v=220';
 import { kaspaRestBase } from './crypto.js?v=100';
 

@@ -26,7 +26,7 @@ import {
   spendSilverVault, isSilverScriptVault,
   disconnectRpc, buildDcaDrips, sendKasMany, releaseDcaDrip, cancelDcaDrip, isMassError,
   signPsktJson
-} from './tx.js?v=232';
+} from './tx.js?v=233';
 import { bootDappConnect, pingTttDappFrame, pingKasdistroDappFrame, TTT_TREASURY, listConnectedSites, disconnectSite, disconnectAllSites, dappSourceOrigin } from './dappConnect.js?v=208';
 import { changenowEstimate, changenowCreate, changenowWidgetUrl, cnFrom } from './changenow.js?v=180';
 import { schedulePersistIframeVault, bootIframeVaultWatch } from './iframeVault.js?v=122';
@@ -83,7 +83,7 @@ import { loadVprogLobby, renderVprogLobby, bindVprogLobby, startVprogPoll, stopV
 import { vprogCreate, vprogJoin, vprogTurn } from './vprogLane.js?v=1';
 import { bootWalletForge } from './walletForge.js?v=4';
 
-export const BUILD = '282';
+export const BUILD = '283';
 const DESK_ID_KEY = 'kcc20_desk_id_v1';
 const DESK_VAULT_KEY = 'kcc20_desk_vault_v1';
 

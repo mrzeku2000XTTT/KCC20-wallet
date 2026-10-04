@@ -1,10 +1,20 @@
 {
   "sdk": "179",
-  "build": "286",
+  "build": "287",
   "wallet": "https://kcc-20-wallet.vercel.app",
   "sdkUrl": "https://kcc-20-wallet.vercel.app/sdk.js?v=179",
   "rule": "Every SDK_VERSION bump gets an entry here the same day. Pin sdk.js?v=NNN and require window.kcc20.sdkVersion === that NNN.",
   "entries": [
+    {
+      "date": "2026-10-04",
+      "sdk": "179",
+      "build": "287",
+      "title": "Argent time capsules lock TN10 KAS",
+      "breaking": false,
+      "notes": [
+        "Dated locks and other P2SH vaults encode kaspatest:p on testnet-10. Lock / Sweep / balance refresh accept that prefix. Owner envelopes already did."
+      ]
+    },
     {
       "date": "2026-10-04",
       "sdk": "179",

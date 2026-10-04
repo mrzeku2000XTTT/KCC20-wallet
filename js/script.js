@@ -1,6 +1,6 @@
 /* Local Kaspa redeem-script + P2SH address construction. */
-import { hexToBytes, bytesToHex, concatBytes, kaspaAddressFromScriptHash, kaspaCashaddrDecode, validateKaspaAddress } from './crypto.js?v=90';
-import { loadCryptoLibs } from './crypto.js?v=90';
+import { hexToBytes, bytesToHex, concatBytes, kaspaAddressFromScriptHash, kaspaCashaddrDecode, validateKaspaAddress, networkId } from './crypto.js?v=101';
+import { loadCryptoLibs } from './crypto.js?v=101';
 
 export const OP = {
   FALSE: 0x00, IF: 0x63, ELSE: 0x67, ENDIF: 0x68,
@@ -64,7 +64,7 @@ export function pubkeyFromWallet(wallet) {
 }
 
 export function payloadFromAddress(addr) {
-  const v = validateKaspaAddress(addr, 'mainnet');
+  const v = validateKaspaAddress(addr, networkId());
   if (!v.isValid) return null;
   const d = kaspaCashaddrDecode(addr);
   return d ? d.payloadBytes : null;

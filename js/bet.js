@@ -103,7 +103,7 @@ export function decodeBetNotice(text) {
   if (p.length >= 8) {
     const vaultAddr = withKaspaPrefix(p[5]);
     const userAddr = withKaspaPrefix(p[6]);
-    if (vaultAddr.startsWith('kaspa:p') && userAddr.startsWith('kaspa:q')) {
+    if (/^kaspa(test)?:p/i.test(vaultAddr) && /^kaspa(test)?:q/i.test(userAddr)) {
       row.vaultAddr = vaultAddr;
       row.userAddr = userAddr;
       row.unlockDaa = Number(p[7] || 0);

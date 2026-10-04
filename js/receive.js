@@ -1,6 +1,6 @@
 /* KaChing-style fresh receive addresses. Keys stay on-device. */
 import { generatePrivateKey, createKeypairFromHex } from './crypto.js?v=90';
-import { buildPrivacyAddress } from './script.js?v=77';
+import { buildPrivacyAddress } from './script.js?v=91';
 
 function rid() {
   try { return crypto.randomUUID(); } catch { return String(Date.now()) + Math.random().toString(16).slice(2); }

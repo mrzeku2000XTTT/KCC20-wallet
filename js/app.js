@@ -3,8 +3,8 @@ import {
   isValidKaspaAddress, validateKaspaAddress, shortAddr, hexToBytes, privKeyToHex,
   derivePublicKey, kaspaAddressFromPubkey, bytesToHex, kasToSompi, sompiToKasString,
   validateAndCleanUtxo, networkId, isTestnet, setNetworkId, applyWalletNetwork, kaspaRestBase, pubkeyToAddress,
-  addrPayload, sameAddrPayload
-} from './crypto.js?v=100';
+  addrPayload, sameAddrPayload, isKaspaAddr, isP2shAddr, reprefixKaspaAddr
+} from './crypto.js?v=101';
 import {
   NATIVE_KAS, VAULT_PRODUCTS, loadWatchlist, addToken, removeToken,
   loadVaults, saveVault, updateVault, deleteVault, purgeVaultsWhere, formatAmount, formatTokenUnits, tokenColor,
@@ -14,8 +14,8 @@ import {
 } from './kcc20.js?v=127';
 import { parseIntent, describeIntent, askFor, parseDurationField, interpretVaultChat, normalizeChat, normalizeVaultType, collectKasAmount } from './intent.js?v=127';
 import { parse as parseSilArtifact, redeemHex as silRedeemHex, matchSilverIntent } from './silverscript.js?v=187';
-import { payloadFromAddress } from './script.js?v=90';
-import { explainTransaction, scorpionAnswer } from './scorpion.js?v=114';
+import { payloadFromAddress } from './script.js?v=91';
+import { explainTransaction, scorpionAnswer } from './scorpion.js?v=115';
 import {
   sendKas, fetchAddressUtxos, fetchAddressBalance, loadKaspaSdk,
   buildTimelockCovenant, buildOwnerEnvelope, buildEscrowCovenant, buildBetEscrowCovenant, buildMultisigCovenant, currentDaa,
@@ -26,7 +26,7 @@ import {
   spendSilverVault, isSilverScriptVault,
   disconnectRpc, buildDcaDrips, sendKasMany, releaseDcaDrip, cancelDcaDrip, isMassError,
   signPsktJson
-} from './tx.js?v=233';
+} from './tx.js?v=234';
 import { bootDappConnect, pingTttDappFrame, pingKasdistroDappFrame, TTT_TREASURY, listConnectedSites, disconnectSite, disconnectAllSites, dappSourceOrigin } from './dappConnect.js?v=208';
 import {
   changenowWidgetUrl, cnPayoutOk, bootNowStepper, KASPACOM_SWAP
@@ -42,11 +42,11 @@ import {
   betProtocolFee, BET_FEE_BPS, betIdFromAddr, betIdFromTxid, encodeBetNotice, fetchPublicBetTape,
   poolFromTape, mergeTapeAndLocal, userPubFromAddr, marketId,
   betDecimals, betMinStake, betStakeStep, humanTokenBalance, snapBetStake
-} from './bet.js?v=135';
+} from './bet.js?v=136';
 import {
   migrateReceiveBook, ownedAddresses, markAddressUsed, currentReceive,
   deriveReceiveBatch, unusedReceiveCount, ensurePrivacyBook
-} from './receive.js?v=90';
+} from './receive.js?v=91';
 import { knsResolve, knsPrimary, knsDomainsFor, knsOwnerMatches, knsAppUrl, looksLikeKasDomain, normalizeKasDomain } from './kns.js?v=89';
 import { runPhoneStudio, runServerStudio } from './studio.js?v=89';
 import { safeSetItem, bootReclaim } from './storage.js?v=1';
@@ -85,7 +85,7 @@ import { loadVprogLobby, renderVprogLobby, bindVprogLobby, startVprogPoll, stopV
 import { vprogCreate, vprogJoin, vprogTurn } from './vprogLane.js?v=1';
 import { bootWalletForge } from './walletForge.js?v=4';
 
-export const BUILD = '286';
+export const BUILD = '287';
 const DESK_ID_KEY = 'kcc20_desk_id_v1';
 const DESK_VAULT_KEY = 'kcc20_desk_vault_v1';
 
@@ -1729,6 +1729,16 @@ async function dappCompileVault(spec) {
   };
 }
 
+function bindVaultNetwork(vault) {
+  if (!vault?.address) return vault;
+  const next = reprefixKaspaAddr(vault.address);
+  if (!next || next === vault.address) return vault;
+  deleteVault(vault.address);
+  vault.address = next;
+  saveVault(vault);
+  return vault;
+}
+
 async function fundVaultsMany(vaults, opts = {}) {
   if (!vaults?.length) throw new Error('Argent 2 needs at least one vault');
   if (vaults.length === 1) return fundVault(vaults[0], opts);
@@ -1743,6 +1753,7 @@ async function fundVaultsMany(vaults, opts = {}) {
     }
   }
   const outputs = vaults.map((v) => {
+    bindVaultNetwork(v);
     const amt = Number(v.params?.amountKas);
     if (!(amt > 0)) throw new Error('Each Argent 2 vault needs a real amountKas');
     return { address: v.address, amount: kasToSompi(amt) };
@@ -3378,11 +3389,11 @@ function summarizeTx(tx, myAddr) {
   const received = outputs.filter(o => outputAddr(o) === myAddr).reduce((a, o) => a + sompiOf(o.amount), 0);
   const toOthers = outputs.filter(o => outputAddr(o) && outputAddr(o) !== myAddr);
   const sentToOthers = toOthers.reduce((a, o) => a + sompiOf(o.amount), 0);
-  const p2shOut = toOthers.find(o => String(outputAddr(o)).startsWith('kaspa:p'));
-  const p2shIn = inputs.some(i => String(inputAddr(i)).startsWith('kaspa:p'));
+  const p2shOut = toOthers.find(o => isP2shAddr(outputAddr(o)));
+  const p2shIn = inputs.some(i => isP2shAddr(inputAddr(i)));
   const feeRaw = spent > 0 ? Math.max(0, spent - received - sentToOthers) : 0;
   const fee = feeRaw > 0 && feeRaw < 50_000_000_000 ? feeRaw : 0;
-  const vaultIn = inputs.filter(i => String(inputAddr(i)).startsWith('kaspa:p')).reduce((a, i) => a + inputAmt(i), 0);
+  const vaultIn = inputs.filter(i => isP2shAddr(inputAddr(i))).reduce((a, i) => a + inputAmt(i), 0);
   const sweepFee = p2shIn && vaultIn > received ? vaultIn - received : 0;
   if (p2shIn && received > 0) {
     return { label: 'Unlocked', dir: 'in', amount: received, fee: sweepFee, note: 'back to wallet' };
@@ -5012,7 +5023,7 @@ function renderProfile() {
   const addr = wallet.address || '';
   if ($('profile-addr')) $('profile-addr').textContent = addr;
   if ($('profile-bal')) $('profile-bal').textContent = formatAmount(balanceSompi);
-  if ($('profile-script')) $('profile-script').textContent = String(addr).startsWith('kaspa:p') ? 'P2SH' : 'P2PK';
+  if ($('profile-script')) $('profile-script').textContent = isP2shAddr(addr) ? 'P2SH' : 'P2PK';
   if ($('profile-name')) $('profile-name').innerHTML = walletTitleHtml(wallet);
   paintYouLook();
   if ($('profile-utxos')) {
@@ -10044,7 +10055,7 @@ async function refreshVaultBalances() {
   } catch {}
   const mine = loadVaults();
   for (const v of mine) {
-    if (!v.address || !v.address.startsWith('kaspa:')) continue;
+    if (!v.address || !isKaspaAddr(v.address)) continue;
     try {
       const bal = Number(await fetchAddressBalance(v.address)) || 0;
       const optimistic = vaultLockedSompi(v);
@@ -11848,8 +11859,8 @@ async function buildCovenant(p, explicit, opts = {}) {
     } else {
       throw new Error('This product is not a fundable covenant yet');
     }
-    if (!String(built.address).startsWith('kaspa:p')) {
-      throw new Error('Expected a covenant P2SH (kaspa:p…) got ' + built.address);
+    if (!isP2shAddr(built.address)) {
+      throw new Error('Expected a covenant P2SH (kaspa:p / kaspatest:p) got ' + built.address);
     }
     const life = p.type === 'life';
     if (life && (payload.lifeKind === 'control' || /^control$/i.test(String(payload.lifeLabel || p.name || '')))) {
@@ -11892,6 +11903,7 @@ async function buildCovenant(p, explicit, opts = {}) {
 }
 
 function openVaultReady(vault) {
+  bindVaultNetwork(vault);
   const amt = Number(vault.params?.amountKas) || 0;
   const feeEst = 0.0045;
   openSheet('Covenant ready', `
@@ -11923,6 +11935,7 @@ function openVaultReady(vault) {
 
 async function fundVault(vault, opts = {}) {
   const silent = !!opts.silent;
+  bindVaultNetwork(vault);
   const amt = vault.params?.amountKas;
   if (amt == null || amt === '') throw new Error('Missing amount');
   if (!wallet?.address) throw new Error('No wallet');

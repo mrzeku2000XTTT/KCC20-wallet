@@ -1,7 +1,7 @@
 /* Scorpion — local covenant++ translator. Turns Kaspa txs into plain English. */
 
-const P2SH = /^kaspa:p/i;
-const P2PK = /^kaspa:q/i;
+const P2SH = /^kaspa(test)?:p/i;
+const P2PK = /^kaspa(test)?:q/i;
 const TXID_RE = /\b[0-9a-fA-F]{64}\b/;
 
 function n(v) {

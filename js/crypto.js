@@ -149,8 +149,31 @@ export function applyWalletNetwork(wallet, network) {
   return wallet;
 }
 
-export function kaspaAddressFromScriptHash(scriptHash32) {
-  return kaspaCashaddrEncode('kaspa', 8, scriptHash32);
+export function kaspaAddressFromScriptHash(scriptHash32, network) {
+  const prefix = (network || networkId()) === 'testnet-10' ? 'kaspatest' : 'kaspa';
+  return kaspaCashaddrEncode(prefix, 8, scriptHash32);
+}
+
+export function isKaspaAddr(addr) {
+  return /^(kaspa|kaspatest|kaspadev):[a-z0-9]{20,}$/i.test(String(addr || '').trim());
+}
+
+export function isP2shAddr(addr) {
+  return /^(kaspa|kaspatest|kaspadev):p/i.test(String(addr || '').trim());
+}
+
+export function isP2pkAddr(addr) {
+  return /^(kaspa|kaspatest|kaspadev):q/i.test(String(addr || '').trim());
+}
+
+/** Cashaddr checksum includes the HRP — swap prefix by re-encoding the payload. */
+export function reprefixKaspaAddr(addr, network) {
+  const trimmed = String(addr || '').trim();
+  const d = kaspaCashaddrDecode(trimmed);
+  if (!d?.payloadBytes) return trimmed;
+  const prefix = (network || networkId()) === 'testnet-10' ? 'kaspatest' : 'kaspa';
+  if (d.prefix === prefix) return trimmed;
+  return kaspaCashaddrEncode(prefix, d.versionByte, d.payloadBytes);
 }
 
 const NETWORK_HRP = {
@@ -190,7 +213,7 @@ export function isValidKaspaAddress(addrStr, network = networkId()) {
 }
 
 /** P2PK = 20 <32-byte x-only> ac. P2SH = aa 20 <32-byte script hash> 87. */
-export function addressToScriptPublicKeyBytes(addrStr, network = 'mainnet') {
+export function addressToScriptPublicKeyBytes(addrStr, network = networkId()) {
   const v = validateKaspaAddress(addrStr, network);
   if (!v.isValid) throw new Error(`Invalid address or network mismatch: ${v.error || 'validation failed'}`);
   const payload = v.payloadBytes;

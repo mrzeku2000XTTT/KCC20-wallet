@@ -3,12 +3,16 @@ import {
   hexToBytes, kaspaAddressFromScriptHash, validateKaspaAddress,
   validateAndCleanUtxo, deepCloneAndFreeze, kasToSompi,
   kaspaRestBase, networkId, kaspaAddressFromPubkey
-} from './crypto.js?v=90';
+} from './crypto.js?v=101';
 import { parse as parseSilArtifact, encodeEntry, redeemHex as silRedeemHex, encodeKcc01, toSig65 as silToSig65, SEARCH_DISPATCH_TAGS } from './silverscript.js?v=187';
 import { kaswareSigning, sendKaspaWithKasware, sendKrc20WithKasware, signPsktWithKasware, fetchKaswareUtxos, repairSafeJson, kaswareEnabled, isKaswareInstalled, liveKaswareAccount } from './kasware.js?v=220';
 import * as kron from '../vendor/kron-sdk/index.js';
 
 function API() { return kaspaRestBase(); }
+
+function wasmNet() {
+  return networkId() === 'testnet-10' ? 'testnet-10' : 'mainnet';
+}
 
 function cleanPrivHex(raw) {
   const s = String(raw || '').replace(/^0x/i, '').replace(/\s/g, '');
@@ -222,7 +226,7 @@ export async function buildTimelockCovenant({ pubkeyHex, minutes }) {
   sb.addOp(k.Opcodes.OpCheckSig);
   const redeemHex = sb.toString();
   const p2sh = sb.createPayToScriptHashScript();
-  const addr = k.addressFromScriptPublicKey(p2sh, 'mainnet');
+  const addr = k.addressFromScriptPublicKey(p2sh, wasmNet());
   if (!addr) throw new Error('SDK did not produce a P2SH address');
   return {
     address: String(addr),
@@ -246,7 +250,7 @@ export async function buildEscrowCovenant({ ownerPubHex, buyerPubHex }) {
   sb.addOp(k.Opcodes.OpEndif);
   const redeemHex = sb.toString();
   const p2sh = sb.createPayToScriptHashScript();
-  const addr = k.addressFromScriptPublicKey(p2sh, 'mainnet');
+  const addr = k.addressFromScriptPublicKey(p2sh, wasmNet());
   return { address: String(addr), redeemHex, spkHex: p2sh.script, type: 'escrow' };
 }
 
@@ -298,7 +302,7 @@ export async function buildMultisigCovenant({ ownerPubHex, otherPubHex }) {
   sb.addOp(k.Opcodes.OpCheckSig);
   const redeemHex = sb.toString();
   const p2sh = sb.createPayToScriptHashScript();
-  const addr = k.addressFromScriptPublicKey(p2sh, 'mainnet');
+  const addr = k.addressFromScriptPublicKey(p2sh, wasmNet());
   return { address: String(addr), redeemHex, spkHex: p2sh.script, type: 'multisig' };
 }
 
@@ -982,7 +986,7 @@ export async function p2shFromRedeemHex(redeemHex) {
   if (!hex || hex.length < 40) throw new Error('Redeem script is too short');
   const sb = k.ScriptBuilder.fromScript(hexToBytes(hex));
   const p2sh = sb.createPayToScriptHashScript();
-  const addr = k.addressFromScriptPublicKey(p2sh, 'mainnet');
+  const addr = k.addressFromScriptPublicKey(p2sh, wasmNet());
   if (!addr) throw new Error('SDK did not produce a P2SH address');
   return {
     address: String(addr),
@@ -1677,8 +1681,8 @@ export async function reconstructTimelockRedeem(vault, pubkeyHex) {
   sb.addData(hexToBytes(pubkeyHex));
   sb.addOp(k.Opcodes.OpCheckSig);
   const redeem = sb.toString();
-  const addr = String(k.addressFromScriptPublicKey(sb.createPayToScriptHashScript(), 'mainnet'));
-  if (addr !== vault.address) return null;
+  const addr = String(k.addressFromScriptPublicKey(sb.createPayToScriptHashScript(), wasmNet()));
+  if (payloadOfKaspaAddr(addr) !== payloadOfKaspaAddr(vault.address)) return null;
   return redeem;
 }
 
@@ -2630,8 +2634,8 @@ export async function sendKrc20({ wallet, dest, tick, amtRaw, utxos, onStatus })
   const json = JSON.stringify({ p: 'krc-20', op: 'transfer', tick: ticker, amt, to: dest });
   const script = buildKrc20Script(k, xonly, json);
   const p2sh = script.createPayToScriptHashScript();
-  const p2shAddr = String(k.addressFromScriptPublicKey(p2sh, 'mainnet'));
-  if (!p2shAddr.startsWith('kaspa:p')) throw new Error('Failed to build Kasplex P2SH');
+  const p2shAddr = String(k.addressFromScriptPublicKey(p2sh, wasmNet()));
+  if (!/^kaspa(test)?:p/i.test(p2shAddr)) throw new Error('Failed to build Kasplex P2SH');
 
   const pending = loadKrc20Pending(wallet.address);
   let commitTxId = pending && pending.p2shAddr === p2shAddr ? pending.commitTxId : '';
@@ -2662,7 +2666,7 @@ export async function sendKrc20({ wallet, dest, tick, amtRaw, utxos, onStatus })
 }
 
 function isKrcDest(dest) {
-  return typeof dest === 'string' && /^kaspa:[a-z0-9]{20,}$/i.test(dest.trim());
+  return typeof dest === 'string' && /^kaspa(test)?:[a-z0-9]{20,}$/i.test(dest.trim());
 }
 
 async function revealKrc20({ k, wallet, priv, script, p2shAddr, revealUtxos }) {
@@ -3471,7 +3475,7 @@ export async function lockKcc20Timelock({ wallet, tick, amountHuman, decimals, m
   const tokenOutSum = layout.tokenOutSum;
 
   const lockedRedeem = materializeKcc20Script(tpl, next[0]);
-  const tokenScriptAddress = String(k.addressFromScriptPublicKey(k.payToScriptHashScript(lockedRedeem), 'mainnet') || '');
+  const tokenScriptAddress = String(k.addressFromScriptPublicKey(k.payToScriptHashScript(lockedRedeem), wasmNet()) || '');
   const tokenOuts = next.map((st, i) => ({
     value: tokenKas[i],
     spk: k.payToScriptHashScript(materializeKcc20Script(tpl, st))
@@ -3485,7 +3489,7 @@ export async function lockKcc20Timelock({ wallet, tick, amountHuman, decimals, m
       index: p.index,
       amount: p.value,
       scriptPublicKey: spk,
-      address: String(k.addressFromScriptPublicKey(spk, 'mainnet') || ''),
+      address: String(k.addressFromScriptPublicKey(spk, wasmNet()) || ''),
       signatureScript: transferSigScript(k, redeem, next, witnesses),
       computeBudget: 100
     });
@@ -3670,7 +3674,7 @@ export async function sweepKcc20Capsule({ wallet, vault, utxos, onStatus, escrow
       index: p.index,
       amount: p.value,
       scriptPublicKey: spk,
-      address: String(k.addressFromScriptPublicKey(spk, 'mainnet') || ''),
+      address: String(k.addressFromScriptPublicKey(spk, wasmNet()) || ''),
       signatureScript: transferSigScript(k, redeem, next, witnesses),
       computeBudget: 100
     });

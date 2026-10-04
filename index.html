@@ -24,7 +24,7 @@
   <link rel="icon" href="assets/icon.png">
   <title>KCC20 Wallet — Kaspa L1 covenant wallet</title>
   <meta http-equiv="Cache-Control" content="no-store, no-cache, must-revalidate">
-  <link rel="stylesheet" href="css/app.css?v=223">
+  <link rel="stylesheet" href="css/app.css?v=224">
   <script type="application/ld+json">
   {"@context":"https://schema.org","@type":"SoftwareApplication","name":"KCC20 Wallet","alternateName":["KCC20 wallet","KCC-20 Wallet"],"applicationCategory":"FinanceApplication","operatingSystem":"Web","url":"https://kcc-20-wallet.vercel.app/","image":"https://kcc-20-wallet.vercel.app/assets/icon.png","description":"Non-custodial Kaspa Layer-1 wallet for native KAS, KCC20 covenant tokens, KRC-20, and time-lock vaults. Keys never leave the device.","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"}}
   </script>
@@ -929,6 +929,16 @@
         <div class="now-widget" id="now-widget">
           <iframe id="iframe-widget" title="KaspaCom swap powered by ChangeNOW" sandbox="allow-scripts allow-same-origin allow-forms allow-popups allow-popups-to-escape-sandbox" allow="clipboard-write"></iframe>
         </div>
+        <div class="now-art" id="now-art">
+          <img class="now-art-mark" src="assets/kaspacom.png" alt="">
+          <div class="now-art-pills">
+            <span>No KYC</span>
+            <span>Non-custodial</span>
+            <span>850+ coins</span>
+            <span>Under 5 min</span>
+          </div>
+          <p class="now-art-copy">KaspaCom · ChangeNOW</p>
+        </div>
       </div>
 
       <div class="trade-screen hidden" id="kron-board" aria-hidden="true">
@@ -1057,7 +1067,7 @@
   <script type="module">
     import('./js/iframeVault.js?v=122').then(function (mod) {
       return (mod.restoreIframeVault ? mod.restoreIframeVault() : Promise.resolve()).then(function () {
-        return import('./js/app.js?v=285');
+        return import('./js/app.js?v=286');
       });
     }).catch(function (err) {
       console.error(err);

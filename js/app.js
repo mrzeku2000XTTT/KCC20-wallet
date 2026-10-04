@@ -85,7 +85,7 @@ import { loadVprogLobby, renderVprogLobby, bindVprogLobby, startVprogPoll, stopV
 import { vprogCreate, vprogJoin, vprogTurn } from './vprogLane.js?v=1';
 import { bootWalletForge } from './walletForge.js?v=4';
 
-export const BUILD = '285';
+export const BUILD = '286';
 const DESK_ID_KEY = 'kcc20_desk_id_v1';
 const DESK_VAULT_KEY = 'kcc20_desk_vault_v1';
 

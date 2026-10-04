@@ -1,10 +1,20 @@
 {
   "sdk": "179",
-  "build": "285",
+  "build": "286",
   "wallet": "https://kcc-20-wallet.vercel.app",
   "sdkUrl": "https://kcc-20-wallet.vercel.app/sdk.js?v=179",
   "rule": "Every SDK_VERSION bump gets an entry here the same day. Pin sdk.js?v=NNN and require window.kcc20.sdkVersion === that NNN.",
   "entries": [
+    {
+      "date": "2026-10-04",
+      "sdk": "179",
+      "build": "286",
+      "title": "Swap page fills the widget gap with KaspaCom art",
+      "breaking": false,
+      "notes": [
+        "ChangeNOW iframe stays 356px so the extra canvas is no longer white. Remaining space is a dark KaspaCom panel with the KC mark and No KYC / non-custodial pills."
+      ]
+    },
     {
       "date": "2026-10-04",
       "sdk": "179",

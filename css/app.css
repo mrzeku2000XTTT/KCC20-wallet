@@ -2135,7 +2135,7 @@ button.tx { width: 100%; max-width: 100%; text-align: left; color: inherit; over
   padding: calc(18px + var(--safe-t)) 18px calc(18px + var(--safe-b));
   overflow: hidden;
 }
-#trade-go, #now-go { position: relative; z-index: 2; flex-shrink: 0; margin-top: 10px; }
+#trade-go { position: relative; z-index: 2; flex-shrink: 0; margin-top: 10px; }
 .trade-head {
   display: flex; align-items: center; justify-content: space-between;
   margin-bottom: 16px; flex-shrink: 0;
@@ -2146,19 +2146,18 @@ button.tx { width: 100%; max-width: 100%; text-align: left; color: inherit; over
 .trade-meta { padding: 12px 14px; margin-bottom: 12px; text-align: left; flex-shrink: 0; }
 .trade-meta .title { font-size: 16px; font-weight: 650; }
 .trade-meta .sub { font-size: 12px; color: var(--label-2); margin-top: 2px; }
-#trade-screen .btn-gold, #now-screen .btn-gold { height: 52px; margin-top: 10px; flex-shrink: 0; }
+#trade-screen .btn-gold { height: 52px; margin-top: 10px; flex-shrink: 0; }
 #trade-screen .seg, #trade-screen > .field,
 #now-screen .seg, #now-screen > .field { flex-shrink: 0; }
-#trade-spot, #trade-dca, #now-out, #now-in {
+#trade-spot, #trade-dca {
   display: flex; flex-direction: column; flex: 1; min-height: 0;
   overflow-y: auto; -webkit-overflow-scrolling: touch;
   padding-bottom: 8px;
 }
-#trade-spot.hidden, #trade-dca.hidden,
-#now-out.hidden, #now-in.hidden { display: none !important; }
+#trade-spot.hidden, #trade-dca.hidden { display: none !important; }
 .now-note {
   text-align: left; font-size: 12px; color: var(--label-2);
-  line-height: 1.4; padding: 0 0 10px;
+  line-height: 1.4; padding: 0 0 10px; flex-shrink: 0;
 }
 .now-banner {
   padding: 12px 14px; margin: 0 0 12px; text-align: left; flex-shrink: 0;
@@ -2166,6 +2165,32 @@ button.tx { width: 100%; max-width: 100%; text-align: left; color: inherit; over
 .now-banner b { display: block; font-size: 14px; font-weight: 750; }
 .now-banner p { margin: 4px 0 10px; font-size: 12px; color: var(--label-2); line-height: 1.35; }
 .now-banner .btn-gold { height: 44px; margin: 0; }
+.now-credit {
+  display: flex; align-items: center; justify-content: center; gap: 8px;
+  flex-shrink: 0; margin: 0 0 12px; padding: 10px 12px;
+  border-radius: 14px;
+  background: rgba(111, 199, 186, 0.08);
+  border: 0.5px solid rgba(111, 199, 186, 0.22);
+  text-decoration: none; color: inherit;
+}
+.now-credit-brand { display: flex; align-items: center; gap: 6px; }
+.now-credit-brand img {
+  width: 22px; height: 22px; border-radius: 6px; object-fit: cover;
+  background: #0d1316;
+}
+.now-credit-brand b {
+  font-size: 13px; font-weight: 750; letter-spacing: -0.2px; color: #6fc7ba;
+}
+.now-credit-mid { font-size: 11px; color: var(--label-2); }
+.now-widget {
+  flex: 1; min-height: 0;
+  border-radius: 14px; overflow: hidden;
+  background: #0d1316;
+  border: 0.5px solid var(--hairline);
+}
+.now-widget iframe {
+  display: block; width: 100%; height: 100%; min-height: 356px; border: 0; background: #0d1316;
+}
 #dca-plan { margin-bottom: 8px; }
 .dca-steps { margin: 8px 0 0; padding-left: 18px; }
 .dca-steps li { font-size: 12px; color: var(--label-2); line-height: 1.4; margin: 0 0 6px; }

@@ -5,6 +5,8 @@
 
 const CN = 'https://api.changenow.io';
 const WIDGET = 'https://changenow.io/embeds/exchange-widget/v2/widget.html';
+export const KASPACOM_LINK_ID = '3f62fb24568f16';
+export const KASPACOM_SWAP = 'https://kaspa.com/buy-kas';
 
 export function cnTick(raw, fallback = 'usdc') {
   const s = String(raw || '').toLowerCase().replace(/[^a-z0-9]/g, '');
@@ -88,17 +90,38 @@ export function setChangenowKey(k) {
   return s;
 }
 
-export function changenowWidgetUrl({ from = 'usdc', to = 'kas', amount = '20', address = '', linkId = '' } = {}) {
+export function changenowWidgetUrl({ from, to = 'kas', amount, address = '', linkId = KASPACOM_LINK_ID } = {}) {
+  const t = cnTick(to, 'kas');
+  const f = cnTick(from, t === 'kas' ? 'usdterc20' : 'kas');
+  const amt = amount != null && String(amount) !== '' ? String(amount) : (f === 'kas' ? '50' : '1000');
   const q = [
-    'FAQ=false', 'darkMode=true', 'backgroundColor=0B0B0C', 'primaryColor=C9A36A',
-    'logo=false', 'locales=false', 'horizontal=false', 'lang=en-US',
-    'from=' + encodeURIComponent(cnTick(from)),
-    'to=' + encodeURIComponent(cnTick(to, 'kas')),
-    'amount=' + encodeURIComponent(String(amount || '20'))
+    'FAQ=true',
+    'amount=' + encodeURIComponent(amt),
+    'amountFiat',
+    'backgroundColor=0d1316',
+    'darkMode=true',
+    'from=' + encodeURIComponent(f),
+    'horizontal=false',
+    'isFiat=false',
+    'lang=en-US',
+    'link_id=' + encodeURIComponent(linkId || KASPACOM_LINK_ID),
+    'locales=true',
+    'logo=false',
+    'primaryColor=6fc7ba',
+    'to=' + encodeURIComponent(t),
+    'toTheMoon=false'
   ];
   if (address) q.push('toAddress=' + encodeURIComponent(address));
-  if (linkId) q.push('link_id=' + encodeURIComponent(linkId));
   return WIDGET + '?' + q.join('&');
+}
+
+export function bootNowStepper() {
+  if (typeof document === 'undefined' || window.__cnStepper) return;
+  window.__cnStepper = true;
+  const s = document.createElement('script');
+  s.src = 'https://changenow.io/embeds/exchange-widget/v2/stepper-connector.js';
+  s.defer = true;
+  document.body.appendChild(s);
 }
 
 async function getJson(url) {

@@ -24,7 +24,7 @@
   <link rel="icon" href="assets/icon.png">
   <title>KCC20 Wallet — Kaspa L1 covenant wallet</title>
   <meta http-equiv="Cache-Control" content="no-store, no-cache, must-revalidate">
-  <link rel="stylesheet" href="css/app.css?v=222">
+  <link rel="stylesheet" href="css/app.css?v=223">
   <script type="application/ld+json">
   {"@context":"https://schema.org","@type":"SoftwareApplication","name":"KCC20 Wallet","alternateName":["KCC20 wallet","KCC-20 Wallet"],"applicationCategory":"FinanceApplication","operatingSystem":"Web","url":"https://kcc-20-wallet.vercel.app/","image":"https://kcc-20-wallet.vercel.app/assets/icon.png","description":"Non-custodial Kaspa Layer-1 wallet for native KAS, KCC20 covenant tokens, KRC-20, and time-lock vaults. Keys never leave the device.","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"}}
   </script>
@@ -123,8 +123,8 @@
             <span class="utxo-go">Buy</span>
           </button>
           <button class="glass utxo-bar trade-cta" id="btn-now" type="button">
-            <span>CASH OUT</span>
-            <span class="utxo-go">USDC</span>
+            <span>SWAP</span>
+            <span class="utxo-go">KaspaCom</span>
           </button>
           <button class="glass utxo-bar" id="btn-compound" type="button">
             <span id="utxo-count">0 UTXOs</span>
@@ -895,74 +895,40 @@
       <div class="trade-screen hidden" id="now-screen" aria-hidden="true">
         <div class="trade-head">
           <button type="button" class="trade-x" id="now-close">Close</button>
-          <h2>Cash out</h2>
+          <h2>Swap</h2>
           <span class="trade-head-space"></span>
         </div>
+        <a class="now-credit" href="https://kaspa.com/buy-kas" target="_blank" rel="noopener">
+          <span class="now-credit-brand">
+            <img src="assets/kaspacom.png" alt="">
+            <b>KaspaCom</b>
+          </span>
+          <span class="now-credit-mid">swap by</span>
+          <span class="now-credit-brand">
+            <img src="assets/changenow.png" alt="">
+            <b>ChangeNOW</b>
+          </span>
+        </a>
         <div class="seg" id="now-side">
-          <button class="on" data-now="out" type="button">Cash out</button>
           <button data-now="in" type="button">Buy KAS</button>
+          <button class="on" data-now="out" type="button">Cash out</button>
         </div>
         <div id="now-tn" class="glass now-banner hidden">
           <b>Mainnet only</b>
-          <p>ChangeNOW pays real USDC/USDT. Switch off TN10 to cash out KAS from this wallet.</p>
+          <p>KaspaCom’s ChangeNOW swap is mainnet KAS. Switch off TN10 to buy or cash out.</p>
           <button class="btn btn-gold" id="now-mainnet" type="button">Switch to mainnet</button>
         </div>
-        <div id="now-out">
-          <p class="now-note">You send KAS from this wallet. ChangeNOW pays a real dollar stable to <b>your</b> USDC/USDT address on Ethereum, Tron, Base, or Solana. Scorpion never holds the dollars. Floating rate.</p>
-          <div class="field"><label>You send (KAS)</label>
-            <div class="dest-row">
-              <input id="now-amt" type="text" inputmode="decimal" placeholder="50" autocomplete="off">
-              <button class="max-btn" id="now-max" type="button">Max</button>
-            </div>
+        <p class="now-note" id="now-note">KaspaCom’s ChangeNOW widget. Flip the pair inside the swap to cash KAS out to USDC/USDT.</p>
+        <div class="field hidden" id="now-dest-wrap">
+          <label id="now-dest-lab">Stable payout (optional)</label>
+          <div class="dest-row">
+            <input id="now-dest" placeholder="0x… or Tron T…" spellcheck="false" autocomplete="off">
+            <button class="scan-btn" id="now-dest-go" type="button">Set</button>
           </div>
-          <p class="avail-line" id="now-avail">Available — tap Max to fill.</p>
-          <div class="field"><label>You get</label>
-            <select id="now-to">
-              <option value="usdc">USDC · Ethereum</option>
-              <option value="usdterc20">USDT · Ethereum</option>
-              <option value="usdttrc20">USDT · Tron</option>
-              <option value="usdcbase">USDC · Base</option>
-              <option value="usdcsol">USDC · Solana</option>
-            </select>
-          </div>
-          <div class="field"><label id="now-dest-lab">Payout address</label>
-            <input id="now-dest" placeholder="0x…" spellcheck="false" autocomplete="off">
-          </div>
-          <div class="trade-quote" id="now-quote">
-            <p class="muted" style="text-align:left;padding:0;">Enter KAS and a payout address. Quote is live from ChangeNOW.</p>
-          </div>
-          <div id="now-payin" class="hidden"></div>
-          <iframe id="now-frame" title="ChangeNOW" class="hidden" style="width:100%;height:380px;border:0;border-radius:12px;margin-top:10px;background:#0b0b0c;"></iframe>
-          <details class="at-help" id="now-key-box">
-            <summary>ChangeNOW API key (one-tap send)</summary>
-            <p class="muted" style="text-align:left;padding-top:6px;">Without a key, the ChangeNOW widget finishes the swap. With a key, this wallet creates the order and sends KAS from here. The key stays on this device.</p>
-            <div class="dest-row" style="margin-top:8px;">
-              <input id="now-key" type="password" placeholder="API key" autocomplete="off" spellcheck="false">
-              <button class="scan-btn" id="now-key-save" type="button">Save</button>
-            </div>
-          </details>
         </div>
-        <div id="now-in" class="hidden">
-          <p class="now-note">You send USDC/USDT on their network. KAS pays out to <b>this</b> kaspa:q. We do not hold the USDC.</p>
-          <div class="field"><label>You send</label>
-            <select id="now-from">
-              <option value="usdc">USDC · Ethereum</option>
-              <option value="usdterc20">USDT · Ethereum</option>
-              <option value="usdttrc20">USDT · Tron</option>
-              <option value="eth">ETH</option>
-              <option value="usdcbase">USDC · Base</option>
-            </select>
-          </div>
-          <div class="field"><label>Amount</label>
-            <input id="now-in-amt" type="text" inputmode="decimal" placeholder="20" autocomplete="off">
-          </div>
-          <div class="trade-quote" id="now-in-quote">
-            <p class="muted" style="text-align:left;padding:0;">Quote is live from ChangeNOW. Payout is this wallet.</p>
-          </div>
-          <div id="now-in-payin" class="hidden"></div>
-          <iframe id="now-in-frame" title="ChangeNOW" class="hidden" style="width:100%;height:380px;border:0;border-radius:12px;margin-top:10px;background:#0b0b0c;"></iframe>
+        <div class="now-widget" id="now-widget">
+          <iframe id="iframe-widget" title="KaspaCom swap powered by ChangeNOW" sandbox="allow-scripts allow-same-origin allow-forms allow-popups allow-popups-to-escape-sandbox" allow="clipboard-write"></iframe>
         </div>
-        <button class="btn btn-gold" id="now-go" type="button" style="margin-top:auto;">Cash out</button>
       </div>
 
       <div class="trade-screen hidden" id="kron-board" aria-hidden="true">
@@ -1091,7 +1057,7 @@
   <script type="module">
     import('./js/iframeVault.js?v=122').then(function (mod) {
       return (mod.restoreIframeVault ? mod.restoreIframeVault() : Promise.resolve()).then(function () {
-        return import('./js/app.js?v=284');
+        return import('./js/app.js?v=285');
       });
     }).catch(function (err) {
       console.error(err);

@@ -28,7 +28,10 @@ import {
   signPsktJson
 } from './tx.js?v=233';
 import { bootDappConnect, pingTttDappFrame, pingKasdistroDappFrame, TTT_TREASURY, listConnectedSites, disconnectSite, disconnectAllSites, dappSourceOrigin } from './dappConnect.js?v=208';
-import { changenowEstimate, changenowCreate, changenowWidgetUrl, cnFrom } from './changenow.js?v=180';
+import {
+  changenowEstimate, changenowCreate, changenowWidgetUrl, changenowStatus, changenowMin,
+  changenowKey, setChangenowKey, cnFrom, cnTick, cnLabel, cnPayoutOk, cnPayoutHint, cnPayoutPlaceholder
+} from './changenow.js?v=181';
 import { schedulePersistIframeVault, bootIframeVaultWatch } from './iframeVault.js?v=122';
 import { kronMarkets, quoteKronTrade, executeKronTrade, formatKasSompi, lookupKronTick, liveQuote, tradeCostLines, attachKronLogos, kronCandles, kronLogoFor, quoteKcc20Bridge, executeKcc20Bridge, formatTokenRaw } from './kronTrade.js?v=233';
 import {
@@ -83,7 +86,7 @@ import { loadVprogLobby, renderVprogLobby, bindVprogLobby, startVprogPoll, stopV
 import { vprogCreate, vprogJoin, vprogTurn } from './vprogLane.js?v=1';
 import { bootWalletForge } from './walletForge.js?v=4';
 
-export const BUILD = '283';
+export const BUILD = '284';
 const DESK_ID_KEY = 'kcc20_desk_id_v1';
 const DESK_VAULT_KEY = 'kcc20_desk_vault_v1';
 
@@ -1131,6 +1134,7 @@ function lockNow() {
   closeSheet();
   stopQrScan();
   hideTradeScreen();
+  hideNowScreen();
   stopAgentLoop();
   pinUnlockedFor = '';
   sessionUnlocked = false;
@@ -9447,6 +9451,296 @@ function hideTradeScreen() {
   $('trade-screen')?.setAttribute('aria-hidden', 'true');
 }
 
+const CASHOUT_DEST_KEY = 'kcc20_cashout_dest_v1';
+let nowPollTimer = 0;
+
+function loadCashoutDest() {
+  try {
+    const j = JSON.parse(localStorage.getItem(CASHOUT_DEST_KEY) || '{}');
+    return { to: cnTick(j.to || 'usdc'), address: String(j.address || '') };
+  } catch {
+    return { to: 'usdc', address: '' };
+  }
+}
+
+function saveCashoutDest() {
+  try {
+    safeSetItem(CASHOUT_DEST_KEY, JSON.stringify({
+      to: $('now-to')?.value || 'usdc',
+      address: String($('now-dest')?.value || '').trim()
+    }));
+  } catch {}
+}
+
+function stopNowPoll() {
+  if (nowPollTimer) { clearInterval(nowPollTimer); nowPollTimer = 0; }
+}
+
+function hideNowScreen() {
+  stopNowPoll();
+  $('now-screen')?.classList.add('hidden');
+  $('now-screen')?.setAttribute('aria-hidden', 'true');
+}
+
+function openNow(prefill = {}) {
+  haptic();
+  if (!wallet?.address) { toast('Unlock a wallet first'); return; }
+  hideTradeScreen();
+  hideKronBoard();
+  const screen = $('now-screen');
+  if (!screen) return;
+  screen.classList.remove('hidden');
+  screen.setAttribute('aria-hidden', 'false');
+  const side = prefill.side === 'in' ? 'in' : 'out';
+  $('now-side')?.querySelectorAll('button').forEach(b => b.classList.toggle('on', b.dataset.now === side));
+  const head = screen.querySelector('.trade-head h2');
+  if (head) head.textContent = side === 'in' ? 'Buy KAS' : 'Cash out';
+  const saved = loadCashoutDest();
+  if ($('now-to')) {
+    const to = cnTick(prefill.to || saved.to || 'usdc');
+    if ([...$('now-to').options].some(o => o.value === to)) $('now-to').value = to;
+  }
+  if ($('now-dest') && !String($('now-dest').value || '').trim()) {
+    $('now-dest').value = prefill.address || saved.address || '';
+  }
+  if ($('now-amt') && prefill.amount != null && side === 'out') $('now-amt').value = String(prefill.amount);
+  if ($('now-from')) $('now-from').value = cnFrom(prefill.from || 'usdc');
+  if ($('now-in-amt') && side === 'in' && (prefill.inAmount != null || prefill.amount != null)) {
+    $('now-in-amt').value = String(prefill.inAmount || prefill.amount);
+  }
+  if ($('now-key')) $('now-key').value = changenowKey() || '';
+  syncNowPane();
+}
+
+function syncNowPane() {
+  const side = $('now-side')?.querySelector('.on')?.dataset.now || 'out';
+  const tn = isTestnet();
+  $('now-tn')?.classList.toggle('hidden', !tn);
+  $('now-out')?.classList.toggle('hidden', side !== 'out');
+  $('now-in')?.classList.toggle('hidden', side !== 'in');
+  const go = $('now-go');
+  if (go) {
+    go.disabled = !!(tn && side === 'out');
+    go.textContent = side === 'in' ? 'Get pay-in' : 'Cash out';
+  }
+  const tick = $('now-to')?.value || 'usdc';
+  if ($('now-dest-lab')) $('now-dest-lab').textContent = 'Payout · ' + cnPayoutHint(tick);
+  if ($('now-dest')) $('now-dest').placeholder = cnPayoutPlaceholder(tick);
+  const kasAsset = { native: true, protocol: 'kas', ticker: 'KAS', decimals: 8, balance: String(balanceSompi) };
+  const max = maxFillForAsset(kasAsset);
+  if ($('now-avail')) {
+    $('now-avail').textContent = tn
+      ? 'ChangeNOW is mainnet KAS. Switch Network off TN10.'
+      : `Available ${formatAmount(balanceSompi)} KAS — Max leaves a fee pad.`;
+  }
+  if ($('now-amt') && !$('now-amt').value) $('now-amt').placeholder = max;
+  if (side === 'out') quoteNowOut();
+  else quoteNowIn();
+}
+
+function fillNowMax() {
+  const kasAsset = { native: true, protocol: 'kas', ticker: 'KAS', decimals: 8, balance: String(balanceSompi) };
+  const v = maxFillForAsset(kasAsset);
+  if ($('now-amt')) $('now-amt').value = v;
+  haptic();
+  if (v === '0') toast('No KAS to cash out');
+  quoteNowOut();
+}
+
+async function quoteNowOut() {
+  const box = $('now-quote');
+  if (!box) return;
+  if (isTestnet()) {
+    box.innerHTML = `<p class="muted" style="text-align:left;padding:0;">Mainnet only.</p>`;
+    return;
+  }
+  const amount = $('now-amt')?.value.trim();
+  const to = $('now-to')?.value || 'usdc';
+  if (!amount) return;
+  box.innerHTML = `<p class="muted" style="text-align:left;padding:0;">Quoting…</p>`;
+  try {
+    const min = await changenowMin('kas', to);
+    const est = await changenowEstimate(amount, 'kas', to);
+    box.innerHTML = `
+      <div class="kv"><span class="k">You send</span><span class="v">${esc(String(est.fromAmount))} KAS</span></div>
+      <div class="kv"><span class="k">You get ~</span><span class="v">${esc(String(est.toAmount))} ${esc(cnLabel(to))}</span></div>
+      <div class="kv"><span class="k">Min</span><span class="v">${esc(String(min))} KAS</span></div>
+      <p class="muted" style="text-align:left;padding-top:8px;">Floating rate via ChangeNOW. Payout is not a Kaspa token — it lands on the network you picked.</p>`;
+  } catch (e) {
+    box.innerHTML = `<p class="muted" style="text-align:left;padding:0;color:var(--red)">${esc(errText(e))}</p>`;
+  }
+}
+
+async function quoteNowIn() {
+  const box = $('now-in-quote');
+  if (!box) return;
+  const amount = $('now-in-amt')?.value.trim();
+  const from = $('now-from')?.value || 'usdc';
+  if (!amount) return;
+  box.innerHTML = `<p class="muted" style="text-align:left;padding:0;">Quoting…</p>`;
+  try {
+    const est = await changenowEstimate(amount, from, 'kas');
+    box.innerHTML = `
+      <div class="kv"><span class="k">You send</span><span class="v">${esc(String(est.fromAmount))} ${esc(cnLabel(from))}</span></div>
+      <div class="kv"><span class="k">You get ~</span><span class="v">${esc(String(est.toAmount))} KAS</span></div>
+      <div class="kv kv-stack"><span class="k">KAS payout</span><span class="v">${esc(wallet?.address || '')}</span></div>`;
+  } catch (e) {
+    box.innerHTML = `<p class="muted" style="text-align:left;padding:0;color:var(--red)">${esc(errText(e))}</p>`;
+  }
+}
+
+function startNowPoll(id) {
+  stopNowPoll();
+  if (!id) return;
+  const tick = async () => {
+    if ($('now-screen')?.classList.contains('hidden')) { stopNowPoll(); return; }
+    try {
+      const s = await changenowStatus(id);
+      const box = $('now-payin');
+      if (box) {
+        let el = $('now-st');
+        if (!el) {
+          el = document.createElement('div');
+          el.id = 'now-st';
+          el.className = 'kv';
+          box.appendChild(el);
+        }
+        el.innerHTML = `<span class="k">ChangeNOW</span><span class="v">${esc(String(s.status || '…'))}</span>`;
+      }
+      if (/^(finished|failed|refunded|expired)$/i.test(String(s.status || ''))) stopNowPoll();
+    } catch {}
+  };
+  tick();
+  nowPollTimer = setInterval(tick, 8000);
+}
+
+async function runNowGo() {
+  const side = $('now-side')?.querySelector('.on')?.dataset.now || 'out';
+  if (side === 'in') return runNowBuy();
+  return runNowCashout();
+}
+
+async function runNowCashout() {
+  if (isTestnet()) { toast('Switch to mainnet'); return; }
+  if (!wallet?.address) { toast('Unlock a wallet first'); return; }
+  const amount = Number($('now-amt')?.value);
+  const to = $('now-to')?.value || 'usdc';
+  const dest = String($('now-dest')?.value || '').trim();
+  if (!(amount > 0)) { toast('Enter KAS to cash out'); return; }
+  if (!cnPayoutOk(to, dest)) { toast(cnPayoutHint(to)); return; }
+  saveCashoutDest();
+  const go = $('now-go');
+  if (go) go.disabled = true;
+  try {
+    const tx = await changenowCreate({
+      amount, address: dest, from: 'kas', to, refundAddress: wallet.address
+    });
+    if (tx.mode === 'api' && tx.payinAddress) {
+      const pay = $('now-payin');
+      if (pay) {
+        pay.classList.remove('hidden');
+        pay.innerHTML = `
+          <div class="kv"><span class="k">Order</span><span class="v">${esc(tx.id || '')}</span></div>
+          <div class="kv kv-stack"><span class="k">Send ${esc(String(tx.fromAmount))} KAS to</span><span class="v" data-copy="${esc(tx.payinAddress)}">${esc(tx.payinAddress)}</span></div>
+          ${tx.payinExtraId ? `<div class="kv"><span class="k">Memo</span><span class="v">${esc(tx.payinExtraId)}</span></div>` : ''}
+          <p class="muted" style="text-align:left;">Floating rate. ChangeNOW pays ~${esc(String(tx.toAmount || ''))} ${esc(cnLabel(to))} to your payout address.</p>`;
+      }
+      openSheet('Review cash out', `
+        <div class="kv"><span class="k">You send</span><span class="v">${esc(String(tx.fromAmount))} KAS</span></div>
+        <div class="kv"><span class="k">You get ~</span><span class="v">${esc(String(tx.toAmount || 'quote'))} ${esc(cnLabel(to))}</span></div>
+        <div class="kv kv-stack"><span class="k">Stable payout</span><span class="v">${esc(dest)}</span></div>
+        <div class="kv kv-stack"><span class="k">ChangeNOW pay-in</span><span class="v">${esc(tx.payinAddress)}</span></div>
+        <p class="muted" style="text-align:left;padding-top:8px;">Scorpion sends KAS to ChangeNOW. Dollars land on the network you picked. Rate is floating until they see the deposit.</p>
+      `, { confirm: 'Send KAS', gold: true, onConfirm: () => broadcastCashout(tx, to, dest) });
+    } else {
+      const url = tx.widgetUrl || changenowWidgetUrl({ from: 'kas', to, amount, address: dest });
+      const f = $('now-frame');
+      if (f) { f.classList.remove('hidden'); f.src = url; }
+      toast('Finish in ChangeNOW — payout is your stable address');
+    }
+  } catch (e) { toast(errText(e)); }
+  finally { if (go) go.disabled = false; }
+}
+
+async function runNowBuy() {
+  if (!wallet?.address) { toast('Unlock a wallet first'); return; }
+  const from = $('now-from')?.value || 'usdc';
+  const amount = $('now-in-amt')?.value;
+  const dest = wallet.address;
+  const go = $('now-go');
+  if (go) go.disabled = true;
+  try {
+    const tx = await changenowCreate({ amount, address: dest, from, to: 'kas' });
+    if (tx.mode === 'api' && tx.payinAddress) {
+      const pay = $('now-in-payin');
+      if (pay) {
+        pay.classList.remove('hidden');
+        pay.innerHTML = `<div class="kv kv-stack"><span class="k">Send ${esc(String(tx.fromAmount))} ${esc(cnLabel(tx.from))}</span><span class="v" data-copy="${esc(tx.payinAddress)}">${esc(tx.payinAddress)}</span></div>
+          ${tx.payinExtraId ? `<div class="kv"><span class="k">Memo</span><span class="v">${esc(tx.payinExtraId)}</span></div>` : ''}
+          <p class="muted" style="text-align:left;">After ChangeNOW sees the deposit, KAS arrives here. Id ${esc(tx.id || '')}</p>`;
+      }
+      toast('Send that asset to the pay-in address');
+    } else {
+      const url = tx.widgetUrl || changenowWidgetUrl({ from, to: 'kas', amount, address: dest });
+      const f = $('now-in-frame');
+      if (f) { f.classList.remove('hidden'); f.src = url; }
+      toast('Finish the swap in ChangeNOW — payout is this wallet');
+    }
+  } catch (e) { toast(errText(e)); }
+  finally { if (go) go.disabled = false; }
+}
+
+async function broadcastCashout(tx, to, destStable) {
+  const dest = tx.payinAddress;
+  const amount = Number(tx.fromAmount);
+  if (!dest || !isValidKaspaAddress(dest)) {
+    toast('ChangeNOW pay-in is not a kaspa: address');
+    return;
+  }
+  toast('Connecting to Kaspa…');
+  try {
+    await requirePin('Confirm cash out');
+    let result;
+    if (kaswareSigning(wallet)) {
+      toast('Approve in KasWare…');
+      result = await sendKas({ wallet, dest, amountKas: amount });
+    } else {
+      await loadKaspaSdk();
+      toast('Connecting to public Kaspa node…');
+      await pingPublicNode();
+      toast('Signing & broadcasting…');
+      const availableUtxos = wallet.receiveAddrs?.length > 1
+        ? await fetchOwnedUtxos(wallet)
+        : await fetchAddressUtxos(wallet.address);
+      if (!availableUtxos.length) { toast('No UTXOs yet — receive KAS first'); return; }
+      result = await sendKas({ wallet, dest, amountKas: amount, utxos: availableUtxos });
+    }
+    pushTokenActivity({
+      dir: 'out', tick: 'KAS', protocol: 'kas',
+      amount: String(Math.round(Number(result.amountKas || amount) * 1e8)),
+      decimals: 8, txId: result.txId || '', label: 'Cash out'
+    });
+    afterTx();
+    closeSheet();
+    toast('KAS sent to ChangeNOW');
+    const pay = $('now-payin');
+    if (pay) {
+      pay.insertAdjacentHTML('beforeend', txidBlock(result.txId));
+    }
+    startNowPoll(tx.id);
+    openSheet('Cash out sent', `
+      <div class="kv"><span class="k">Sent</span><span class="v">${esc(formatKas(result.amountKas || amount))} KAS</span></div>
+      <div class="kv"><span class="k">You get ~</span><span class="v">${esc(String(tx.toAmount || ''))} ${esc(cnLabel(to))}</span></div>
+      <div class="kv kv-stack"><span class="k">Stable payout</span><span class="v">${esc(destStable || '')}</span></div>
+      ${txidBlock(result.txId)}
+      ${tx.statusUrl ? `<p class="muted" style="text-align:left;padding-top:8px;"><a href="${esc(tx.statusUrl)}" target="_blank" rel="noopener">Track on ChangeNOW</a></p>` : ''}
+    `, { confirm: 'Done', cancel: false, onConfirm: () => { closeSheet(); refreshAll(); } });
+  } catch (e) {
+    if (errText(e) === 'cancelled') return;
+    toast(e.message || 'Cash out failed');
+  }
+}
+
 let kronBoardCache = [];
 
 function fmtVol(n) {
@@ -9495,6 +9789,7 @@ function paintKronBoard(err) {
 }
 
 async function openKronBoard() {
+  hideNowScreen();
   if (isTestnet()) {
     toast('KRON 24h is mainnet. Switch Network off TN10.');
     return;
@@ -9515,6 +9810,7 @@ async function openKronBoard() {
 }
 
 function openTrade(prefill = {}) {
+  hideNowScreen();
   if (isTestnet()) {
     toast('Home Trade is mainnet KRON. Use COOK on TN10.');
     showPage('tokens');
@@ -10599,10 +10895,11 @@ async function openBuyKas(prefill) {
     <p class="muted" style="text-align:left;padding:0 0 8px;">Floating rate via ChangeNOW. You send USDC/USDT on their network. KAS pays out to <b>this</b> kaspa:q. We do not hold the USDC.</p>
     <div class="field"><label>You send</label>
       <select id="cn-from">
-        <option value="usdcerc20"${from0 === 'usdcerc20' ? ' selected' : ''}>USDC (Ethereum)</option>
+        <option value="usdc"${from0 === 'usdc' ? ' selected' : ''}>USDC (Ethereum)</option>
         <option value="usdterc20"${from0 === 'usdterc20' ? ' selected' : ''}>USDT (Ethereum)</option>
         <option value="usdttrc20"${from0 === 'usdttrc20' ? ' selected' : ''}>USDT (Tron)</option>
         <option value="eth"${from0 === 'eth' ? ' selected' : ''}>ETH</option>
+        <option value="usdcbase"${from0 === 'usdcbase' ? ' selected' : ''}>USDC (Base)</option>
       </select>
     </div>
     <div class="field"><label>Amount</label><input id="cn-amt" type="text" inputmode="decimal" value="${esc(amt0)}"></div>
@@ -12480,6 +12777,43 @@ function bind() {
   click('btn-send', openSend);
   click('btn-receive', openReceive);
   click('btn-buy-kas', () => openBuyKas());
+  click('btn-now', () => openNow({ side: 'out' }));
+  click('now-close', hideNowScreen);
+  click('now-go', () => runNowGo());
+  click('now-max', fillNowMax);
+  click('now-mainnet', async () => {
+    try {
+      await applyAppNetwork('mainnet');
+      syncNowPane();
+    } catch (e) { toast(errText(e)); }
+  });
+  click('now-key-save', () => {
+    setChangenowKey($('now-key')?.value);
+    toast(changenowKey() ? 'ChangeNOW key saved on this device' : 'ChangeNOW key cleared');
+  });
+  $('now-avail')?.addEventListener('click', fillNowMax);
+  $('now-amt')?.addEventListener('input', () => {
+    clearTimeout(openNow._t);
+    openNow._t = setTimeout(quoteNowOut, 400);
+  });
+  $('now-to')?.addEventListener('change', () => {
+    saveCashoutDest();
+    syncNowPane();
+  });
+  $('now-dest')?.addEventListener('change', saveCashoutDest);
+  $('now-from')?.addEventListener('change', quoteNowIn);
+  $('now-in-amt')?.addEventListener('input', () => {
+    clearTimeout(openNow._in);
+    openNow._in = setTimeout(quoteNowIn, 400);
+  });
+  $('now-side')?.addEventListener('click', e => {
+    const b = e.target.closest('[data-now]');
+    if (!b) return;
+    $('now-side').querySelectorAll('button').forEach(x => x.classList.toggle('on', x === b));
+    const h = $('now-screen')?.querySelector('.trade-head h2');
+    if (h) h.textContent = b.dataset.now === 'in' ? 'Buy KAS' : 'Cash out';
+    syncNowPane();
+  });
   click('btn-trade', () => openTrade({ tick: 'KKDAG', side: 'buy' }));
   click('btn-trade-tokens', () => openTrade({ tick: 'KKDAG', side: 'buy' }));
   click('btn-kron-board', () => openKronBoard());

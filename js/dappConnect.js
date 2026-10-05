@@ -1,5 +1,5 @@
 /* dApp connect host: popup / protocol-handler session for window.kcc20 (sdk.js). */
-import { networkId, validateKaspaAddress } from './crypto.js?v=100';
+import { networkId, validateKaspaAddress, sameAddrPayload } from './crypto.js?v=101';
 import { fetchAddressUtxos, fetchAddressBalance, signPsktJson, pushSignedPskt } from './tx.js?v=167';
 import { kaswareSigning, signPsktWithKasware, walletIsKaswareChip, isKaswareInstalled } from './kasware.js?v=220';
 
@@ -239,6 +239,50 @@ async function ensureBoundPayer() {
   return hooks?.getWallet?.();
 }
 
+function expectedPayerOf(params) {
+  const p = params || {};
+  const raw = p.expectedPayer || p.payer || p.from || p.account || '';
+  if (raw == null || raw === '') return '';
+  const s = String(raw).trim();
+  return cleanKaspaDest(s) || s;
+}
+
+function payerMatches(w, expected) {
+  if (!expected) return true;
+  if (!w) return false;
+  if (w.id && String(w.id) === String(expected)) return true;
+  const addr = String(w.address || '');
+  if (!addr) return false;
+  if (typeof sameAddrPayload === 'function') return sameAddrPayload(addr, expected);
+  return addr.toLowerCase() === String(expected).toLowerCase();
+}
+
+function payerMismatchError(expected) {
+  return 'Payer mismatch. This request is bound to ' + expected + '. Connect that account, then Approve. Scorpion will not spend a different wallet.';
+}
+
+async function bindExpectedPayer(expected) {
+  await ensureBoundPayer();
+  if (!expected) return hooks?.getWallet?.();
+  const list = typeof hooks?.listWallets === 'function' ? (hooks.listWallets() || []) : [];
+  const hit = list.find((row) => payerMatches(row, expected));
+  if (!hit) throw new Error(payerMismatchError(expected));
+  if (typeof hooks.switchDappWallet === 'function') {
+    await hooks.switchDappWallet(hit.id || hit.address);
+  }
+  const w = hooks?.getWallet?.();
+  if (!payerMatches(w, expected)) throw new Error(payerMismatchError(expected));
+  try { hooks?.rememberDappAccount?.(w.address); } catch {}
+  return w;
+}
+
+function assertExpectedPayer(expected) {
+  if (!expected) return hooks?.getWallet?.();
+  const w = hooks?.getWallet?.();
+  if (!payerMatches(w, expected)) throw new Error(payerMismatchError(expected));
+  return w;
+}
+
 function paintDappWallets() {
   const box = $('dapp-wallets');
   if (!box) return;
@@ -291,7 +335,7 @@ function renderDappSitesPanel() {
   }).join('');
 }
 
-function showOverlay({ title, origin, body, approveLabel, onWalletChange }) {
+function showOverlay({ title, origin, body, approveLabel, onWalletChange, lockPayer }) {
   return new Promise((resolve, reject) => {
     const overlay = $('dapp-overlay');
     if (!overlay) {
@@ -346,6 +390,10 @@ function showOverlay({ title, origin, body, approveLabel, onWalletChange }) {
       chips.onclick = async (e) => {
         const b = e.target.closest('[data-dapp-wid]');
         if (!b?.dataset.dappWid || !hooks?.switchDappWallet) return;
+        if (lockPayer) {
+          try { hooks.toast?.('This request is bound to the connected payer. Reject and Connect again to change it.'); } catch {}
+          return;
+        }
         try {
           await hooks.switchDappWallet(b.dataset.dappWid);
           paintDappWallets();
@@ -428,6 +476,9 @@ async function walletSnapshot(w) {
   return {
     accounts: [w.address],
     address: w.address,
+    payer: w.address,
+    accountId: w.id || '',
+    bound: true,
     network: netName(),
     publicKey: w.pubKey || '',
     name: w.name || 'Wallet',
@@ -611,10 +662,12 @@ function destIsTreasury(dest) {
 }
 
 async function handleSendToken(req) {
-  await ensureBoundPayer();
-  let w = await ensureUnlocked();
+  const expected = expectedPayerOf(req.params);
+  let w = await bindExpectedPayer(expected);
+  w = await ensureUnlocked();
   const origin = req.origin;
   if (!originAllowed(origin)) await handleConnect(req);
+  if (expected) w = await bindExpectedPayer(expected);
   if (netName() !== 'kaspa_mainnet') throw new Error('KCC20 pay is mainnet. Switch this wallet off TN10.');
   const tick = String(req.params?.tick || req.params?.ticker || 'KKDAG').toUpperCase();
   let amount = String(req.params?.amount ?? req.params?.amountHuman ?? '').trim();
@@ -656,12 +709,13 @@ async function handleSendToken(req) {
     origin,
     approveLabel: 'Sign ' + amount + ' ' + tick,
     body: view.html,
+    lockPayer: !!expected,
     onWalletChange: async () => {
       view = await payBody();
       if ($('dapp-body')) $('dapp-body').innerHTML = view.html;
     }
   });
-  w = hooks.getWallet?.() || w;
+  w = assertExpectedPayer(expected) || hooks.getWallet?.() || w;
   if (toTreasury && typeof hooks.isTreasuryPayer === 'function' && hooks.isTreasuryPayer()) {
     throw new Error('This chip is ews (treasury). Switch to another wallet on the sheet, then Sign.');
   }
@@ -711,10 +765,12 @@ async function handleQuoteKron(req) {
 }
 
 async function handleTradeKron(req) {
-  await ensureBoundPayer();
-  let w = await ensureUnlocked();
+  const expected = expectedPayerOf(req.params);
+  let w = await bindExpectedPayer(expected);
+  w = await ensureUnlocked();
   const origin = req.origin;
   if (!originAllowed(origin)) await handleConnect(req);
+  if (expected) w = await bindExpectedPayer(expected);
   if (netName() !== 'kaspa_mainnet') throw new Error('KRON trade is mainnet. Switch this wallet off TN10.');
   const tick = String(req.params?.tick || req.params?.ticker || 'KKDAG').toUpperCase();
   const side = tradeSide(req.method, req.params);
@@ -762,6 +818,7 @@ async function handleTradeKron(req) {
       ? ('Approve in KasWare')
       : (side === 'buy' ? 'Buy ' + tick : 'Sell ' + tick),
     body: view.html,
+    lockPayer: !!expected,
     onWalletChange: async () => {
       view = await payBody();
       if ($('dapp-body')) $('dapp-body').innerHTML = view.html;
@@ -771,7 +828,7 @@ async function handleTradeKron(req) {
         : (side === 'buy' ? 'Buy ' + tick : 'Sell ' + tick);
     }
   });
-  w = hooks.getWallet?.() || w;
+  w = assertExpectedPayer(expected) || hooks.getWallet?.() || w;
   view = await payBody();
   if (!view.q) throw new Error(view.err || 'KRON quote failed');
   if (typeof hooks.hydrateNativeKey === 'function') hooks.hydrateNativeKey(w);
@@ -783,7 +840,7 @@ async function handleTradeKron(req) {
     await hooks.requirePin((side === 'buy' ? 'Buy ' : 'Sell ') + amount + (side === 'buy' ? ' KAS of ' : ' ') + tick);
   }
   if (typeof hooks.tradeKron !== 'function') throw new Error('Wallet cannot trade KRON from this session');
-  return hooks.tradeKron({ tick, side, amount });
+  return hooks.tradeKron({ tick, side, amount, expectedPayer: expected || w.address });
 }
 
 function collectKasAmount(src, depth) {
@@ -969,10 +1026,12 @@ async function handleCompileVaults(req) {
 }
 
 async function handleSendKas(req) {
-  await ensureBoundPayer();
-  let w = await ensureUnlocked();
+  const expected = expectedPayerOf(req.params);
+  let w = await bindExpectedPayer(expected);
+  w = await ensureUnlocked();
   const origin = req.origin;
   if (!originAllowed(origin)) await handleConnect(req);
+  if (expected) w = await bindExpectedPayer(expected);
   w = hooks.getWallet?.() || w;
   let amount = String(req.params?.amount ?? req.params?.amountKas ?? req.params?.kas ?? '').trim();
   let dest = cleanKaspaDest(
@@ -1010,6 +1069,7 @@ async function handleSendKas(req) {
     origin,
     approveLabel: 'Send KAS',
     body: view.html,
+    lockPayer: !!expected,
     onWalletChange: async () => {
       view = await payBody();
       if ($('dapp-body')) $('dapp-body').innerHTML = view.html;
@@ -1018,7 +1078,7 @@ async function handleSendKas(req) {
   const typed = String($('dapp-kas-amt')?.value || amount).trim();
   if (!(Number(typed) > 0)) throw new Error('Enter an amount of KAS greater than 0');
   amount = typed;
-  w = hooks.getWallet?.() || w;
+  w = assertExpectedPayer(expected) || hooks.getWallet?.() || w;
   dest = cleanKaspaDest(dest) || String(w?.address || '').toLowerCase();
   if (typeof hooks.hydrateNativeKey === 'function') hooks.hydrateNativeKey(w);
   if (typeof hooks.requirePin === 'function' && !kaswareSigning(w)) {

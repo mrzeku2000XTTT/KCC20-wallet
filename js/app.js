@@ -27,7 +27,7 @@ import {
   disconnectRpc, buildDcaDrips, sendKasMany, releaseDcaDrip, cancelDcaDrip, isMassError,
   signPsktJson
 } from './tx.js?v=234';
-import { bootDappConnect, pingTttDappFrame, pingKasdistroDappFrame, TTT_TREASURY, listConnectedSites, disconnectSite, disconnectAllSites, dappSourceOrigin } from './dappConnect.js?v=208';
+import { bootDappConnect, pingTttDappFrame, pingKasdistroDappFrame, TTT_TREASURY, listConnectedSites, disconnectSite, disconnectAllSites, dappSourceOrigin } from './dappConnect.js?v=209';
 import {
   changenowWidgetUrl, cnPayoutOk, bootNowStepper, KASPACOM_SWAP
 } from './changenow.js?v=182';
@@ -85,7 +85,7 @@ import { loadVprogLobby, renderVprogLobby, bindVprogLobby, startVprogPoll, stopV
 import { vprogCreate, vprogJoin, vprogTurn } from './vprogLane.js?v=1';
 import { bootWalletForge } from './walletForge.js?v=4';
 
-export const BUILD = '287';
+export const BUILD = '288';
 const DESK_ID_KEY = 'kcc20_desk_id_v1';
 const DESK_VAULT_KEY = 'kcc20_desk_vault_v1';
 
@@ -1548,13 +1548,17 @@ async function dappEnsureKaswareSigner(payer) {
   return true;
 }
 
-async function dappTradeKron({ tick, side, amount }) {
+async function dappTradeKron({ tick, side, amount, expectedPayer }) {
   const t = String(tick || 'KKDAG').toUpperCase();
   const s = String(side || 'buy').toLowerCase() === 'sell' ? 'sell' : 'buy';
   const amt = String(amount || '').trim();
   if (isTestnet()) throw new Error('KRON trade is mainnet. Switch this wallet off TN10.');
   const payer = walletForDapp() || wallet;
   if (!payer?.address) throw new Error('Unlock KCC20 Wallet first');
+  const want = String(expectedPayer || '').trim();
+  if (want && !sameAddrPayload(payer.address, want) && payer.id !== want) {
+    throw new Error('Payer mismatch. Bound account is ' + want + '. Scorpion will not spend ' + payer.address);
+  }
   const useKw = await dappEnsureKaswareSigner(payer);
   toast((s === 'buy' ? 'Buying ' : 'Selling ') + t + ' from ' + (payer.name || 'wallet') + (useKw ? ' · KasWare signs' : ''));
   let availableUtxos = [];

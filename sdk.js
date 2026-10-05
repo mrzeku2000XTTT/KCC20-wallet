@@ -1,6 +1,6 @@
 /* KCC20 Wallet dApp SDK
    Load from the hosted PWA:
-     <script src="https://kcc-20-wallet.vercel.app/sdk.js?v=179"></script>
+     <script src="https://kcc-20-wallet.vercel.app/sdk.js?v=180"></script>
    Then: await window.kcc20.connect()
    Keys never leave the wallet origin. This script only opens the PWA and talks via postMessage.
    KCC-12 (draft): listens for kaspa:requestProvider and announces kaspa:announceProvider
@@ -12,7 +12,7 @@
 */
 (function (root) {
   'use strict';
-  var SDK_VERSION = '179';
+  var SDK_VERSION = '180';
   if (root.kcc20 && root.kcc20.isKcc20 && String(root.kcc20.sdkVersion || '') === SDK_VERSION) return;
 
   function scriptOrigin() {

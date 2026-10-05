@@ -1,10 +1,20 @@
 {
-  "sdk": "179",
-  "build": "287",
+  "sdk": "180",
+  "build": "288",
   "wallet": "https://kcc-20-wallet.vercel.app",
-  "sdkUrl": "https://kcc-20-wallet.vercel.app/sdk.js?v=179",
+  "sdkUrl": "https://kcc-20-wallet.vercel.app/sdk.js?v=180",
   "rule": "Every SDK_VERSION bump gets an entry here the same day. Pin sdk.js?v=NNN and require window.kcc20.sdkVersion === that NNN.",
   "entries": [
+    {
+      "date": "2026-10-05",
+      "sdk": "180",
+      "build": "288",
+      "title": "buyKron binds the Connect payer",
+      "breaking": false,
+      "notes": [
+        "getState().payer / getState().address / getAccounts()[0] is the account Connect bound. Pass it as buyKron({ tick, amount, expectedPayer }). Scorpion refuses if Home or the Approve chip is a different wallet. Chip switch on that sheet is frozen when expectedPayer is set. Pin sdk.js?v=180."
+      ]
+    },
     {
       "date": "2026-10-04",
       "sdk": "179",

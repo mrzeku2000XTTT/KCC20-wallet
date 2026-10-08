@@ -389,20 +389,21 @@ export async function sendKaspaWithKasware(dest, amountKas) {
   };
 }
 
-export async function sendKrc20WithKasware({ dest, tick, amtRaw }) {
+export async function sendKrc20WithKasware({ dest, tick, amtRaw, json }) {
   const p = kaswareProvider();
   if (!p?.signKRC20Transaction) throw new Error('This KasWare version cannot sign KRC-20');
-  const ticker = String(tick || '').toUpperCase().trim();
-  const inscribe = JSON.stringify({
+  const ticker = String(tick || '').toLowerCase().trim();
+  const destAddr = String(dest || '').trim().toLowerCase();
+  const inscribe = json || JSON.stringify({
     p: 'krc-20',
     op: 'transfer',
     tick: ticker,
     amt: String(amtRaw),
-    to: dest
+    to: destAddr
   });
   let raw;
   try {
-    raw = await p.signKRC20Transaction(inscribe, 4, dest, 0.01);
+    raw = await p.signKRC20Transaction(inscribe, 4, destAddr, 0.01);
   } catch (e) { rejectUser(e); }
   let revealId = '', commitId = '';
   try {

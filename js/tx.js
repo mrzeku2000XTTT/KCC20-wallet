@@ -2,10 +2,10 @@
 import {
   hexToBytes, kaspaAddressFromScriptHash, validateKaspaAddress,
   validateAndCleanUtxo, deepCloneAndFreeze, kasToSompi,
-  kaspaRestBase, networkId, kaspaAddressFromPubkey
+  kaspaRestBase, networkId, kaspaAddressFromPubkey, isP2pkAddr, isP2shAddr
 } from './crypto.js?v=101';
 import { parse as parseSilArtifact, encodeEntry, redeemHex as silRedeemHex, encodeKcc01, toSig65 as silToSig65, SEARCH_DISPATCH_TAGS } from './silverscript.js?v=187';
-import { kaswareSigning, sendKaspaWithKasware, sendKrc20WithKasware, signPsktWithKasware, fetchKaswareUtxos, repairSafeJson, kaswareEnabled, isKaswareInstalled, liveKaswareAccount } from './kasware.js?v=220';
+import { kaswareSigning, sendKaspaWithKasware, sendKrc20WithKasware, signPsktWithKasware, fetchKaswareUtxos, repairSafeJson, kaswareEnabled, isKaswareInstalled, liveKaswareAccount } from './kasware.js?v=221';
 import * as kron from '../vendor/kron-sdk/index.js';
 
 function API() { return kaspaRestBase(); }
@@ -1529,7 +1529,7 @@ async function waitFreshNodeUtxos(rpc, address, spentKeys, needSompi, onStatus) 
   throw new Error('Capsule 0.2 KAS is funded, but the node has not shown change yet. Wait 10 seconds and tap Freeze again.');
 }
 
-export async function sendKas({ wallet, dest, amountKas, utxos, exact = false }) {
+export async function sendKas({ wallet, dest, amountKas, utxos, exact = false, bindCovenant }) {
   if (kaswareSigning(wallet)) {
     return sendKaspaWithKasware(dest, amountKas);
   }
@@ -1562,7 +1562,9 @@ export async function sendKas({ wallet, dest, amountKas, utxos, exact = false })
 
   const destStr = intent.dest;
   const changeAddr = intent.change;
-  const isCovenantDest = /^kaspa(test)?:p/i.test(destStr);
+  const isCovenantDest = bindCovenant === false
+    ? false
+    : (bindCovenant === true || isP2shAddr(destStr));
   const { rpc, url } = await connectPublicNode();
   const feeRate = await nodeFeeRate(rpc);
   const feeGuess = 500_000n;
@@ -2572,19 +2574,46 @@ function sleep(ms) {
 
 async function waitAddressUtxos(address, ms = 90000) {
   const start = Date.now();
+  let rpc = null;
+  try { rpc = (await connectPublicNode()).rpc; } catch {}
   while (Date.now() - start < ms) {
+    if (rpc) {
+      try {
+        const node = await fetchNodeUtxos(rpc, address);
+        if (Array.isArray(node) && node.length) return node;
+      } catch {}
+    }
     try {
       const u = await fetchAddressUtxos(address);
       if (Array.isArray(u) && u.length) return u;
     } catch {}
-    await sleep(1500);
+    await sleep(1200);
   }
   throw new Error('Commit UTXO did not land yet. Wait a few seconds and tap Send again — we will finish the reveal.');
 }
 
+function kasplexApi() {
+  return networkId() === 'testnet-10'
+    ? 'https://tn10api.kasplex.org/v1/krc20'
+    : 'https://api.kasplex.org/v1/krc20';
+}
+
+/** Kasplex byte-level JSON: lowercase, no whitespace, fixed key order. */
+function krc20TransferJson({ tick, amt, to }) {
+  const ticker = String(tick || '').trim().toLowerCase();
+  const amount = String(amt || '').trim();
+  const dest = String(to || '').trim().toLowerCase();
+  if (!/^[a-z0-9]{4,8}$/.test(ticker)) throw new Error('Invalid KRC-20 ticker');
+  if (!/^[0-9]+$/.test(amount) || amount === '0') throw new Error('Invalid token amount');
+  if (!isKrcDest(dest)) throw new Error('KRC-20 can only be sent to a kaspa:q address');
+  return '{"p":"krc-20","op":"transfer","tick":"' + ticker + '","amt":"' + amount + '","to":"' + dest + '"}';
+}
+
 function buildKrc20Script(k, xonlyHex, json) {
+  const key = hexToBytes(String(xonlyHex || '').replace(/^0x/i, ''));
+  if (!key || key.length !== 32) throw new Error('KRC-20 script needs a 32-byte x-only key');
   const sb = new k.ScriptBuilder();
-  sb.addData(xonlyHex);
+  sb.addData(key);
   sb.addOp(k.Opcodes.OpCheckSig);
   sb.addOp(k.Opcodes.OpFalse);
   sb.addOp(k.Opcodes.OpIf);
@@ -2614,46 +2643,86 @@ export function clearKrc20Pending(address) {
 
 /**
  * Kasplex KRC-20 transfer (KasWare / coinchimp commit-reveal).
- * JSON: {"p":"krc-20","op":"transfer","tick","amt","to"}
+ * JSON: {"p":"krc-20","op":"transfer","tick","amt","to"} — all lowercase, no spaces.
  * Script: <xonly> CHECKSIG FALSE IF "kasplex" 0 <json> ENDIF
+ * Commit is a plain P2SH send — never a Toccata genesis covenant.
  */
 export async function sendKrc20({ wallet, dest, tick, amtRaw, utxos, onStatus }) {
-  if (!isKrcDest(dest)) throw new Error('Destination must be a kaspa: address');
+  if (!isKrcDest(dest)) throw new Error('KRC-20 can only be sent to a kaspa:q address');
   const ticker = String(tick || '').toUpperCase().trim();
   if (!ticker) throw new Error('Missing ticker');
   const amt = String(amtRaw || '');
   if (!amt || amt === '0') throw new Error('Missing token amount');
+  const json = krc20TransferJson({ tick: ticker, amt, to: dest });
   if (kaswareSigning(wallet)) {
     onStatus?.('Approve the KRC-20 transfer in KasWare…');
-    return sendKrc20WithKasware({ dest, tick: ticker, amtRaw: amt });
+    return sendKrc20WithKasware({ dest, tick: ticker, amtRaw: amt, json });
   }
 
   const k = await loadKaspaSdk();
   const priv = new k.PrivateKey(wallet.privKey);
   const xonly = priv.toPublicKey().toXOnlyPublicKey().toString();
-  const json = JSON.stringify({ p: 'krc-20', op: 'transfer', tick: ticker, amt, to: dest });
-  const script = buildKrc20Script(k, xonly, json);
-  const p2sh = script.createPayToScriptHashScript();
-  const p2shAddr = String(k.addressFromScriptPublicKey(p2sh, wasmNet()));
-  if (!/^kaspa(test)?:p/i.test(p2shAddr)) throw new Error('Failed to build Kasplex P2SH');
+  const scriptFor = (payload) => buildKrc20Script(k, xonly, payload);
 
   const pending = loadKrc20Pending(wallet.address);
-  let commitTxId = pending && pending.p2shAddr === p2shAddr ? pending.commitTxId : '';
-  if (!commitTxId) {
-    onStatus?.('Commit: parking the Kasplex inscription…');
-    const available = utxos && utxos.length ? utxos : await fetchAddressUtxos(wallet.address);
-    const commit = await sendKas({
-      wallet,
-      dest: p2shAddr,
-      amountKas: 0.1,
-      utxos: available,
-      exact: true
-    });
-    commitTxId = commit.txId;
-    localStorage.setItem(krcPendingKey(wallet.address), JSON.stringify({
-      p2shAddr, tick: ticker, amt, dest, commitTxId, json, at: Date.now()
-    }));
+  if (pending?.p2shAddr && pending.json) {
+    const resumeScript = scriptFor(pending.json);
+    const resumeAddr = String(k.addressFromScriptPublicKey(resumeScript.createPayToScriptHashScript(), wasmNet()));
+    if (resumeAddr === pending.p2shAddr) {
+      onStatus?.('Finishing the parked Kasplex reveal…');
+      try {
+        const parked = await waitAddressUtxos(pending.p2shAddr, 45000);
+        const revealId = await revealKrc20({
+          k, wallet, priv, script: resumeScript, p2shAddr: pending.p2shAddr, revealUtxos: parked
+        });
+        clearKrc20Pending(wallet.address);
+        if (pending.json === json) {
+          return {
+            commitTxId: pending.commitTxId, revealId, txId: revealId,
+            tick: ticker, amt, dest, p2shAddr: pending.p2shAddr
+          };
+        }
+      } catch (e) {
+        const m = errText(e);
+        if (!/did not land|No commit UTXO/i.test(m)) throw e;
+        clearKrc20Pending(wallet.address);
+      }
+    } else {
+      clearKrc20Pending(wallet.address);
+    }
   }
+
+  const script = scriptFor(json);
+  const p2shAddr = String(k.addressFromScriptPublicKey(script.createPayToScriptHashScript(), wasmNet()));
+  if (!isP2shAddr(p2shAddr)) throw new Error('Failed to build Kasplex P2SH');
+
+  onStatus?.('Commit: parking the Kasplex inscription…');
+  const available = utxos && utxos.length ? utxos : await fetchAddressUtxos(wallet.address);
+  let commit = null;
+  let lastErr = null;
+  for (const amountKas of [0.1, 0.2, 0.3]) {
+    try {
+      commit = await sendKas({
+        wallet,
+        dest: p2shAddr,
+        amountKas,
+        utxos: available,
+        exact: true,
+        bindCovenant: false
+      });
+      lastErr = null;
+      break;
+    } catch (e) {
+      lastErr = e;
+      const m = errText(e);
+      if (!/near-even split|storage mass|storage-mass/i.test(m)) throw e;
+    }
+  }
+  if (!commit) throw lastErr || new Error('Could not lock the Kasplex commit');
+  const commitTxId = commit.txId;
+  localStorage.setItem(krcPendingKey(wallet.address), JSON.stringify({
+    p2shAddr, tick: ticker, amt, dest, commitTxId, json, at: Date.now()
+  }));
 
   onStatus?.('Waiting for the commit UTXO…');
   const revealUtxos = await waitAddressUtxos(p2shAddr, 90000);
@@ -2666,7 +2735,29 @@ export async function sendKrc20({ wallet, dest, tick, amtRaw, utxos, onStatus })
 }
 
 function isKrcDest(dest) {
-  return typeof dest === 'string' && /^kaspa(test)?:[a-z0-9]{20,}$/i.test(dest.trim());
+  const s = String(dest || '').trim();
+  if (!isP2pkAddr(s) || isP2shAddr(s)) return false;
+  return !!validateKaspaAddress(s, networkId()).isValid;
+}
+
+function signKrc20RevealInputs(k, pending, tx, priv, script, p2shKeys) {
+  const scripts = [];
+  for (let i = 0; i < tx.inputs.length; i++) {
+    const prev = tx.inputs[i].previousOutpoint;
+    const key = `${prev.transactionId}:${prev.index}`;
+    let sig;
+    try { sig = pending.createInputSignature(i, priv); }
+    catch { sig = k.createInputSignature(tx, i, priv, k.SighashType.All); }
+    if (p2shKeys.has(key)) {
+      const wrapped = script.encodePayToScriptHashSignatureScript(sig);
+      tx.inputs[i].signatureScript = wrapped;
+      scripts.push(hexish(wrapped));
+    } else {
+      tx.inputs[i].signatureScript = hexish(sig);
+      scripts.push(hexish(sig));
+    }
+  }
+  return scripts;
 }
 
 async function revealKrc20({ k, wallet, priv, script, p2shAddr, revealUtxos }) {
@@ -2675,7 +2766,8 @@ async function revealKrc20({ k, wallet, priv, script, p2shAddr, revealUtxos }) {
   const p2shEntries = restUtxosToEntries(revealUtxos, p2shAddr);
   if (!p2shEntries.length) throw new Error('No commit UTXO to reveal');
   const walletUtxos = await fetchAddressUtxos(wallet.address);
-  const feeEntries = restUtxosToEntries(walletUtxos, wallet.address);
+  const feeEntries = restUtxosToEntries(walletUtxos, wallet.address)
+    .map(e => ({ ...e, privKey: e.privKey || wallet.privKey }));
   const p2shKeys = new Set(p2shEntries.map(e => `${e.outpoint.transactionId}:${e.outpoint.index}`));
 
   let pendingList = [];
@@ -2697,34 +2789,37 @@ async function revealKrc20({ k, wallet, priv, script, p2shAddr, revealUtxos }) {
   if (!pendingList.length) throw new Error('Reveal builder returned no transaction');
 
   let txId = null;
+  const budget = 80;
   for (let p = 0; p < pendingList.length; p++) {
     const pending = pendingList[p];
     const tx = pending.transaction;
     tx.version = 1;
-    prepInputs(tx, { sigOpCount: 0, computeBudget: 40 });
+    prepInputs(tx, { sigOpCount: 0, computeBudget: budget });
     try { k.updateTransactionMass(networkId(), tx); } catch {}
-    const scripts = [];
-    for (let i = 0; i < tx.inputs.length; i++) {
-      const prev = tx.inputs[i].previousOutpoint;
-      const key = `${prev.transactionId}:${prev.index}`;
-      let sig;
-      try { sig = pending.createInputSignature(i, priv); }
-      catch { sig = k.createInputSignature(tx, i, priv, k.SighashType.All); }
-      if (p2shKeys.has(key)) {
-        const wrapped = script.encodePayToScriptHashSignatureScript(sig);
-        tx.inputs[i].signatureScript = wrapped;
-        scripts.push(hexish(wrapped));
+    let scripts = signKrc20RevealInputs(k, pending, tx, priv, script, p2shKeys);
+    try {
+      txId = await submitSignedRpc(k, rpc, url, tx, {
+        sigOpCount: 0,
+        computeBudget: budget,
+        lockTime: 0,
+        scripts
+      });
+    } catch (e) {
+      const need = requiredFeeFromError(e);
+      const paid = txInputSum(tx, [...p2shEntries, ...feeEntries]) - txOutputSum(tx);
+      if (need && need > paid) {
+        shrinkOutputsForFee(tx, need - paid + 50_000n, -1);
+        scripts = signKrc20RevealInputs(k, pending, tx, priv, script, p2shKeys);
+        txId = await submitSignedRpc(k, rpc, url, tx, {
+          sigOpCount: 0,
+          computeBudget: budget,
+          lockTime: 0,
+          scripts
+        });
       } else {
-        tx.inputs[i].signatureScript = hexish(sig);
-        scripts.push(hexish(sig));
+        throw e;
       }
     }
-    txId = await submitSignedRpc(k, rpc, url, tx, {
-      sigOpCount: 0,
-      computeBudget: 40,
-      lockTime: 0,
-      scripts
-    });
   }
   if (!txId) throw new Error('Reveal did not return a txid');
   return txId;
@@ -2944,7 +3039,7 @@ export async function sendKcc20({ wallet, dest, token, amountHuman, utxos, onSta
   const forceKcc = String(token?.protocol || 'kcc20') === 'kcc20';
   if (!forceKcc) {
     try {
-      const data = await fetchJsonRetry(`https://api.kasplex.org/v1/krc20/token/${encodeURIComponent(tick)}`, { label: 'Kasplex', tries: 2 });
+      const data = await fetchJsonRetry(`${kasplexApi()}/token/${encodeURIComponent(tick)}`, { label: 'Kasplex', tries: 2 });
       const row = Array.isArray(data?.result) ? data.result[0] : data;
       const live = row && String(row.state || '').toLowerCase() !== 'unused' && Number(row.max || 0) > 0;
       if (live) {

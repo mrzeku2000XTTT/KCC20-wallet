@@ -11,7 +11,7 @@ import {
   fetchKcc20Portfolio, fetchKrc20Portfolio, fetchKcc20PortfolioMany, fetchKrc20PortfolioMany,
   fetchKronAddrTrades, fetchKronTokenUtxos, fetchKronAddrHoldings, KRON_IDX,
   krc20Logo, toTokenRaw, setVaultOwner, kcc20Identicon, VAULT_GROUPS, LIFE_KINDS, lifeKindMeta
-} from './kcc20.js?v=127';
+} from './kcc20.js?v=128';
 import { parseIntent, describeIntent, askFor, parseDurationField, interpretVaultChat, normalizeChat, normalizeVaultType, collectKasAmount } from './intent.js?v=127';
 import { parse as parseSilArtifact, redeemHex as silRedeemHex, matchSilverIntent } from './silverscript.js?v=187';
 import { payloadFromAddress } from './script.js?v=91';
@@ -26,13 +26,13 @@ import {
   spendSilverVault, isSilverScriptVault,
   disconnectRpc, buildDcaDrips, sendKasMany, releaseDcaDrip, cancelDcaDrip, isMassError,
   signPsktJson
-} from './tx.js?v=234';
-import { bootDappConnect, pingTttDappFrame, pingKasdistroDappFrame, TTT_TREASURY, listConnectedSites, disconnectSite, disconnectAllSites, dappSourceOrigin } from './dappConnect.js?v=209';
+} from './tx.js?v=235';
+import { bootDappConnect, pingTttDappFrame, pingKasdistroDappFrame, TTT_TREASURY, listConnectedSites, disconnectSite, disconnectAllSites, dappSourceOrigin } from './dappConnect.js?v=210';
 import {
   changenowWidgetUrl, cnPayoutOk, bootNowStepper, KASPACOM_SWAP
 } from './changenow.js?v=182';
 import { schedulePersistIframeVault, bootIframeVaultWatch } from './iframeVault.js?v=122';
-import { kronMarkets, quoteKronTrade, executeKronTrade, formatKasSompi, lookupKronTick, liveQuote, tradeCostLines, attachKronLogos, kronCandles, kronLogoFor, quoteKcc20Bridge, executeKcc20Bridge, formatTokenRaw } from './kronTrade.js?v=233';
+import { kronMarkets, quoteKronTrade, executeKronTrade, formatKasSompi, lookupKronTick, liveQuote, tradeCostLines, attachKronLogos, kronCandles, kronLogoFor, quoteKcc20Bridge, executeKcc20Bridge, formatTokenRaw } from './kronTrade.js?v=234';
 import {
   BET_AGENT_ADDR, TTT_TICK, WINDOW_MS, windowBounds, fmtRemain,
   kkdagsHeld, isKcc20Pass, hireCost, maxHireHours,
@@ -55,7 +55,7 @@ import {
   connectKasware, disconnectKasware, bindKaswareEvents, loadKaswarePref, compoundWithKasware,
   ensureKaswareSigner, syncKaswareNetwork, walletIsKaswareChip, autoArmKaswareForWallet,
   fetchKaswareUtxos, sameKasAddr, liveKaswareAccount, payWithSignerLabel, openingSignerStatus, signerName
-} from './kasware.js?v=220';
+} from './kasware.js?v=221';
 import {
   isKaspireInstalled, kaspireEnabled, kaspireSigning, kaspireConnectedAddress,
   connectKaspire, disconnectKaspire, bindKaspireEvents, waitForKaspire,
@@ -65,7 +65,7 @@ import {
   kassignerEnabled, setKassignerEnabled, kassignerFaceOn, kassignerDesktopActive,
   isIosDevice, webauthnOk, enrollFaceId, assertFaceId,
   splitKsFrames, ksFrameFeed, encodeKsRequest, encodeKsReply, parseKsPayload
-} from './kassigner.js?v=1';
+} from './kassigner.js?v=2';
 import {
   cookMarkets, cookQuote, cookWrappers, pickWrappedMarketId, cookOrderbook, cookCandles,
   cookDeploy, cookBuildOrder, cookFillOrder, cookSweep, cookWrap, cookMint,
@@ -73,19 +73,19 @@ import {
   loadAgentJob, saveAgentJob, sompiToKas, kasToSompiNum,
   rememberLaunch, loadLaunched, cookOwnerBalances, cookDeployed,
   cookTickOf, cookBookLevels
-} from './atrade.js?v=196';
+} from './atrade.js?v=197';
 import { SCORPION_MEMORY } from './scorpionMemory.js?v=152';
 import { DESK_PLAYBOOK, scalpGate, factCheck } from './deskPlaybook.js?v=187';
 import {
   ksocialFeed, ksocialReplies, ksocialSubmitPost, ksocialSubmitReply, ksocialSubmitVote,
   ksocialRich, KSOCIAL_MAX, ksocialCachedFeed, detectWalletKns, knsNameForPubkey,
   ksocialFeeKas
-} from './ksocial.js?v=207';
+} from './ksocial.js?v=208';
 import { loadVprogLobby, renderVprogLobby, bindVprogLobby, startVprogPoll, stopVprogPoll, renderVprogPlay, bindVprogPlay } from './vprogTtt.js?v=4';
 import { vprogCreate, vprogJoin, vprogTurn } from './vprogLane.js?v=1';
 import { bootWalletForge } from './walletForge.js?v=4';
 
-export const BUILD = '288';
+export const BUILD = '289';
 const DESK_ID_KEY = 'kcc20_desk_id_v1';
 const DESK_VAULT_KEY = 'kcc20_desk_vault_v1';
 
@@ -10312,7 +10312,7 @@ function sendHintFor(a) {
   }
   const proto = a.protocol === 'krc20' ? 'KRC-20' : 'KCC20';
   if (a.protocol === 'krc20') {
-    return `${a.ticker} · ${proto}. Available ${assetAvail(a)}. Kasplex commit-reveal parks ~0.1 KAS, then returns it minus the fee.`;
+    return `${a.ticker} · ${proto}. Available ${assetAvail(a)}. Kasplex commit-reveal parks ~0.1 KAS at a P2SH, then returns it minus the fee. Send to a kaspa:q address.`;
   }
   return `${a.ticker} · ${proto}. Available ${assetAvail(a)}. Sends any amount you hold — cells combine automatically. Keep a bit of native KAS here so the new cell passes storage mass.`;
 }
@@ -10443,6 +10443,10 @@ async function prepareSend(prefill) {
   }
   const destOk = validateKaspaAddress(dest, networkId());
   if (!destOk.isValid) { toast(destOk.error || 'Invalid Kaspa address — use kaspa:q… or a .kas domain'); return; }
+  if (asset.protocol === 'krc20' && isP2shAddr(dest)) {
+    toast('KRC-20 can only be sent to a kaspa:q address');
+    return;
+  }
   if (!form.amount) { toast('Enter an amount'); return; }
   if (asset.native || asset.protocol === 'kas') {
     let sompi;
@@ -10471,7 +10475,7 @@ async function prepareSend(prefill) {
   if (BigInt(raw) > BigInt(asset.balance || '0')) { toast('More than you hold'); return; }
   const proto = asset.protocol === 'krc20' ? 'KRC-20' : 'KCC20';
   const extra = asset.protocol === 'krc20'
-    ? 'Kasplex commit-reveal: ~0.1 KAS is parked in a P2SH then returned minus Toccata fees. Recipient can be any kaspa: wallet.'
+    ? 'Kasplex commit-reveal: ~0.1 KAS is parked in a P2SH then returned minus Toccata fees. Recipient must be a kaspa:q address.'
     : 'KCC20 send (KRON / KasWare): spends as many cells as needed (up to 4) to a kaspa:q key. A small KAS UTXO from this wallet authorizes it.';
   const knsWarn = destDomain ? '⚠️ Check the resolved address before sending. Transfers cannot be reversed. ' : '';
   openSheet('Review send', `

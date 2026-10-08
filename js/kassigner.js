@@ -1,7 +1,7 @@
 /* Scorpion KasSigner mode — QR dual-sign (KasSigner/M5 pattern, no ESP32).
    Desktop: PIN then show QR. Phone: Face ID / PIN, sign, QR the result back.
    Keys stay in each device’s Scorpion. */
-import { isDesktopBrowser } from './kasware.js?v=220';
+import { isDesktopBrowser } from './kasware.js?v=221';
 import { safeSetItem } from './storage.js?v=1';
 
 const STORE = 'kcc20_kassigner_v1';

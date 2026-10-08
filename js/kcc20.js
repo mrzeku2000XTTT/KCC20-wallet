@@ -337,7 +337,14 @@ export function tokenColor(ticker) {
 
 const KCC20_API = 'https://kcc20.info';
 const KASCOV_API = 'https://kascov.io';
-const KASPLEX_API = 'https://api.kasplex.org/v1/krc20';
+function kasplexApi() {
+  try {
+    if (localStorage.getItem('kcc20_network_v1') === 'testnet-10') {
+      return 'https://tn10api.kasplex.org/v1/krc20';
+    }
+  } catch {}
+  return 'https://api.kasplex.org/v1/krc20';
+}
 export const KRON_IDX = 'https://idx.kron.technology/v1/kcc20';
 
 function asList(v) {
@@ -584,7 +591,7 @@ export async function fetchKrc20Portfolio(address) {
   let next = '';
   for (let page = 0; page < 8; page++) {
     const q = next ? `?next=${encodeURIComponent(next)}` : '';
-    const res = await fetch(`${KASPLEX_API}/address/${address}/tokenlist${q}`);
+    const res = await fetch(`${kasplexApi()}/address/${address}/tokenlist${q}`);
     if (res.status === 404) break;
     if (!res.ok) break;
     const data = await res.json();

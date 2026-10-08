@@ -2,7 +2,7 @@
    templates via fetchCpTemplates (recipient-bound ABI); live heads from idx + last trade UTXO. */
 import * as kron from '../vendor/kron-sdk/index.js';
 import { loadKaspaSdk, connectPublicNode, disconnectRpc, fetchAddressUtxos, toRpcTransaction } from './tx.js?v=234';
-import { kaswareSigning, signPsktWithKasware, fetchKaswareUtxos, repairSafeJson } from './kasware.js?v=220';
+import { kaswareSigning, signPsktWithKasware, fetchKaswareUtxos, repairSafeJson } from './kasware.js?v=221';
 import { kaspaRestBase } from './crypto.js?v=100';
 
 const IDX = 'https://idx.kron.technology/v1/kcc20';

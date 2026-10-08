@@ -1,10 +1,20 @@
 {
   "sdk": "180",
-  "build": "289",
+  "build": "290",
   "wallet": "https://kcc-20-wallet.vercel.app",
   "sdkUrl": "https://kcc-20-wallet.vercel.app/sdk.js?v=180",
   "rule": "Every SDK_VERSION bump gets an entry here the same day. Pin sdk.js?v=NNN and require window.kcc20.sdkVersion === that NNN.",
   "entries": [
+    {
+      "date": "2026-10-07",
+      "sdk": "180",
+      "build": "290",
+      "title": "Wallet JS loads again",
+      "breaking": false,
+      "notes": [
+        "BUILD 289 imported isP2pkAddr into tx.js, which already declares that name. The duplicate identifier stopped the module from loading. KRC-20 send fix from 289 is unchanged."
+      ]
+    },
     {
       "date": "2026-10-07",
       "sdk": "180",

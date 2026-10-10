@@ -21,9 +21,10 @@ License: MIT (see `LICENSE` in kcc20-sdk; copy it into your fork).
 - Connect, Sign, Send, Broadcast each need a user click and an Approve sheet.
 - After Connect the popup **closes**. Silent reads must work.
 - `pushTx` returns `{ txId, node }`.
-- `buyKron` is wallet-built. `sendToken` is a bag send.
+- `buyKron` is wallet-built. `sendToken` is a bag send (KCC20 cell or Kasplex KRC-20, whichever this wallet holds).
 - Do not overwrite a real `window.kasware`.
-- Pin `sdk.js?v=NNN` and fail closed if `sdkVersion` mismatches.
+- Pin `sdk.js?v=180` and fail closed if `sdkVersion` mismatches.
+- `buyKron` / `sendToken` / `sendKas` take `expectedPayer` = `getState().payer` (the Connect account).
 
 Read [VEYRA.md](./VEYRA.md) before you rename anything.
 
@@ -39,7 +40,7 @@ Read [VEYRA.md](./VEYRA.md) before you rename anything.
 6. Change KCC-12 `rdns` from `app.kcc20.wallet` to your reverse-DNS so pickers can list **both** wallets.
 7. Trusted iframe origins (TTT, KasDistro) live in `dappConnect.js` — add yours; do not silently allow every site.
 8. Keep `web+kcc20:` or add your own protocol handler in `manifest.json`.
-9. Ship `sdk.js` from **your** origin. Tell integrators to pin `https://YOURHOST/sdk.js?v=179`.
+9. Ship `sdk.js` from **your** origin. Tell integrators to pin `https://YOURHOST/sdk.js?v=180`.
 10. dApps open you with `connect({ identity: 'alice.k' })`. Official `records.url` must be HOST (`saveRecords` via `@dotk/sdk-tx`). Add a row to [dotk-wallets.json](https://kcc20-sdk.vercel.app/dotk-wallets.json). Verified only when deed owner, records.url, and the connected account agree. Step 12: [dotk.html#step-verified](https://kcc20-sdk.vercel.app/dotk.html#step-verified).
 11. Replace Scorpion Home chrome (Wallet 1, TRADE KCC20, Compound, A-Trade) unless that is your look. Step-by-step: [dotk.html](https://kcc20-sdk.vercel.app/dotk.html#guide).
 
@@ -59,6 +60,10 @@ pushTx → { txId, node }
 ```
 
 Optional: `buyKron`, `sendToken`, `sendKaspa`, `getActivityLog`, `kaspa:announceProvider`.
+
+Live pin: **SDK 180** · **BUILD 291** · fork [KCC20-wallet](https://github.com/mrzeku2000XTTT/KCC20-wallet) `main`.
+
+KRC-20 (Kasplex inscription) and KCC20 (KRON covenant cell) are different machines. Home Send and `sendToken` move the bag the wallet actually holds. Vault → Bridge is KCC20→KAS→KCC20 on KRON. There is no L1 wrap that mints a KCC20 cell because someone sent NACHO. To buy a KRON tick, the user spends **KAS** via `buyKron`.
 
 Announce with a **unique** `rdns`. Load your script before the dApp dispatches `kaspa:requestProvider`.
 

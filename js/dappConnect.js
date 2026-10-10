@@ -700,7 +700,9 @@ async function handleSendToken(req) {
         + '<div class="kv"><span class="k">This bag holds</span><span class="v">' + esc(String(have)) + ' ' + esc(tick) + '</span></div>'
         + '<div class="kv"><span class="k">Send</span><span class="v">' + esc(amount) + ' ' + esc(tick) + '</span></div>'
         + '<div class="kv kv-stack"><span class="k">' + (toTreasury ? 'TO treasury (ews)' : 'TO') + '</span><span class="v">' + esc(dest) + '</span></div>'
-        + '<p class="muted" style="text-align:left;padding:8px 0 0;">Same as Home → Send. ~0.50 KAS stays locked in the token cell (KRON dust), leftover KAS comes back as change. Network fee is tiny. This is not a KAS payment.</p>'
+        + '<p class="muted" style="text-align:left;padding:8px 0 0;">' + (String(serializeHolding(hold)?.protocol) === 'krc20'
+          ? 'Kasplex KRC-20 commit-reveal. ~0.1 KAS parks in a P2SH then returns minus the fee. Same as Home → Send. Not a KAS payment.'
+          : 'Same as Home → Send. ~0.50 KAS stays locked in the token cell (KRON dust), leftover KAS comes back as change. Network fee is tiny. This is not a KAS payment.') + '</p>'
     };
   };
   let view = await payBody();

@@ -1,10 +1,20 @@
 {
   "sdk": "180",
-  "build": "290",
+  "build": "291",
   "wallet": "https://kcc-20-wallet.vercel.app",
   "sdkUrl": "https://kcc-20-wallet.vercel.app/sdk.js?v=180",
   "rule": "Every SDK_VERSION bump gets an entry here the same day. Pin sdk.js?v=NNN and require window.kcc20.sdkVersion === that NNN.",
   "entries": [
+    {
+      "date": "2026-10-10",
+      "sdk": "180",
+      "build": "291",
+      "title": "sendToken sends KRC-20 bags",
+      "breaking": false,
+      "notes": [
+        "dApp sendToken uses Kasplex commit-reveal when the bag is KRC-20. KasWare chips can sign that path. Fork KCC20-wallet on SDK 180 / BUILD 291. There is no wrap that mints a KCC20 cell from a Kasplex transfer."
+      ]
+    },
     {
       "date": "2026-10-07",
       "sdk": "180",

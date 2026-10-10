@@ -27,7 +27,7 @@ import {
   disconnectRpc, buildDcaDrips, sendKasMany, releaseDcaDrip, cancelDcaDrip, isMassError,
   signPsktJson
 } from './tx.js?v=236';
-import { bootDappConnect, pingTttDappFrame, pingKasdistroDappFrame, TTT_TREASURY, listConnectedSites, disconnectSite, disconnectAllSites, dappSourceOrigin } from './dappConnect.js?v=210';
+import { bootDappConnect, pingTttDappFrame, pingKasdistroDappFrame, TTT_TREASURY, listConnectedSites, disconnectSite, disconnectAllSites, dappSourceOrigin } from './dappConnect.js?v=211';
 import {
   changenowWidgetUrl, cnPayoutOk, bootNowStepper, KASPACOM_SWAP
 } from './changenow.js?v=182';
@@ -85,7 +85,7 @@ import { loadVprogLobby, renderVprogLobby, bindVprogLobby, startVprogPoll, stopV
 import { vprogCreate, vprogJoin, vprogTurn } from './vprogLane.js?v=1';
 import { bootWalletForge } from './walletForge.js?v=4';
 
-export const BUILD = '290';
+export const BUILD = '291';
 const DESK_ID_KEY = 'kcc20_desk_id_v1';
 const DESK_VAULT_KEY = 'kcc20_desk_vault_v1';
 
@@ -1425,13 +1425,9 @@ function dappHoldingsList() {
 
 async function dappSendToken({ tick, amount, dest }) {
   const t = String(tick || 'KKDAG').toUpperCase();
-  if (isTestnet()) throw new Error('TTT credits are mainnet KKDAG');
+  if (isTestnet()) throw new Error('Token send is mainnet. Switch this wallet off TN10.');
   const payer = walletForDapp() || wallet;
   if (!payer?.address) throw new Error('Unlock KCC20 Wallet first');
-  hydrateNativeKey(payer);
-  if (kaswareSigning(payer) && !hexKey(payer.privKey)) {
-    throw new Error('This chip is KasWare-only. Switch Home to a native wallet (Wallet 2) that holds ' + t + ', Connect again, then Sign.');
-  }
   const destOk = validateKaspaAddress(dest, networkId());
   if (!destOk.isValid) throw new Error(destOk.error || 'Bad destination address');
   if (Number(destOk.versionByte) !== 0) throw new Error('Pay to a kaspa:q receive address, not a kaspa:p vault');
@@ -1440,7 +1436,12 @@ async function dappSendToken({ tick, amount, dest }) {
     throw new Error('This chip is ews (treasury). Fund must spend Wallet 1 (ax6). Switch the Home wallet chip to ax6, then Fund 10 KKDAG.');
   }
   const token = holdingForTick(t);
-  if (!token || token.native) throw new Error('Buy ' + t + ' on Home → Tokens with this wallet, then fund TTT');
+  if (!token || token.native) throw new Error('This wallet has 0 ' + t + '.');
+  const isKrc = token.protocol === 'krc20';
+  hydrateNativeKey(payer);
+  if (!isKrc && kaswareSigning(payer) && !hexKey(payer.privKey)) {
+    throw new Error('This chip is KasWare-only. Switch Home to a native wallet (Wallet 2) that holds ' + t + ', Connect again, then Sign.');
+  }
   const human = String(amount || '').trim();
   const raw = toTokenRaw(human, token.decimals);
   if (BigInt(raw) > BigInt(token.balance || '0')) throw new Error('More than this wallet holds');
@@ -1457,14 +1458,11 @@ async function dappSendToken({ tick, amount, dest }) {
     try { availableUtxos = await fetchAddressUtxos(payer.address); } catch {}
   }
   if (!availableUtxos.length) throw new Error('Need a little KAS in this wallet for the send fee');
-  const result = await sendKcc20({
-    wallet: payer,
-    dest,
-    token,
-    amountHuman: human,
-    utxos: availableUtxos,
-    onStatus: (m) => toast(m)
-  });
+  const onStatus = (m) => toast(m);
+  const result = isKrc
+    ? await sendKrc20({ wallet: payer, dest, tick: t, amtRaw: raw, utxos: availableUtxos, onStatus })
+    : await sendKcc20({ wallet: payer, dest, token, amountHuman: human, utxos: availableUtxos, onStatus });
+  const txId = result.revealId || result.txId || '';
   applyLocalTokenDelta(t, token.protocol || 'kcc20', '-' + String(raw));
   pushTokenActivity({
     dir: 'out',
@@ -1472,31 +1470,34 @@ async function dappSendToken({ tick, amount, dest }) {
     protocol: token.protocol || 'kcc20',
     amount: String(raw),
     decimals: token.decimals,
-    txId: result.txId || '',
-    label: 'TTT credits',
+    txId,
+    label: isKrc ? 'KRC-20 send' : 'TTT credits',
     note: 'From ' + shortAddr(payer.address, 10, 6)
   }, payer.address);
-  if (dest && sameAddrPayload(dest, TTT_TREASURY)) {
+  if (!isKrc && dest && sameAddrPayload(dest, TTT_TREASURY)) {
     pushTokenActivity({
       dir: 'in',
       tick: t,
       protocol: 'kcc20',
       amount: String(raw),
       decimals: token.decimals,
-      txId: result.txId || '',
+      txId,
       label: 'DD pay-in',
       note: 'From ' + shortAddr(payer.address, 10, 6) + ' · KCC20 cell, not kaspa.org q-history'
     }, TTT_TREASURY);
   }
   afterTx();
   return {
-    txId: result.txId,
+    txId,
+    revealId: result.revealId || '',
+    commitTxId: result.commitTxId || '',
     tick: t,
     amount: human,
     raw: String(raw),
     dest,
     from: payer.address,
-    explorer: result.txId ? ('https://kas.fyi/transaction/' + result.txId) : ''
+    protocol: token.protocol || (isKrc ? 'krc20' : 'kcc20'),
+    explorer: txId ? ('https://kas.fyi/transaction/' + txId) : ''
   };
 }
 

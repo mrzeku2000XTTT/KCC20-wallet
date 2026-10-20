@@ -5,7 +5,7 @@ import {
   kaspaRestBase, networkId, kaspaAddressFromPubkey, isP2shAddr
 } from './crypto.js?v=101';
 import { parse as parseSilArtifact, encodeEntry, redeemHex as silRedeemHex, encodeKcc01, toSig65 as silToSig65, SEARCH_DISPATCH_TAGS } from './silverscript.js?v=187';
-import { kaswareSigning, sendKaspaWithKasware, sendKrc20WithKasware, signPsktWithKasware, fetchKaswareUtxos, repairSafeJson, kaswareEnabled, isKaswareInstalled, liveKaswareAccount } from './kasware.js?v=221';
+import { kaswareSigning, sendKrc20WithKasware, signPsktWithKasware, fetchKaswareUtxos, repairSafeJson, kaswareEnabled, isKaswareInstalled, liveKaswareAccount, ensureKaswareSigner } from './kasware.js?v=221';
 import * as kron from '../vendor/kron-sdk/index.js';
 
 function API() { return kaspaRestBase(); }
@@ -1529,10 +1529,51 @@ async function waitFreshNodeUtxos(rpc, address, spentKeys, needSompi, onStatus) 
   throw new Error('Capsule 0.2 KAS is funded, but the node has not shown change yet. Wait 10 seconds and tap Freeze again.');
 }
 
-export async function sendKas({ wallet, dest, amountKas, utxos, exact = false, bindCovenant }) {
-  if (kaswareSigning(wallet)) {
-    return sendKaspaWithKasware(dest, amountKas);
+function nativeP2pkOnly(entries, wallet) {
+  return (entries || []).filter(e =>
+    isNativeP2pkScript(e.scriptPublicKey?.script || e.scriptPublicKey) &&
+    !e.redeemHex &&
+    isP2pkAddr(e.address, wallet?.address)
+  );
+}
+
+function sendKasFail(e) {
+  const m = errText(e);
+  if (/false stack|failed to verify the signature/i.test(m)) {
+    const net = networkId() === 'testnet-10' ? 'TN10' : 'mainnet';
+    throw new Error(
+      'KasWare signed the wrong coin (false stack). Reject leftover KasWare popups, switch KasWare to this same ' +
+      net + ' account as the Home chip, then Fund again.'
+    );
   }
+  if (/RPC Server|remote error/i.test(m)) {
+    throw new Error('Kaspa node rejected this send. Reject leftover KasWare popups, then try again.');
+  }
+  throw (e instanceof Error ? e : new Error(m));
+}
+
+async function submitKaswareSignedSend(k, rpc, url, tx, entries, wallet, computeBudget) {
+  let json = repairSafeJson(tx.serializeToSafeJSON());
+  json = attachUtxosToSafeJson(json, entries, wallet.address);
+  json = fillSafeJsonUtxosFromTx(json, tx);
+  json = repairSafeJson(json);
+  const signInputs = [...tx.inputs].map((_, i) => ({ index: i, sighashType: 1 }));
+  const signedJson = repairSafeJson(await signPsktWithKasware(json, signInputs));
+  const signed = k.Transaction.deserializeFromSafeJSON(signedJson);
+  assertKaswareP2pkSigs(signed);
+  const txId = await submitSignedRpc(k, rpc, url, signed, {
+    sigOpCount: 0,
+    computeBudget,
+    lockTime: 0
+  });
+  try {
+    const n = tx.inputs.length;
+    for (let i = 0; i < n; i++) tx.inputs[i].signatureScript = signed.inputs[i].signatureScript;
+  } catch {}
+  return txId;
+}
+
+export async function sendKas({ wallet, dest, amountKas, utxos, exact = false, bindCovenant }) {
   const k = await loadKaspaSdk();
   const destCheck = validateKaspaAddress(String(dest || ''), networkId());
   if (!destCheck.isValid) throw new Error(destCheck.error || 'Invalid destination address');
@@ -1550,21 +1591,35 @@ export async function sendKas({ wallet, dest, amountKas, utxos, exact = false, b
     network: networkId(),
     exact: !!exact
   });
+  const external = !!(kaswareSigning(wallet) && !walletNativeHex(wallet));
+  if (external) {
+    try { await ensureKaswareSigner(wallet); } catch (e) { sendKasFail(e); }
+  }
   let entries;
-  if (wallet?.receiveAddrs?.length > 1 && !(utxos && utxos.length && utxos[0]?.privKey)) {
+  if (wallet?.receiveAddrs?.length > 1 && !(utxos && utxos.length && utxos[0]?.privKey) && !external) {
     entries = await fetchOwnedUtxos(wallet);
   } else {
     entries = restUtxosToEntries(utxos || [], wallet.address)
       .map(e => ({ ...e, privKey: e.privKey || wallet.privKey, redeemHex: e.redeemHex || '' }));
   }
-  if (!entries.length) throw new Error('No UTXOs yet — receive KAS first');
+  if (external && !entries.length) {
+    try { entries = restUtxosToEntries(await fetchKaswareUtxos(wallet.address), wallet.address); } catch {}
+    if (!entries.length) {
+      try { entries = restUtxosToEntries(await fetchAddressUtxos(wallet.address), wallet.address); } catch {}
+    }
+  }
+  if (external) entries = nativeP2pkOnly(entries, wallet);
+  if (!entries.length) {
+    throw new Error(external
+      ? 'KasWare has no native kaspa:q coins on this chip. Switch KasWare to the same ' + (networkId() === 'testnet-10' ? 'TN10' : 'mainnet') + ' account as Home, then Fund again.'
+      : 'No UTXOs yet — receive KAS first');
+  }
   entries = [...entries].sort((a, b) => (a.amount < b.amount ? 1 : -1));
 
   const destStr = intent.dest;
   const changeAddr = intent.change;
-  const isCovenantDest = bindCovenant === false
-    ? false
-    : (bindCovenant === true || isP2shAddr(destStr));
+  // Paying a kaspa:p / kaspatest:p is a plain P2SH output. Genesis bind is opt-in only.
+  const isCovenantDest = bindCovenant === true;
   const { rpc, url } = await connectPublicNode();
   const feeRate = await nodeFeeRate(rpc);
   const feeGuess = 500_000n;
@@ -1615,11 +1670,12 @@ export async function sendKas({ wallet, dest, amountKas, utxos, exact = false, b
     pendingList = [{ transaction: tx }];
   }
 
-  const priv = privKeyFromWallet(k, wallet);
+  const priv = external ? null : privKeyFromWallet(k, wallet);
   let txId = null;
   let covenantId = null;
   let paidFee = 0n;
   let locked = amount;
+  try {
   for (let p = 0; p < pendingList.length; p++) {
     const pending = pendingList[p];
     const tx = pending.transaction;
@@ -1631,15 +1687,19 @@ export async function sendKas({ wallet, dest, amountKas, utxos, exact = false, b
     if (isCovenantDest && isFinal) covenantId = bindCovenantOutputs(k, tx, destStr);
     try { k.updateTransactionMass(networkId(), tx); } catch {}
     assertSimpleSendOutputs(k, tx, destStr, changeAddr, isFinal);
-    let scripts = meetToccataFee(k, tx, priv, plan.entries, 0n, protect);
     if (exact) assertExactDest(k, tx, destStr, requested);
     try {
-      txId = await submitSignedRpc(k, rpc, url, tx, {
-        sigOpCount: 0,
-        computeBudget: p2shBudget,
-        lockTime: 0,
-        scripts
-      });
+      if (external) {
+        txId = await submitKaswareSignedSend(k, rpc, url, tx, plan.entries, wallet, p2shBudget);
+      } else {
+        const scripts = meetToccataFee(k, tx, priv, plan.entries, 0n, protect);
+        txId = await submitSignedRpc(k, rpc, url, tx, {
+          sigOpCount: 0,
+          computeBudget: p2shBudget,
+          lockTime: 0,
+          scripts
+        });
+      }
     } catch (e) {
       const need = requiredFeeFromError(e);
       const paid = txInputSum(tx, plan.entries) - txOutputSum(tx);
@@ -1647,19 +1707,26 @@ export async function sendKas({ wallet, dest, amountKas, utxos, exact = false, b
         shrinkOutputsForFee(tx, need - paid + 50_000n, protect);
         if (exact) assertExactDest(k, tx, destStr, requested);
         assertSimpleSendOutputs(k, tx, destStr, changeAddr, isFinal);
-        scripts = signWalletInputs(k, tx, priv, plan.entries);
-        txId = await submitSignedRpc(k, rpc, url, tx, {
-          sigOpCount: 0,
-          computeBudget: p2shBudget,
-          lockTime: 0,
-          scripts
-        });
+        if (external) {
+          txId = await submitKaswareSignedSend(k, rpc, url, tx, plan.entries, wallet, p2shBudget);
+        } else {
+          const scripts = signWalletInputs(k, tx, priv, plan.entries);
+          txId = await submitSignedRpc(k, rpc, url, tx, {
+            sigOpCount: 0,
+            computeBudget: p2shBudget,
+            lockTime: 0,
+            scripts
+          });
+        }
       } else {
         throw e;
       }
     }
     paidFee = txInputSum(tx, plan.entries) - txOutputSum(tx);
     if (protect >= 0) locked = BigInt(tx.outputs[protect].value);
+  }
+  } catch (e) {
+    sendKasFail(e);
   }
   if (!txId) throw new Error(lastErr || 'Node did not return a transaction id');
   return {

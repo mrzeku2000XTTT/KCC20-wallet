@@ -26,8 +26,8 @@ import {
   spendSilverVault, isSilverScriptVault,
   disconnectRpc, buildDcaDrips, sendKasMany, releaseDcaDrip, cancelDcaDrip, isMassError,
   signPsktJson
-} from './tx.js?v=236';
-import { bootDappConnect, pingTttDappFrame, pingKasdistroDappFrame, TTT_TREASURY, listConnectedSites, disconnectSite, disconnectAllSites, dappSourceOrigin } from './dappConnect.js?v=211';
+} from './tx.js?v=237';
+import { bootDappConnect, pingTttDappFrame, pingKasdistroDappFrame, TTT_TREASURY, listConnectedSites, disconnectSite, disconnectAllSites, dappSourceOrigin } from './dappConnect.js?v=212';
 import {
   changenowWidgetUrl, cnPayoutOk, bootNowStepper, KASPACOM_SWAP
 } from './changenow.js?v=182';
@@ -85,7 +85,7 @@ import { loadVprogLobby, renderVprogLobby, bindVprogLobby, startVprogPoll, stopV
 import { vprogCreate, vprogJoin, vprogTurn } from './vprogLane.js?v=1';
 import { bootWalletForge } from './walletForge.js?v=4';
 
-export const BUILD = '291';
+export const BUILD = '292';
 const DESK_ID_KEY = 'kcc20_desk_id_v1';
 const DESK_VAULT_KEY = 'kcc20_desk_vault_v1';
 
@@ -1832,7 +1832,7 @@ async function dappCompileVaults(spec) {
   };
 }
 
-async function dappSendKas({ dest, amount, amountKas }) {
+async function dappSendKas({ dest, amount, amountKas, exact, bindCovenant }) {
   const payer = walletForDapp() || wallet;
   const amt = String(amountKas || amount || '').trim();
   if (!(Number(amt) > 0)) throw new Error('Enter an amount of KAS greater than 0');
@@ -1856,7 +1856,9 @@ async function dappSendKas({ dest, amount, amountKas }) {
     wallet: payer,
     dest,
     amountKas: amt,
-    utxos: availableUtxos.length ? availableUtxos : undefined
+    utxos: availableUtxos.length ? availableUtxos : undefined,
+    exact: exact === true || isP2shAddr(dest),
+    bindCovenant: bindCovenant === true
   });
   afterTx();
   const sent = Number(result.amountKas || amt);
@@ -10496,7 +10498,11 @@ async function broadcastSend(dest, amount) {
     let result;
     if (kaswareSigning(wallet)) {
       toast('Approve in KasWare…');
-      result = await sendKas({ wallet, dest, amountKas: amount });
+      result = await sendKas({
+        wallet, dest, amountKas: amount,
+        exact: isP2shAddr(dest),
+        bindCovenant: false
+      });
     } else {
       await loadKaspaSdk();
       toast('Connecting to public Kaspa node…');
@@ -10506,7 +10512,11 @@ async function broadcastSend(dest, amount) {
         ? await fetchOwnedUtxos(wallet)
         : await fetchAddressUtxos(wallet.address);
       if (!availableUtxos.length) { toast('No UTXOs yet — receive KAS first'); return; }
-      result = await sendKas({ wallet, dest, amountKas: amount, utxos: availableUtxos });
+      result = await sendKas({
+        wallet, dest, amountKas: amount, utxos: availableUtxos,
+        exact: isP2shAddr(dest),
+        bindCovenant: false
+      });
     }
     pushTokenActivity({
       dir: 'out', tick: 'KAS', protocol: 'kas',
@@ -11966,7 +11976,7 @@ async function fundVault(vault, opts = {}) {
   let result;
   if (kaswareSigning(wallet)) {
     setSheetStatus('Approve lock in KasWare…');
-    result = await sendKas({ wallet, dest: vault.address, amountKas: amt, exact: true });
+    result = await sendKas({ wallet, dest: vault.address, amountKas: amt, exact: true, bindCovenant: false });
   } else {
     setSheetStatus('Loading Kaspa engine…');
     await loadKaspaSdk();
@@ -11978,7 +11988,7 @@ async function fundVault(vault, opts = {}) {
     setSheetStatus('Connecting to public Kaspa node (ivy / resolver)…');
     const ping = await pingPublicNode();
     setSheetStatus('Connected ' + ping.networkId + ' @ ' + ping.url.replace('wss://','') + ' — signing…');
-    result = await sendKas({ wallet, dest: vault.address, amountKas: amt, utxos: availableUtxos, exact: true });
+    result = await sendKas({ wallet, dest: vault.address, amountKas: amt, utxos: availableUtxos, exact: true, bindCovenant: false });
   }
   const lockedSompi = Math.round((Number(result.amountKas) || amt) * 1e8);
   const mins = Number(vault.params?.lockMinutes || vault.params?.minutes || 0);

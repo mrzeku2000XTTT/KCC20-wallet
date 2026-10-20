@@ -1,10 +1,20 @@
 {
   "sdk": "180",
-  "build": "291",
+  "build": "292",
   "wallet": "https://kcc-20-wallet.vercel.app",
   "sdkUrl": "https://kcc-20-wallet.vercel.app/sdk.js?v=180",
   "rule": "Every SDK_VERSION bump gets an entry here the same day. Pin sdk.js?v=NNN and require window.kcc20.sdkVersion === that NNN.",
   "entries": [
+    {
+      "date": "2026-10-10",
+      "sdk": "180",
+      "build": "292",
+      "title": "KasWare Fund to kaspatest:p",
+      "breaking": false,
+      "notes": [
+        "sendKas no longer hands the whole pay to KasWare sendKaspa. Scorpion builds the tx (exact P2SH for TTT SENTINEL-X402), KasWare only signPskt on native P2PK inputs, we broadcast. Paying a kaspa:p is a plain deposit — genesis bind is opt-in. Fixes false stack on TN10 Fund with Scorpion."
+      ]
+    },
     {
       "date": "2026-10-10",
       "sdk": "180",

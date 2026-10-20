@@ -1042,27 +1042,29 @@ async function handleSendKas(req) {
   if (!dest) dest = String(w?.address || '');
   const parsed = validateKaspaAddress(dest, netName() === 'kaspa_testnet_10' ? 'testnet-10' : 'mainnet');
   if (!parsed.isValid) {
-    throw new Error('Need a full kaspa:q… receive address (not truncated, not kaspa:p). ' + (parsed.error || ''));
+    throw new Error('Need a full kaspa: or kaspatest: address. ' + (parsed.error || ''));
   }
   dest = dest.toLowerCase();
   const selfSend = dest === String(w?.address || '').toLowerCase();
+  const toP2sh = Number(parsed.versionByte) === 8 || /:p/i.test(dest);
   if (!(Number(amount) > 0)) amount = '0.002';
   const payBody = async () => {
     const live = hooks.getWallet?.() || w;
     const payerLine = (typeof hooks.payerLabel === 'function' && hooks.payerLabel())
       || (live?.name || 'Wallet') + ' · ' + (live?.address || '');
+    const kind = selfSend ? 'Self-send KAS.' : (toP2sh ? 'Pay this covenant address.' : 'Plain KAS send.');
     return {
       html:
         '<p class="muted" style="text-align:left;padding:0 0 8px;"><b>'
-        + (selfSend ? 'Self-send KAS.' : 'Plain KAS send.')
+        + kind
         + '</b> You review and confirm here. The dApp never sees your key'
-        + (selfSend ? '. Miner fee only — used to unlock TTT.' : '.')
+        + (selfSend ? '. Miner fee only — used to unlock TTT.' : (toP2sh ? '. Exact amount lands on the kaspatest:p / kaspa:p. Change stays here.' : '.'))
         + '</p>'
         + '<div class="kv kv-stack"><span class="k">FROM</span><span class="v">' + esc(payerLine) + '</span></div>'
-        + '<div class="kv kv-stack"><span class="k">TO</span><span class="v">' + esc(dest) + (selfSend ? ' · self' : '') + '</span></div>'
+        + '<div class="kv kv-stack"><span class="k">TO</span><span class="v">' + esc(dest) + (selfSend ? ' · self' : (toP2sh ? ' · P2SH' : '')) + '</span></div>'
         + '<div class="field" style="margin-top:10px;"><label>Amount (KAS)</label>'
         + '<input id="dapp-kas-amt" type="text" inputmode="decimal" value="' + esc(amount) + '"></div>'
-        + '<p class="muted" style="text-align:left;padding:8px 0 0;">Network fee is extra (~0.001–0.004 KAS). Change stays in this wallet.</p>'
+        + '<p class="muted" style="text-align:left;padding:8px 0 0;">Network fee is extra (~0.001–0.004 KAS). Change stays in this wallet. KasWare only signs the P2PK input — Scorpion builds the pay.</p>'
     };
   };
   let view = await payBody();
@@ -1087,7 +1089,14 @@ async function handleSendKas(req) {
     await hooks.requirePin('Send ' + amount + ' KAS');
   }
   if (typeof hooks.sendKas !== 'function') throw new Error('Wallet cannot send KAS from this session');
-  return hooks.sendKas({ dest, amount, amountKas: amount, skipPin: true });
+  return hooks.sendKas({
+    dest,
+    amount,
+    amountKas: amount,
+    skipPin: true,
+    exact: toP2sh || req.params?.exact === true,
+    bindCovenant: false
+  });
 }
 
 async function handleOpenWallet(req) {

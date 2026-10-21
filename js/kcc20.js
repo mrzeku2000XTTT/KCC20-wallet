@@ -374,6 +374,21 @@ function firstHttp(...vals) {
   return '';
 }
 
+function layoutOfStandard(s) {
+  const x = String(s || '').toLowerCase();
+  if (x === 'kron-native' || x === 'kron') return 'kron';
+  if (x === 'legacy-kcc20' || x === 'legacy') return 'legacy';
+  if (x === 'kcc-20' || x === 'kcc20' || x === 'final' || x === 'kcc-0020') return 'final';
+  return x || '';
+}
+
+function holdKey(t) {
+  const id = String(t?.tokenId || '').replace(/^0x/i, '').toLowerCase();
+  if (/^[0-9a-f]{64}$/.test(id)) return 'id:' + id;
+  const tick = String(t?.ticker || '').toUpperCase();
+  return tick ? 'tick:' + tick : '';
+}
+
 function mapKccRow(p) {
   const ticker = String(p.listed_ticker || p.ticker || p.fallback_name || p.name || 'TOKEN').toUpperCase();
   const listing = p.listing || p.listed || {};
@@ -382,6 +397,7 @@ function mapKccRow(p) {
     listing.image, listing.logoURI, listing.logo,
     p.image_api
   );
+  const standard = p.standard || p.layout || 'kcc20';
   return {
     protocol: 'kcc20',
     tokenId: p.token_id || p.tokenId || '',
@@ -391,7 +407,8 @@ function mapKccRow(p) {
     balance: String(p.balance || '0'),
     cells: Number(p.cells || 0),
     image,
-    standard: p.standard || 'kcc20',
+    standard,
+    layout: p.layout || layoutOfStandard(standard),
     priceKas: p.price_kas != null ? Number(p.price_kas) : null
   };
 }
@@ -415,7 +432,9 @@ function mapKronHold(r) {
     decimals: Number(r.dec ?? r.decimals ?? 0),
     tokenId: r.covenantId || r.tokenId || '',
     cells: Number(r.utxoCount || r.cells || 0),
-    image: r.logoURI || r.logo || ''
+    image: r.logoURI || r.logo || '',
+    standard: 'kron-native',
+    layout: 'kron'
   };
 }
 
@@ -481,34 +500,63 @@ async function fetchKascovHoldings(address, pubKey) {
   return { list: [], err: lastErr };
 }
 
-function mergeHoldings(kron, kascov, kronAuthoritative = false) {
+function mergeHoldings(kron, info, kascov, kronAuthoritative = false) {
   const map = new Map();
   for (const t of kron || []) {
-    const key = String(t.ticker || '').toUpperCase();
-    if (key) map.set(key, t);
+    const key = holdKey(t);
+    if (key) map.set(key, { ...t, layout: t.layout || 'kron', standard: t.standard || 'kron-native' });
   }
-  for (const t of kascov || []) {
-    const key = String(t.ticker || '').toUpperCase();
-    if (!key) continue;
+  const overlay = (t) => {
+    const key = holdKey(t);
+    if (!key) return;
     const cur = map.get(key);
     if (!cur) {
-      if (!kronAuthoritative) map.set(key, t);
-      continue;
+      map.set(key, t);
+      return;
     }
     map.set(key, {
-      ...t,
       ...cur,
       image: cur.image || t.image,
-      name: (cur.name && cur.name !== cur.ticker) ? cur.name : (t.name || cur.name)
+      name: (cur.name && cur.name !== cur.ticker) ? cur.name : (t.name || cur.name),
+      standard: t.standard || cur.standard,
+      layout: t.layout || cur.layout,
+      tokenId: cur.tokenId || t.tokenId,
+      decimals: Number(cur.decimals || t.decimals || 0),
+      balance: (kronAuthoritative && cur.balance) ? cur.balance : (t.balance || cur.balance),
+      cells: Number(cur.cells || t.cells || 0)
     });
-  }
+  };
+  for (const t of info || []) overlay(t);
+  for (const t of kascov || []) overlay(t);
   return [...map.values()].filter(t => {
     try { return BigInt(t.balance || '0') > 0n; } catch { return true; }
   });
 }
 
+async function fetchKcc20InfoHoldings(address) {
+  if (!address) return { list: [], err: null };
+  try {
+    const data = await fetchJson(`${KCC20_API}/v1/addresses/${encodeURIComponent(address)}/analysis?activity_limit=1&counterparty_limit=1`);
+    const rows = asList(data?.portfolio || data);
+    return { list: rows.filter(p => Number(p.balance) > 0).map(mapKccRow), err: null };
+  } catch (e) {
+    return { list: [], err: e };
+  }
+}
+
+export async function fetchKcc20InfoCells(address) {
+  if (!address) return [];
+  try {
+    const data = await fetchJson(`${KCC20_API}/v1/owners/${encodeURIComponent(address)}/cells?limit=100`);
+    return Array.isArray(data?.cells) ? data.cells : [];
+  } catch {
+    return [];
+  }
+}
+
 export async function fetchKcc20Portfolio(address, pubKey) {
   const kascovP = fetchKascovHoldings(address, pubKey);
+  const infoP = fetchKcc20InfoHoldings(address);
   let kron = [];
   let kronOk = false;
   let lastErr = null;
@@ -521,25 +569,18 @@ export async function fetchKcc20Portfolio(address, pubKey) {
     }
   }
 
-  if (kronOk) {
-    const kascovBag = kron.length
-      ? await withTimeout(kascovP, 450, { list: [], err: null })
-      : { list: [], err: null };
-    return mergeHoldings(kron, kascovBag?.list || [], true);
-  }
+  const infoBag = await withTimeout(infoP, kronOk && kron.length ? 1800 : 4000, { list: [], err: null });
+  const info = infoBag?.list || [];
+  if (infoBag?.err) lastErr = infoBag.err;
 
-  const kascovBag = await kascovP;
+  const kascovBag = kronOk && kron.length
+    ? await withTimeout(kascovP, 450, { list: [], err: null })
+    : await kascovP;
   const kascov = kascovBag?.list || [];
   lastErr = kascovBag?.err || lastErr;
-  if (kascov.length || kron.length) return mergeHoldings(kron, kascov, false);
 
-  if (address) {
-    try {
-      const data = await fetchJson(`${KCC20_API}/v1/addresses/${address}/analysis?activity_limit=1&counterparty_limit=1`);
-      if (data) return asList(data.portfolio || data).filter(p => Number(p.balance) > 0).map(mapKccRow);
-    } catch (e) {
-      lastErr = e;
-    }
+  if (kron.length || info.length || kascov.length) {
+    return mergeHoldings(kron, info, kascov, kronOk);
   }
 
   if (lastErr) throw lastErr;
@@ -553,7 +594,7 @@ export async function fetchKcc20PortfolioMany(addrs) {
   const map = new Map();
   for (const list of bags) {
     for (const t of list) {
-      const key = String(t.ticker || '').toUpperCase();
+      const key = holdKey(t) || String(t.ticker || '').toUpperCase();
       const cur = map.get(key);
       if (!cur) map.set(key, { ...t, balance: String(t.balance || '0') });
       else {

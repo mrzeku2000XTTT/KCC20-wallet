@@ -1,10 +1,20 @@
 {
   "sdk": "180",
-  "build": "292",
+  "build": "293",
   "wallet": "https://kcc-20-wallet.vercel.app",
   "sdkUrl": "https://kcc-20-wallet.vercel.app/sdk.js?v=180",
   "rule": "Every SDK_VERSION bump gets an entry here the same day. Pin sdk.js?v=NNN and require window.kcc20.sdkVersion === that NNN.",
   "entries": [
+    {
+      "date": "2026-10-21",
+      "sdk": "180",
+      "build": "293",
+      "title": "Official KCC-20 Final",
+      "breaking": false,
+      "notes": [
+        "kaspanet KCC-20 is Final. Scorpion encodes the 112-byte KCC20State and transfer tags 79c71c23 / fd3ef14a from the spec vectors. Send uses that path for Final cells (p2pk-schnorr / p2pkh-schnorr) from kcc20.info. KRON 46-byte bags still send on the KRON builder. TRADE stays KRON. Holdings label KCC-20 vs KRON. Pin sdk.js?v=180."
+      ]
+    },
     {
       "date": "2026-10-10",
       "sdk": "180",

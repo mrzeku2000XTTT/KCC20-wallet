@@ -357,7 +357,7 @@
       howToCompile: 'git clone kaspanet/silverscript (tag v1.0.0). cargo run -p silverscript-lang --bin silverc -- contract.sil --constructor-args args.json',
       howWeUseIt: 'Paste silverc JSON (schema_version 1). We P2SH-hash bytecode (kaspa:p), fund it, spend with encodeEntry() (args + 4-byte dispatch tag). PIN/KasWare signs only P2PK funding.',
       kcc01: 'Dispatch tag is blake3("name(type1,type2,...)")[0..4] from silverc. We use the tag on the artifact.',
-      kcc20: 'KCC20 transfer in v1 is binding=cov N:M with a shared delegate. Live KRON ticks in this wallet are production KCC20 — do not mix example contracts with those ticks.',
+      kcc20: 'Official KCC-20 (Final 2026-10-21) is 112-byte KCC20State, transfer 79c71c23, transfer_delegator fd3ef14a. Live KRON ticks in this wallet are the pre-final 46-byte layout — Scorpion sends them on the KRON path and does not mix the two.',
       testnetNote: 'v1.0.0 is the official release. Compile with that tag, not rc1, when the dApp intends SilverScript.',
       release: RELEASE
     };

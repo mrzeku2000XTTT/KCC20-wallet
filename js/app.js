@@ -11,9 +11,9 @@ import {
   fetchKcc20Portfolio, fetchKrc20Portfolio, fetchKcc20PortfolioMany, fetchKrc20PortfolioMany,
   fetchKronAddrTrades, fetchKronTokenUtxos, fetchKronAddrHoldings, KRON_IDX,
   krc20Logo, toTokenRaw, setVaultOwner, kcc20Identicon, VAULT_GROUPS, LIFE_KINDS, lifeKindMeta
-} from './kcc20.js?v=128';
+} from './kcc20.js?v=129';
 import { parseIntent, describeIntent, askFor, parseDurationField, interpretVaultChat, normalizeChat, normalizeVaultType, collectKasAmount } from './intent.js?v=127';
-import { parse as parseSilArtifact, redeemHex as silRedeemHex, matchSilverIntent } from './silverscript.js?v=187';
+import { parse as parseSilArtifact, redeemHex as silRedeemHex, matchSilverIntent } from './silverscript.js?v=188';
 import { payloadFromAddress } from './script.js?v=91';
 import { explainTransaction, scorpionAnswer } from './scorpion.js?v=115';
 import {
@@ -26,7 +26,7 @@ import {
   spendSilverVault, isSilverScriptVault,
   disconnectRpc, buildDcaDrips, sendKasMany, releaseDcaDrip, cancelDcaDrip, isMassError,
   signPsktJson
-} from './tx.js?v=237';
+} from './tx.js?v=238';
 import { bootDappConnect, pingTttDappFrame, pingKasdistroDappFrame, TTT_TREASURY, listConnectedSites, disconnectSite, disconnectAllSites, dappSourceOrigin } from './dappConnect.js?v=212';
 import {
   changenowWidgetUrl, cnPayoutOk, bootNowStepper, KASPACOM_SWAP
@@ -84,8 +84,9 @@ import {
 import { loadVprogLobby, renderVprogLobby, bindVprogLobby, startVprogPoll, stopVprogPoll, renderVprogPlay, bindVprogPlay } from './vprogTtt.js?v=4';
 import { vprogCreate, vprogJoin, vprogTurn } from './vprogLane.js?v=1';
 import { bootWalletForge } from './walletForge.js?v=4';
+import { layoutLabel, isFinalLayout } from './kcc20Final.js?v=1';
 
-export const BUILD = '292';
+export const BUILD = '293';
 const DESK_ID_KEY = 'kcc20_desk_id_v1';
 const DESK_VAULT_KEY = 'kcc20_desk_vault_v1';
 
@@ -2508,7 +2509,7 @@ function holdingPnl(t) {
 }
 
 function tokenRow(t, extra = '') {
-  const proto = t.protocol === 'krc20' ? 'KRC-20' : (t.native ? 'Native' : 'KCC20');
+  const proto = t.protocol === 'krc20' ? 'KRC-20' : (t.native ? 'Native' : layoutLabel(t.layout, t.standard));
   const amt = t.native ? formatAmount(t.sompi) : formatTokenUnits(t.balance, t.decimals);
   const pnl = t.native ? null : holdingPnl(t);
   let amtMeta = `<em>${esc(t.native ? (t.usd || '') : proto)}</em>`;
@@ -2523,7 +2524,7 @@ function tokenRow(t, extra = '') {
   } else if (Number(t.priceKas) && price) {
     amtMeta = `<em>${esc(usd(Number(t.balance) / (10 ** (t.decimals || 0)) * t.priceKas))}</em>`;
   }
-  const key = `${t.protocol || 'watch'}:${t.ticker}`;
+  const key = `${t.protocol || 'watch'}:${t.tokenId || t.ticker}`;
   const sub = t.native
     ? (esc(t.ticker) + ' · ' + esc(proto))
     : (esc(t.ticker) + ' · ' + (pnl?.px ? (pnl.px >= 0.0001 ? pnl.px.toPrecision(4) : pnl.px.toExponential(2)) + ' KAS' : proto));
@@ -2627,7 +2628,7 @@ function renderTokens() {
     const kccLive = kccHoldings.filter(heldPositive);
     kcc.innerHTML = kccLive.length
       ? kccLive.map(t => tokenRow(t)).join('')
-      : `<div class="empty">${tokenLoadErr || (lastTokenFetch ? 'No KCC20 on this address yet. Import the same key as KasWare to see KRON / KKDAG here automatically.' : 'Loading KCC20…')}</div>`;
+      : `<div class="empty">${tokenLoadErr || (lastTokenFetch ? 'No KCC-20 or KRON bags on this address yet. Import the same key as KasWare to see them here automatically.' : 'Loading KCC-20…')}</div>`;
   }
   const krc = $('token-krc20');
   if (krc) {
@@ -6084,7 +6085,7 @@ function openKasSheet() {
 function openTokenSheet(token) {
   if (!token) { showPage('tokens'); return; }
   haptic();
-  const proto = token.protocol === 'krc20' ? 'KRC-20' : 'KCC20';
+  const proto = token.protocol === 'krc20' ? 'KRC-20' : layoutLabel(token.layout, token.standard);
   const amt = formatTokenUnits(token.balance, token.decimals);
   const link = token.protocol === 'krc20'
     ? explorerAddr(wallet?.address || '')
@@ -6092,12 +6093,13 @@ function openTokenSheet(token) {
   const logoSrc = token.image || (token.native ? 'assets/kas.svg' : (token.protocol === 'krc20' ? krc20Logo(token.ticker) : kcc20Identicon(token.ticker)));
   const assetKey = `${token.protocol}:${token.ticker}`;
   const kcc = token.protocol === 'kcc20';
+  const kronTrade = kcc && !isFinalLayout(token);
   const ddSweep = kcc && String(token.ticker).toUpperCase() === 'KKDAG' && isTttTreasuryWallet();
   const acts = [
     tkAct('tk-recv', 'Receive', ICO_RECV),
     tkAct('tk-send', 'Send', ICO_SEND),
     ...(ddSweep ? [tkAct('tk-dd-sweep', 'Sweep', ICO_SEND, ' tk-buy')] : []),
-    ...(kcc ? [
+    ...(kronTrade ? [
       tkAct('tk-buy', 'Buy', ICO_BUY, ' tk-buy'),
       tkAct('tk-dca', 'DCA', ICO_DCA, ' tk-dca'),
       tkAct('tk-sell', 'Sell', ICO_SELL, ' tk-sell')
@@ -6109,8 +6111,8 @@ function openTokenSheet(token) {
       <div class="tk-amt">${esc(amt)}<small>${esc(token.ticker)}</small></div>
       <div class="tk-meta">${esc(token.name || token.ticker)} · ${esc(proto)}${token.cells ? ' · ' + esc(token.cells) + ' cells' : ''}</div>
     </div>
-    <div class="tk-actions${kcc ? ' tk-5' : ' tk-2'}">${acts}</div>
-    ${kcc ? `<button class="btn btn-glass tk-more" id="tk-freeze" type="button">${ICO_LOCK} Freeze</button>` : ''}
+    <div class="tk-actions${kronTrade ? ' tk-5' : ' tk-2'}">${acts}</div>
+    ${kronTrade ? `<button class="btn btn-glass tk-more" id="tk-freeze" type="button">${ICO_LOCK} Freeze</button>` : ''}
     <p class="muted" style="padding-top:12px;"><a href="${esc(link)}" target="_blank" rel="noopener" style="color:var(--gold-2)">Open explorer</a></p>
   `, { confirm: false, cancelLabel: 'Close' });
   $('tk-recv')?.addEventListener('click', () => { closeSheet(); openReceive({ token }); });

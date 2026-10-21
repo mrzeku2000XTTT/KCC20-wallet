@@ -4,9 +4,13 @@ import {
   validateAndCleanUtxo, deepCloneAndFreeze, kasToSompi,
   kaspaRestBase, networkId, kaspaAddressFromPubkey, isP2shAddr
 } from './crypto.js?v=101';
-import { parse as parseSilArtifact, encodeEntry, redeemHex as silRedeemHex, encodeKcc01, toSig65 as silToSig65, SEARCH_DISPATCH_TAGS } from './silverscript.js?v=187';
+import { parse as parseSilArtifact, encodeEntry, redeemHex as silRedeemHex, encodeKcc01, toSig65 as silToSig65, SEARCH_DISPATCH_TAGS } from './silverscript.js?v=188';
 import { kaswareSigning, sendKrc20WithKasware, signPsktWithKasware, fetchKaswareUtxos, repairSafeJson, kaswareEnabled, isKaswareInstalled, liveKaswareAccount, ensureKaswareSigner } from './kasware.js?v=221';
 import * as kron from '../vendor/kron-sdk/index.js';
+import { fetchKcc20InfoCells } from './kcc20.js?v=129';
+import {
+  classifyRedeem, buildOfficialSend, fillOfficialWitnesses, KCC20_FINAL, canWalletSpendScheme
+} from './kcc20Final.js?v=1';
 
 function API() { return kaspaRestBase(); }
 
@@ -2983,27 +2987,209 @@ function concatU8(parts) {
 }
 
 function parseKcc20Redeem(hex) {
-  const script = hexToU8(hex);
-  const hits = [];
-  for (let s = 0; s + 46 <= script.length; s++) {
-    if (script[s] === 32 && script[s + 33] === 1 && script[s + 34] <= 3 && script[s + 35] === 8 && script[s + 44] === 1 && script[s + 45] <= 1) {
-      hits.push(s);
+  const classified = classifyRedeem(hex);
+  if (classified.layout === 'kron') {
+    return {
+      script: classified.script,
+      stateStart: classified.stateStart,
+      ownerIdentifier: classified.ownerIdentifier,
+      identifierType: classified.identifierType,
+      amount: classified.amount,
+      isMinter: classified.isMinter
+    };
+  }
+  if (classified.layout === 'final') {
+    throw new Error('This is a Final KCC-20 cell (112-byte state). Freeze still uses the KRON layout.');
+  }
+  throw new Error('KCC20 cell redeem is not the KRON state layout (owner/type/amount/isMinter)');
+}
+
+function hex64(v) {
+  const s = String(v || '').replace(/^0x/i, '').toLowerCase();
+  return /^[0-9a-f]{64}$/.test(s) ? s : '';
+}
+
+function wantsFinalKcc20(token) {
+  const L = String(token?.layout || '').toLowerCase();
+  const s = String(token?.standard || '').toLowerCase();
+  return L === 'final' || s === 'kcc-20' || s === 'kcc20' || s === 'final' || s === 'kcc-0020';
+}
+
+async function loadOfficialKcc20Pieces(wallet, tokenId) {
+  const id = hex64(tokenId);
+  const scanAddrs = (wallet.receiveAddrs && wallet.receiveAddrs.length)
+    ? wallet.receiveAddrs.map(a => a.address)
+    : [wallet.address];
+  const bags = await Promise.all(scanAddrs.slice(0, 12).map(a => fetchKcc20InfoCells(a)));
+  const pieces = [];
+  for (const c of bags.flat()) {
+    const redeem = c.redeem_script || c.redeemScriptHex || c.redeem;
+    const txid = c.outpoint_tx_id || c.outpoint?.transactionId;
+    const index = Number(c.outpoint_index ?? c.outpoint?.index ?? 0);
+    if (!redeem || !txid) continue;
+    let parsed;
+    try { parsed = classifyRedeem(redeem); } catch { continue; }
+    if (parsed.layout !== 'final') continue;
+    const cid = hex64(c.covenant_id || c.covenantId);
+    if (id && cid && cid !== id) continue;
+    if (id && !cid) continue;
+    if (!canWalletSpendScheme(parsed.ownerScheme)) continue;
+    let kasValue = 0n;
+    try { kasValue = BigInt(c.value ?? 0); } catch { kasValue = 0n; }
+    if (kasValue < MIN_CELL_KAS) {
+      try { kasValue = await cellKasValue(txid, index, c); } catch { continue; }
+    }
+    pieces.push({
+      transactionId: txid,
+      index,
+      tokenAmount: parsed.amount,
+      value: kasValue,
+      redeem: parsed,
+      covenantId: cid || id
+    });
+  }
+  pieces.sort((a, b) => (a.tokenAmount < b.tokenAmount ? -1 : 1));
+  return { pieces, tokenCovid: id || hex64(pieces[0]?.covenantId) };
+}
+
+async function sendOfficialKcc20({ wallet, dest, destPk, sendAmt, tick, utxos, onStatus, loaded }) {
+  const keyHex = walletNativeHex(wallet);
+  if (!keyHex) {
+    throw new Error('Final KCC-20 send needs the 64-hex key on this chip so Scorpion can put the owner signature in the covenant witness.');
+  }
+  const pieces = loaded.pieces || [];
+  if (!pieces.length) throw new Error('No Final KCC-20 cells for ' + tick + ' on this address (kcc20.info).');
+  const totalTok = pieces.reduce((a, p) => a + p.tokenAmount, 0n);
+  if (totalTok < sendAmt) throw new Error(`You only hold ${totalTok} ${tick}`);
+  const maxIns = KCC20_FINAL.maxIns;
+  const selected = pickKcc20Pieces(pieces, sendAmt, maxIns);
+  const haveSel = selected.reduce((a, p) => a + p.tokenAmount, 0n);
+  if (haveSel < sendAmt) {
+    throw new Error(`${tick} is split across ${pieces.length} cells. Final KCC-20 allows ${maxIns} inputs; those hold ${haveSel}. Send ${haveSel} now, then the rest.`);
+  }
+  const tokenCovid = hex64(loaded.tokenCovid || selected[0].covenantId);
+  if (!tokenCovid) throw new Error('kcc20.info did not return a covenant id for ' + tick);
+  const tpl = { script: selected[0].redeem.script, stateStart: selected[0].redeem.stateStart || 0 };
+  const inCellKas = selected.reduce((a, p) => a + p.value, 0n);
+  const senderTokens = selected.map(p => ({
+    transactionId: p.transactionId,
+    index: p.index,
+    value: p.value,
+    state: {
+      amount: p.tokenAmount,
+      owner: p.redeem.owner,
+      ownerScheme: p.redeem.ownerScheme,
+      borrowScheme: p.redeem.borrowScheme,
+      borrowGuard: p.redeem.borrowGuard,
+      extension: p.redeem.extension
+    }
+  }));
+  const selfPk = hexToU8(String(wallet.pubKey || '').replace(/^0x/i, ''));
+  onStatus?.(`Sending ${sendAmt} ${tick} as Final KCC-20 (${selected.length} cell${selected.length === 1 ? '' : 's'})…`);
+
+  const k = await loadKaspaSdk();
+  const { rpc, url } = await connectPublicNode();
+  const walletUtxos = utxos && utxos.length ? utxos : await fetchAddressUtxos(wallet.address);
+  const feeEntries = restUtxosToEntries(walletUtxos, wallet.address)
+    .sort((a, b) => (a.amount < b.amount ? 1 : -1));
+  if (!feeEntries.length) {
+    throw new Error('KAS UTXO did not load for this send. Close TTT, tap Refresh on Home, then Send again.');
+  }
+
+  const destPads = [COVENANT_DUST, 51_000_000n, 55_000_000n, 60_000_000n, 75_000_000n];
+  let lastErr = null;
+  for (const destPad of destPads) {
+    try {
+      const spend = buildOfficialSend({
+        k,
+        tpl,
+        senderTokens,
+        destOwner: destPk,
+        sendAmount: sendAmt,
+        tokenCovid,
+        tokenDust: destPad,
+        selfOwner: selfPk.length === 32 ? selfPk : senderTokens[0].state.owner,
+        selfScheme: senderTokens[0].state.ownerScheme
+      });
+      if (spend.outputs[0]) spend.outputs[0].value = destPad;
+      if (spend.outputs[1]) {
+        let ch = destPad + 1_000_000n;
+        if (ch < COVENANT_DUST) ch = COVENANT_DUST + 1_000_000n;
+        spend.outputs[1].value = ch;
+      }
+      const covOut = spend.outputs.reduce((s, o) => s + BigInt(o.value), 0n);
+      let need = covOut + 2_000_000n - inCellKas;
+      if (need < 2_000_000n) need = 2_000_000n;
+      const picked = pickFeeEntries(feeEntries, need, 2);
+      if (!picked.length) throw kasNeedError(need);
+      const fundingEntries = picked.map(e => ({
+        address: wallet.address,
+        outpoint: e.outpoint,
+        amount: e.amount,
+        scriptPublicKey: e.scriptPublicKey,
+        blockDaaScore: e.blockDaaScore,
+        isCoinbase: e.isCoinbase
+      }));
+      let asm = kron.spend.assembleNativeTx(k, {
+        spend,
+        fundingEntries,
+        changeAddress: wallet.address,
+        networkFee: 10_000n
+      });
+      if (asm.change < 200_000n) throw kasNeedError(2_000_000n);
+      const networkFee = kron.spend.estimateNativeFee(k, networkId(), asm, 100);
+      asm = kron.spend.assembleNativeTx(k, {
+        spend,
+        fundingEntries,
+        changeAddress: wallet.address,
+        networkFee
+      });
+      if (asm.change < 200_000n) throw kasNeedError(networkFee);
+      const tx = asm.transaction;
+      const fundIdx = asm.fundingInputIndexes || [];
+      const tokenIdx = spend.inputs.map((_, i) => i);
+      const key = new k.PrivateKey(keyHex);
+      onStatus?.('Signing Final KCC-20 owner + KAS fee…');
+      const cleared = [...tx.inputs];
+      for (const i of tokenIdx) cleared[i].signatureScript = '';
+      tx.inputs = cleared;
+      const sigs = tokenIdx.map(i => k.createInputSignature(tx, i, key, k.SighashType.All));
+      fillOfficialWitnesses(spend, sigs, selfPk.length === 32 ? selfPk : null);
+      const filled = [...tx.inputs];
+      for (let i = 0; i < spend.inputs.length; i++) {
+        const hex = hexish(spend.inputs[i].signatureScript);
+        if (!hex || hex.length < 20) throw new Error('Final KCC-20 owner signature is empty');
+        filled[i].signatureScript = hex;
+        filled[i].sigOpCount = 0;
+      }
+      for (const idx of fundIdx) {
+        const sig = k.createInputSignature(tx, idx, key, k.SighashType.All);
+        const hex = hexish(sig);
+        if (!hex || hex.length < 20) throw new Error('Signing failed — empty KAS fee signature');
+        filled[idx].signatureScript = hex;
+        filled[idx].sigOpCount = 0;
+      }
+      tx.inputs = filled;
+      onStatus?.('Broadcasting Final KCC-20 send…');
+      const submitted = await withTimeout(
+        rpc.submitTransaction({ transaction: tx, allowOrphan: true }),
+        20000,
+        'Timed out broadcasting to ' + url
+      );
+      const txId = submitted?.transactionId || submitted || tx.id;
+      if (!txId) throw new Error('Node did not return a transaction id');
+      const changeTok = selected.reduce((a, p) => a + p.tokenAmount, 0n) - sendAmt;
+      return { txId, revealId: txId, tick, amt: sendAmt.toString(), dest, change: changeTok.toString(), standard: 'kcc-20' };
+    } catch (e) {
+      lastErr = e;
+      const m = errText(e);
+      if (/null pointer/i.test(m)) throw new Error('KCC-20 send failed in the Kaspa engine while building the tx. Hard-refresh and try again.');
+      if (/Need about .* more KAS/i.test(m)) throw e;
+      if (!isMassError(e) && !/mass exceeds|storage mass|transaction mass/i.test(m)) throw e;
+      onStatus?.('Storage mass high — retrying with a slightly fatter cell…');
     }
   }
-  if (hits.length !== 1) {
-    throw new Error('KCC20 cell redeem is not the KRON state layout (owner/type/amount/isMinter)');
-  }
-  const n = hits[0];
-  let amount = 0n;
-  for (let i = 0; i < 8; i++) amount |= BigInt(script[n + 36 + i]) << BigInt(8 * i);
-  return {
-    script,
-    stateStart: n,
-    ownerIdentifier: script.slice(n + 1, n + 33),
-    identifierType: script[n + 34],
-    amount,
-    isMinter: script[n + 45] === 1
-  };
+  throw lastErr || massSplitError();
 }
 
 function materializeKcc20Script(tpl, state) {
@@ -3129,6 +3315,28 @@ export async function sendKcc20({ wallet, dest, token, amountHuman, utxos, onSta
   if (keyHex && !cleanPrivHex(wallet.privKey)) wallet.privKey = keyHex;
   if (!kaswareSigning(wallet) && !keyHex) {
     throw new Error('No in-app key on this wallet. Import the 64-hex key, or turn KasWare on in You → Settings.');
+  }
+
+  const wantId = hex64(token?.tokenId);
+  const wantFinal = wantsFinalKcc20(token);
+  const layout = String(token?.layout || '').toLowerCase();
+  const standard = String(token?.standard || '').toLowerCase();
+  const skipOfficial = layout === 'kron' || standard === 'kron-native';
+  if (wantFinal || (wantId && !skipOfficial)) {
+    onStatus?.(wantFinal ? 'Loading Final KCC-20 cells…' : 'Checking kcc20.info for Final KCC-20 cells…');
+    try {
+      const official = await loadOfficialKcc20Pieces(wallet, wantId);
+      if (official.pieces.length) {
+        return await sendOfficialKcc20({
+          wallet, dest, destPk, sendAmt, tick, utxos, onStatus, loaded: official
+        });
+      }
+      if (wantFinal) {
+        throw new Error('No Final KCC-20 cells for ' + tick + ' on this address (kcc20.info).');
+      }
+    } catch (e) {
+      if (wantFinal) throw e;
+    }
   }
 
   onStatus?.('Loading KRON KCC20 cells…');

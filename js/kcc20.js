@@ -1,5 +1,7 @@
 /* KCC20 token watchlist + covenant catalog for this repo. */
 
+import { fetchKaspaRocketHoldings, fetchKaspaRocketCatalogue } from './kaspaRocket.js?v=1';
+
 export const NATIVE_KAS = {
   ticker: 'KAS',
   name: 'Kaspa',
@@ -378,6 +380,7 @@ function layoutOfStandard(s) {
   const x = String(s || '').toLowerCase();
   if (x === 'kron-native' || x === 'kron') return 'kron';
   if (x === 'legacy-kcc20' || x === 'legacy') return 'legacy';
+  if (x === 'kasparocket' || x === 'kaspa-rocket') return 'final';
   if (x === 'kcc-20' || x === 'kcc20' || x === 'final' || x === 'kcc-0020') return 'final';
   return x || '';
 }
@@ -500,13 +503,13 @@ async function fetchKascovHoldings(address, pubKey) {
   return { list: [], err: lastErr };
 }
 
-function mergeHoldings(kron, info, kascov, kronAuthoritative = false) {
+function mergeHoldings(kron, info, kascov, rocket, kronAuthoritative = false) {
   const map = new Map();
   for (const t of kron || []) {
     const key = holdKey(t);
     if (key) map.set(key, { ...t, layout: t.layout || 'kron', standard: t.standard || 'kron-native' });
   }
-  const overlay = (t) => {
+  const overlay = (t, preferBalance = false) => {
     const key = holdKey(t);
     if (!key) return;
     const cur = map.get(key);
@@ -516,20 +519,44 @@ function mergeHoldings(kron, info, kascov, kronAuthoritative = false) {
     }
     map.set(key, {
       ...cur,
-      image: cur.image || t.image,
+      image: (preferBalance ? t.image : cur.image) || t.image || cur.image,
       name: (cur.name && cur.name !== cur.ticker) ? cur.name : (t.name || cur.name),
       standard: t.standard || cur.standard,
       layout: t.layout || cur.layout,
       tokenId: cur.tokenId || t.tokenId,
-      decimals: Number(cur.decimals || t.decimals || 0),
-      balance: (kronAuthoritative && cur.balance) ? cur.balance : (t.balance || cur.balance),
-      cells: Number(cur.cells || t.cells || 0)
+      decimals: Number((preferBalance ? t.decimals : cur.decimals) || t.decimals || cur.decimals || 0),
+      balance: preferBalance && t.balance ? t.balance : ((kronAuthoritative && cur.balance) ? cur.balance : (t.balance || cur.balance)),
+      cells: Number(t.cells || cur.cells || 0),
+      venue: t.venue || cur.venue,
+      lpCovenantId: t.lpCovenantId || cur.lpCovenantId,
+      rocketUrl: t.rocketUrl || cur.rocketUrl,
+      priceKas: t.priceKas != null ? t.priceKas : cur.priceKas
     });
   };
   for (const t of info || []) overlay(t);
   for (const t of kascov || []) overlay(t);
+  for (const t of rocket || []) overlay(t, true);
   return [...map.values()].filter(t => {
     try { return BigInt(t.balance || '0') > 0n; } catch { return true; }
+  });
+}
+
+function stampRocketCatalogue(list, cat) {
+  if (!cat || !cat.size) return list || [];
+  return (list || []).map(t => {
+    const id = String(t.tokenId || '').replace(/^0x/i, '').toLowerCase();
+    const m = id ? cat.get(id) : null;
+    if (!m) return t;
+    return {
+      ...t,
+      image: t.image || m.image,
+      name: (t.name && t.name !== t.ticker) ? t.name : (m.name || t.name),
+      tokenId: t.tokenId || m.tokenId,
+      venue: t.venue || 'kasparocket',
+      rocketUrl: t.rocketUrl || m.rocketUrl,
+      standard: t.standard || 'kasparocket',
+      layout: t.layout || 'final'
+    };
   });
 }
 
@@ -557,6 +584,10 @@ export async function fetchKcc20InfoCells(address) {
 export async function fetchKcc20Portfolio(address, pubKey) {
   const kascovP = fetchKascovHoldings(address, pubKey);
   const infoP = fetchKcc20InfoHoldings(address);
+  const rocketP = address
+    ? fetchKaspaRocketHoldings(address).then(list => ({ list, err: null })).catch(e => ({ list: [], err: e }))
+    : Promise.resolve({ list: [], err: null });
+  const catP = fetchKaspaRocketCatalogue().catch(() => new Map());
   let kron = [];
   let kronOk = false;
   let lastErr = null;
@@ -579,8 +610,13 @@ export async function fetchKcc20Portfolio(address, pubKey) {
   const kascov = kascovBag?.list || [];
   lastErr = kascovBag?.err || lastErr;
 
-  if (kron.length || info.length || kascov.length) {
-    return mergeHoldings(kron, info, kascov, kronOk);
+  const rocketBag = await withTimeout(rocketP, 3500, { list: [], err: null });
+  const rocket = rocketBag?.list || [];
+  if (rocketBag?.err) lastErr = rocketBag.err;
+  const cat = await withTimeout(catP, 2500, new Map());
+
+  if (kron.length || info.length || kascov.length || rocket.length) {
+    return stampRocketCatalogue(mergeHoldings(kron, info, kascov, rocket, kronOk), cat);
   }
 
   if (lastErr) throw lastErr;

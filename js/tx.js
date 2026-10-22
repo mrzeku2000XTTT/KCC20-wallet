@@ -4,13 +4,13 @@ import {
   validateAndCleanUtxo, deepCloneAndFreeze, kasToSompi,
   kaspaRestBase, networkId, kaspaAddressFromPubkey, isP2shAddr
 } from './crypto.js?v=101';
-import { parse as parseSilArtifact, encodeEntry, redeemHex as silRedeemHex, encodeKcc01, toSig65 as silToSig65, SEARCH_DISPATCH_TAGS } from './silverscript.js?v=188';
+import { parse as parseSilArtifact, encodeEntry, redeemHex as silRedeemHex, encodeKcc01, toSig65 as silToSig65, SEARCH_DISPATCH_TAGS } from './silverscript.js?v=189';
 import { kaswareSigning, sendKrc20WithKasware, signPsktWithKasware, fetchKaswareUtxos, repairSafeJson, kaswareEnabled, isKaswareInstalled, liveKaswareAccount, ensureKaswareSigner } from './kasware.js?v=221';
 import * as kron from '../vendor/kron-sdk/index.js';
-import { fetchKcc20InfoCells } from './kcc20.js?v=129';
+import { fetchKcc20InfoCells } from './kcc20.js?v=130';
 import {
   classifyRedeem, buildOfficialSend, fillOfficialWitnesses, KCC20_FINAL, canWalletSpendScheme
-} from './kcc20Final.js?v=1';
+} from './kcc20Final.js?v=2';
 
 function API() { return kaspaRestBase(); }
 

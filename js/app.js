@@ -11,9 +11,9 @@ import {
   fetchKcc20Portfolio, fetchKrc20Portfolio, fetchKcc20PortfolioMany, fetchKrc20PortfolioMany,
   fetchKronAddrTrades, fetchKronTokenUtxos, fetchKronAddrHoldings, KRON_IDX,
   krc20Logo, toTokenRaw, setVaultOwner, kcc20Identicon, VAULT_GROUPS, LIFE_KINDS, lifeKindMeta
-} from './kcc20.js?v=129';
+} from './kcc20.js?v=130';
 import { parseIntent, describeIntent, askFor, parseDurationField, interpretVaultChat, normalizeChat, normalizeVaultType, collectKasAmount } from './intent.js?v=127';
-import { parse as parseSilArtifact, redeemHex as silRedeemHex, matchSilverIntent } from './silverscript.js?v=188';
+import { parse as parseSilArtifact, redeemHex as silRedeemHex, matchSilverIntent } from './silverscript.js?v=189';
 import { payloadFromAddress } from './script.js?v=91';
 import { explainTransaction, scorpionAnswer } from './scorpion.js?v=115';
 import {
@@ -26,7 +26,7 @@ import {
   spendSilverVault, isSilverScriptVault,
   disconnectRpc, buildDcaDrips, sendKasMany, releaseDcaDrip, cancelDcaDrip, isMassError,
   signPsktJson
-} from './tx.js?v=238';
+} from './tx.js?v=239';
 import { bootDappConnect, pingTttDappFrame, pingKasdistroDappFrame, TTT_TREASURY, listConnectedSites, disconnectSite, disconnectAllSites, dappSourceOrigin } from './dappConnect.js?v=212';
 import {
   changenowWidgetUrl, cnPayoutOk, bootNowStepper, KASPACOM_SWAP
@@ -84,9 +84,9 @@ import {
 import { loadVprogLobby, renderVprogLobby, bindVprogLobby, startVprogPoll, stopVprogPoll, renderVprogPlay, bindVprogPlay } from './vprogTtt.js?v=4';
 import { vprogCreate, vprogJoin, vprogTurn } from './vprogLane.js?v=1';
 import { bootWalletForge } from './walletForge.js?v=4';
-import { layoutLabel, isFinalLayout } from './kcc20Final.js?v=1';
+import { layoutLabel, isFinalLayout } from './kcc20Final.js?v=2';
 
-export const BUILD = '293';
+export const BUILD = '294';
 const DESK_ID_KEY = 'kcc20_desk_id_v1';
 const DESK_VAULT_KEY = 'kcc20_desk_vault_v1';
 
@@ -2628,7 +2628,7 @@ function renderTokens() {
     const kccLive = kccHoldings.filter(heldPositive);
     kcc.innerHTML = kccLive.length
       ? kccLive.map(t => tokenRow(t)).join('')
-      : `<div class="empty">${tokenLoadErr || (lastTokenFetch ? 'No KCC-20 or KRON bags on this address yet. Import the same key as KasWare to see them here automatically.' : 'Loading KCC-20…')}</div>`;
+      : `<div class="empty">${tokenLoadErr || (lastTokenFetch ? 'No KCC-20, KRON, or KaspaRocket bags on this address yet. Import the same key as KasWare to see them here automatically.' : 'Loading KCC-20…')}</div>`;
   }
   const krc = $('token-krc20');
   if (krc) {
@@ -6087,9 +6087,11 @@ function openTokenSheet(token) {
   haptic();
   const proto = token.protocol === 'krc20' ? 'KRC-20' : layoutLabel(token.layout, token.standard);
   const amt = formatTokenUnits(token.balance, token.decimals);
+  const rocketLink = token.rocketUrl || (token.venue === 'kasparocket' && token.tokenId
+    ? `https://kasparocket.fun/token/${encodeURIComponent(token.tokenId)}` : '');
   const link = token.protocol === 'krc20'
     ? explorerAddr(wallet?.address || '')
-    : (token.tokenId ? `https://kascov.io/#/mainnet/token/${encodeURIComponent(token.tokenId)}` : 'https://kascov.io/#/tokens');
+    : (rocketLink || (token.tokenId ? `https://kascov.io/#/mainnet/token/${encodeURIComponent(token.tokenId)}` : 'https://kascov.io/#/tokens'));
   const logoSrc = token.image || (token.native ? 'assets/kas.svg' : (token.protocol === 'krc20' ? krc20Logo(token.ticker) : kcc20Identicon(token.ticker)));
   const assetKey = `${token.protocol}:${token.ticker}`;
   const kcc = token.protocol === 'kcc20';
@@ -6113,7 +6115,7 @@ function openTokenSheet(token) {
     </div>
     <div class="tk-actions${kronTrade ? ' tk-5' : ' tk-2'}">${acts}</div>
     ${kronTrade ? `<button class="btn btn-glass tk-more" id="tk-freeze" type="button">${ICO_LOCK} Freeze</button>` : ''}
-    <p class="muted" style="padding-top:12px;"><a href="${esc(link)}" target="_blank" rel="noopener" style="color:var(--gold-2)">Open explorer</a></p>
+    <p class="muted" style="padding-top:12px;"><a href="${esc(link)}" target="_blank" rel="noopener" style="color:var(--gold-2)">${rocketLink ? 'Open on KaspaRocket' : 'Open explorer'}</a></p>
   `, { confirm: false, cancelLabel: 'Close' });
   $('tk-recv')?.addEventListener('click', () => { closeSheet(); openReceive({ token }); });
   $('tk-send')?.addEventListener('click', () => { closeSheet(); openSend({ token, assetKey }); });

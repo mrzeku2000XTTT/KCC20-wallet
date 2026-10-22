@@ -420,6 +420,7 @@ export function validateStandardTransfer(inputs, nextStates, { maxIns = KCC20_FI
 export function layoutLabel(layout, standard) {
   const s = String(standard || '').toLowerCase();
   const L = String(layout || '').toLowerCase();
+  if (s === 'kasparocket' || s === 'kaspa-rocket') return 'KaspaRocket';
   if (L === 'final' || s === 'kcc-20' || s === 'kcc20' || s === 'final' || s === 'kcc-0020') return 'KCC-20';
   if (L === 'kron' || s === 'kron-native' || s === 'kron') return 'KRON';
   if (L === 'legacy' || s === 'legacy-kcc20') return 'KCC-20';
@@ -429,7 +430,7 @@ export function layoutLabel(layout, standard) {
 export function isFinalLayout(token) {
   const L = String(token?.layout || '').toLowerCase();
   const s = String(token?.standard || '').toLowerCase();
-  return L === 'final' || s === 'kcc-20' || s === 'kcc20' || s === 'final' || s === 'kcc-0020';
+  return L === 'final' || s === 'kcc-20' || s === 'kcc20' || s === 'final' || s === 'kcc-0020' || s === 'kasparocket' || s === 'kaspa-rocket';
 }
 
 export function isKronLayout(token) {

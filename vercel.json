@@ -7,6 +7,10 @@
     {
       "source": "/vprog-tt/:path*",
       "destination": "https://vprogs-tt.izio.fr/:path*"
+    },
+    {
+      "source": "/rocket-api/:path*",
+      "destination": "https://kasparocket.fun/pro-api/:path*"
     }
   ],
   "headers": [
@@ -19,6 +23,20 @@
     },
     {
       "source": "/cook-api/(.*)",
+      "headers": [
+        { "key": "Access-Control-Allow-Origin", "value": "*" },
+        { "key": "Cross-Origin-Resource-Policy", "value": "cross-origin" }
+      ]
+    },
+    {
+      "source": "/rocket-api/(.*)",
+      "headers": [
+        { "key": "Access-Control-Allow-Origin", "value": "*" },
+        { "key": "Cross-Origin-Resource-Policy", "value": "cross-origin" }
+      ]
+    },
+    {
+      "source": "/api/rocket/(.*)",
       "headers": [
         { "key": "Access-Control-Allow-Origin", "value": "*" },
         { "key": "Cross-Origin-Resource-Policy", "value": "cross-origin" }

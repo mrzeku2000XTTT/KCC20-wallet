@@ -1,6 +1,6 @@
 /* KCC20 token watchlist + covenant catalog for this repo. */
 
-import { fetchKaspaRocketHoldings, fetchKaspaRocketCatalogue } from './kaspaRocket.js?v=1';
+import { fetchKaspaRocketHoldings, fetchKaspaRocketCatalogue } from './kaspaRocket.js?v=2';
 
 export const NATIVE_KAS = {
   ticker: 'KAS',

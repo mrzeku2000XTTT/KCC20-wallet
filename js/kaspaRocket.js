@@ -21,7 +21,7 @@ function browserFetch(url, init) {
 function rocketApiUrl() {
   try {
     if (typeof location !== 'undefined' && /^https?:/i.test(location.origin || '')) {
-      return location.origin.replace(/\/$/, '') + '/api/rocket';
+      return location.origin.replace(/\/$/, '') + '/rocket-api';
     }
   } catch {}
   return KASPAROCKET_API;

@@ -1,6 +1,6 @@
 {
   "sdk": "180",
-  "build": "294",
+  "build": "295",
   "wallet": "https://kcc-20-wallet.vercel.app",
   "sdkUrl": "https://kcc-20-wallet.vercel.app/sdk.js?v=180",
   "rule": "Every SDK_VERSION bump gets an entry here the same day. Pin sdk.js?v=NNN and require window.kcc20.sdkVersion === that NNN.",
@@ -8,11 +8,11 @@
     {
       "date": "2026-10-22",
       "sdk": "180",
-      "build": "294",
+      "build": "295",
       "title": "KaspaRocket.fun tokens",
       "breaking": false,
       "notes": [
-        "TOKENS reads KaspaRocket mainnet through the official @kasparocket/sdk 0.1.6. Holdings and catalogue come from kasparocket.fun (network:mainnet). KRON TRADE stays KRON. Pin sdk.js?v=180."
+        "TOKENS reads KaspaRocket mainnet through the official @kasparocket/sdk 0.1.6. Holdings and catalogue come from kasparocket.fun (network:mainnet). The wallet talks to pro-api through /rocket-api on this origin. KRON TRADE stays KRON. Pin sdk.js?v=180."
       ]
     },
     {

@@ -1,6 +1,6 @@
 /* KCC20 Wallet dApp SDK
    Load from the hosted PWA:
-     <script src="https://kcc-20-wallet.vercel.app/sdk.js?v=180"></script>
+     <script src="https://kcc-20-wallet.vercel.app/sdk.js?v=181"></script>
    Then: await window.kcc20.connect()
    Keys never leave the wallet origin. This script only opens the PWA and talks via postMessage.
    KCC-12 (draft): listens for kaspa:requestProvider and announces kaspa:announceProvider
@@ -9,10 +9,13 @@
    VEYRA (TTT Phase 6): window.kcc20.veyra and request('veyra') — silent descriptor.
    Wallet Forge: window.kcc20.forge — drag-drop UI on the Scorpion core (no AI in the signer).
    When bumping SDK_VERSION, add an entry to releases.json (and it shows on /whats-new.html).
+   Session allowance (v181): requestSessionAllowance is one Approve + PIN.
+   autoBuy then pays only the allowlisted addresses under the cap, with no popup,
+   while that wallet window stays open. The dApp receives a sessionId, never a key.
 */
 (function (root) {
   'use strict';
-  var SDK_VERSION = '180';
+  var SDK_VERSION = '181';
   if (root.kcc20 && root.kcc20.isKcc20 && String(root.kcc20.sdkVersion || '') === SDK_VERSION) return;
 
   function scriptOrigin() {
@@ -91,6 +94,8 @@
   var pending = {};
   var seq = 1;
   var child = null;
+  var allowanceCache = null;
+  var chimeCtx = null;
   var accounts = [];
   var network = '';
   var lastState = null;
@@ -311,6 +316,112 @@
     return (child && !child.closed) ? child : null;
   }
 
+  function adoptNamedWallet() {
+    if (inWalletBrowser()) return window.parent;
+    if (child && !child.closed) return child;
+    var w = null;
+    try { w = window.open('', popupName()); } catch (e) { return null; }
+    if (!w) return null;
+    var blank = false;
+    try { blank = (w.location.href === 'about:blank'); } catch (e) { blank = false; }
+    if (blank) {
+      try { w.close(); } catch (e2) {}
+      return null;
+    }
+    child = w;
+    return child;
+  }
+
+  function chimeTrade() {
+    try {
+      var Ctx = window.AudioContext || window.webkitAudioContext;
+      if (!Ctx) return;
+      if (!chimeCtx) chimeCtx = new Ctx();
+      if (chimeCtx.state === 'suspended') chimeCtx.resume();
+      var o = chimeCtx.createOscillator();
+      var g = chimeCtx.createGain();
+      var t = chimeCtx.currentTime;
+      o.type = 'sine';
+      o.frequency.value = 880;
+      g.gain.setValueAtTime(0.0001, t);
+      g.gain.exponentialRampToValueAtTime(0.04, t + 0.02);
+      g.gain.exponentialRampToValueAtTime(0.0001, t + 0.14);
+      o.connect(g);
+      g.connect(chimeCtx.destination);
+      o.start(t);
+      o.stop(t + 0.15);
+    } catch (e) {}
+  }
+
+  function quietRpc(method, params, timeoutMs) {
+    return new Promise(function (resolve, reject) {
+      var win = adoptNamedWallet();
+      if (!win) {
+        reject(new Error('session window closed'));
+        return;
+      }
+      waitReady(win).then(function () {
+        var id = uid();
+        pending[id] = {
+          resolve: resolve,
+          reject: reject,
+          timer: setTimeout(function () {
+            if (!pending[id]) return;
+            delete pending[id];
+            reject(new Error('KCC20 Wallet timed out on ' + method));
+          }, timeoutMs || 20000)
+        };
+        try {
+          win.postMessage({
+            ns: 'kcc20',
+            type: 'req',
+            id: id,
+            method: method,
+            params: params || {},
+            from: location.origin,
+            name: document.title || location.pathname || location.hostname
+          }, walletTarget());
+        } catch (e) {
+          delete pending[id];
+          reject(e);
+        }
+      }).catch(reject);
+    });
+  }
+
+  function sessionWindowDead(err) {
+    var msg = (err && err.message) ? err.message : String(err || '');
+    return msg === 'session window closed' || /window closed/i.test(msg) || /did not answer/i.test(msg);
+  }
+
+  function rememberAllowance(r) {
+    if (!r || !r.sessionId) return r;
+    allowanceCache = {
+      sessionId: r.sessionId,
+      approvedUntil: r.approvedUntil,
+      maxTotalKas: r.maxTotalKas,
+      maxPerTrade: r.maxPerTrade,
+      remainingKas: r.remainingKas,
+      spentKas: r.spentKas,
+      payer: r.payer,
+      allowedCovenants: r.allowedCovenants || [],
+      live: r.live !== false
+    };
+    try { sessionStorage.setItem('kcc20_allowance_v1', JSON.stringify(allowanceCache)); } catch (e) {}
+    return r;
+  }
+
+  function loadAllowance() {
+    if (allowanceCache && allowanceCache.sessionId) return allowanceCache;
+    try { allowanceCache = JSON.parse(sessionStorage.getItem('kcc20_allowance_v1') || 'null'); } catch (e) { allowanceCache = null; }
+    return allowanceCache;
+  }
+
+  function clearAllowance() {
+    allowanceCache = null;
+    try { sessionStorage.removeItem('kcc20_allowance_v1'); } catch (e) {}
+  }
+
   function waitReady(win) {
     return new Promise(function (resolve, reject) {
       var done = false;
@@ -359,7 +470,8 @@
     sendToken: 1, sendKcc20: 1, payToken: 1, payKcc20: 1, fundCredits: 1,
     buyKron: 1, buyToken: 1, sellKron: 1, sellToken: 1, tradeKron: 1, tradeToken: 1,
     quoteKron: 1, quoteToken: 1,
-    compileVault: 1, lockVault: 1, compileVaults: 1, lockVaults: 1, sendKas: 1, sendKaspa: 1, openWallet: 1
+    compileVault: 1, lockVault: 1, compileVaults: 1, lockVaults: 1, sendKas: 1, sendKaspa: 1, openWallet: 1,
+    requestSessionAllowance: 1
   };
 
   function closeAfterUse() {
@@ -867,6 +979,7 @@
           accounts = [];
           lastState = null;
           clearSess();
+          clearAllowance();
           emit('disconnect');
           resolve();
         };
@@ -1029,6 +1142,63 @@
     sendKaspa: function (opts) {
       return rpc('sendKas', opts || {}).then(function (r) { closeAfterUse(); return r; });
     },
+    requestSessionAllowance: function (opts) {
+      try {
+        var Ctx = window.AudioContext || window.webkitAudioContext;
+        if (Ctx && !chimeCtx) chimeCtx = new Ctx();
+        if (chimeCtx && chimeCtx.state === 'suspended') chimeCtx.resume();
+      } catch (e) {}
+      return rpc('requestSessionAllowance', opts || {}).then(function (r) {
+        return rememberAllowance(r);
+      });
+    },
+    autoBuy: function (opts) {
+      var o = Object.assign({}, opts || {});
+      var cached = loadAllowance();
+      if (!o.sessionId && cached && cached.sessionId) o.sessionId = cached.sessionId;
+      return quietRpc('autoBuy', o, 180000).then(function (r) {
+        if (r && r.status === 'broadcast') chimeTrade();
+        if (r && typeof r.remainingKas === 'number') rememberAllowance(Object.assign({}, cached || {}, r));
+        return r;
+      }).catch(function (err) {
+        if (!sessionWindowDead(err)) throw err;
+        return api.sendKas({
+          dest: o.covenant || o.dest || o.to,
+          to: o.covenant || o.dest || o.to,
+          amount: o.amount,
+          amountKas: o.amount,
+          exact: o.exact === true,
+          expectedPayer: o.expectedPayer || o.payer || (cached && cached.payer) || ''
+        });
+      });
+    },
+    revokeSession: function (sessionId) {
+      var id = '';
+      if (sessionId && typeof sessionId === 'object') id = String(sessionId.sessionId || '');
+      else id = String(sessionId || '');
+      if (!id && loadAllowance()) id = String(allowanceCache.sessionId || '');
+      clearAllowance();
+      if (!adoptNamedWallet()) return Promise.resolve({ revoked: true, sessionId: id });
+      return quietRpc('revokeSession', { sessionId: id }, 15000).catch(function () {
+        return { revoked: true, sessionId: id };
+      });
+    },
+    getSessionAllowance: function (sessionId) {
+      var id = '';
+      if (sessionId && typeof sessionId === 'object') id = String(sessionId.sessionId || '');
+      else id = String(sessionId || '');
+      var cached = loadAllowance();
+      if (!(child && !child.closed) && !inWalletBrowser()) {
+        if (cached && (!id || cached.sessionId === id)) return Promise.resolve(Object.assign({ live: false }, cached));
+        return Promise.resolve({ live: false });
+      }
+      return quietRpc('getSessionAllowance', { sessionId: id }, 8000).then(function (r) {
+        if (r && r.live) rememberAllowance(r);
+        return r;
+      }).catch(function () {
+        return Object.assign({ live: false }, cached || {});
+      });
+    },
     openWallet: function (opts) {
       return rpc('openWallet', opts || {});
     },
@@ -1190,6 +1360,10 @@
       if (m === 'compileVault' || m === 'lockVault') return api.compileVault(p);
       if (m === 'compileVaults' || m === 'lockVaults') return api.compileVaults(p);
       if (m === 'sendKas' || m === 'sendKaspa') return api.sendKas(p);
+      if (m === 'requestSessionAllowance') return api.requestSessionAllowance(p);
+      if (m === 'autoBuy') return api.autoBuy(p);
+      if (m === 'revokeSession') return api.revokeSession(p.sessionId || p);
+      if (m === 'getSessionAllowance') return api.getSessionAllowance(p.sessionId || p);
       if (m === 'openWallet') return api.openWallet(p);
       return Promise.reject(new Error(m + ' is not supported by this KCC20 PWA build. Use connect / getTokenBalance / sendToken / buyKron / sendKaspa / openWallet.'));
     }
@@ -1345,6 +1519,9 @@
     if (m === 'app.kcc20.wallet_buyKron' || m === 'buyKron') return api.buyKron(p);
     if (m === 'app.kcc20.wallet_getActivityLog' || m === 'getActivityLog') return api.getActivityLog(p.address);
     if (m === 'app.kcc20.wallet_sendKas' || m === 'sendKaspa') return api.sendKaspa(p);
+    if (m === 'app.kcc20.wallet_requestSessionAllowance' || m === 'requestSessionAllowance') return api.requestSessionAllowance(p);
+    if (m === 'app.kcc20.wallet_autoBuy' || m === 'autoBuy') return api.autoBuy(p);
+    if (m === 'app.kcc20.wallet_revokeSession' || m === 'revokeSession') return api.revokeSession(p.sessionId || p);
     if (m.indexOf('kaspa_') !== 0 && m.indexOf('wallet_') !== 0 && typeof legacyRequest === 'function') {
       return legacyRequest(m, p);
     }

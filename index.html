@@ -24,7 +24,7 @@
   <link rel="icon" href="assets/icon.png">
   <title>KCC20 Wallet — Kaspa L1 covenant wallet</title>
   <meta http-equiv="Cache-Control" content="no-store, no-cache, must-revalidate">
-  <link rel="stylesheet" href="css/app.css?v=225">
+  <link rel="stylesheet" href="css/app.css?v=226">
   <script type="application/ld+json">
   {"@context":"https://schema.org","@type":"SoftwareApplication","name":"KCC20 Wallet","alternateName":["KCC20 wallet","KCC-20 Wallet"],"applicationCategory":"FinanceApplication","operatingSystem":"Web","url":"https://kcc-20-wallet.vercel.app/","image":"https://kcc-20-wallet.vercel.app/assets/icon.png","description":"Non-custodial Kaspa Layer-1 wallet for native KAS, KCC20 covenant tokens, KRC-20, and time-lock vaults. Keys never leave the device.","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"}}
   </script>
@@ -829,35 +829,63 @@
         </div>
       </div>
 
-      <div class="trade-screen hidden" id="trade-screen" aria-hidden="true">
+      <div class="trade-screen slide-on hidden" id="trade-screen" aria-hidden="true">
+        <canvas class="slide-chart" id="slide-chart" aria-hidden="true"></canvas>
         <div class="trade-head">
           <button type="button" class="trade-x" id="trade-close">Close</button>
           <h2>Trade KCC20</h2>
-          <span class="trade-head-space"></span>
+          <button type="button" class="slide-mkt" id="slide-markets">Markets</button>
         </div>
-        <div class="seg" id="trade-side">
-          <button class="on" data-side="buy" type="button">Buy</button>
-          <button data-side="dca" type="button">DCA</button>
-          <button data-side="sell" type="button">Sell</button>
+        <div class="slide-top" id="slide-top">
+          <div>
+            <button type="button" class="slide-pair" id="slide-pair">KKDAG / KAS</button>
+            <div class="slide-price" id="slide-price">—</div>
+            <div class="slide-chg" id="slide-chg">—</div>
+          </div>
+          <div class="slide-pill" id="slide-src"><i></i><span id="slide-src-txt">KRON</span></div>
         </div>
-        <div class="field"><label>Ticker</label>
+        <div class="field slide-ticker" id="slide-ticker-wrap">
+          <label>Ticker</label>
           <div class="dest-row">
             <input id="trade-ticker" placeholder="KKDAG, KRON, KROSHI…" maxlength="12" spellcheck="false" autocomplete="off">
             <button class="scan-btn" id="trade-lookup" type="button">Go</button>
           </div>
+          <div class="trade-meta glass hidden" id="trade-meta"></div>
         </div>
-        <div class="trade-meta glass hidden" id="trade-meta"></div>
+        <div class="slide-fills" id="slide-fills" aria-live="polite"></div>
+        <div class="slide-dock" id="slide-dock">
+          <div class="seg" id="trade-side">
+            <button class="on" data-side="buy" type="button">Buy</button>
+            <button data-side="dca" type="button">DCA</button>
+            <button data-side="sell" type="button">Sell</button>
+          </div>
+        </div>
         <div id="trade-spot">
-          <div class="field"><label id="trade-amt-label">Pay (KAS)</label>
-            <div class="dest-row">
-              <input id="trade-amount" type="text" inputmode="decimal" placeholder="5">
-              <button class="max-btn" id="trade-max" type="button">Max</button>
+          <div class="slide-read" id="slide-read">Drag to size. Release to review.</div>
+          <div class="slide-slider" id="slide-slider">
+            <div class="slide-track"></div>
+            <div class="slide-fillbar" id="slide-fb"></div>
+            <div class="slide-thumb" id="slide-th" tabindex="0" role="slider" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0" aria-label="Order size">
+              <span id="slide-pct">0%</span>
             </div>
           </div>
-          <p class="avail-line" id="trade-avail">Available — tap Max to fill.</p>
-          <div class="trade-quote" id="trade-quote">
-            <p class="muted" style="text-align:left;padding:0;">Type a KCC20 ticker, look it up, then buy with this wallet. Confirm with PIN or KasWare.</p>
+          <div class="slide-presets" id="slide-presets">
+            <button type="button" data-pct="0.25">25%</button>
+            <button type="button" data-pct="0.5">50%</button>
+            <button type="button" data-pct="0.75">75%</button>
+            <button type="button" data-pct="1">MAX</button>
           </div>
+          <input id="trade-amount" class="hidden" type="text" inputmode="decimal" tabindex="-1" aria-hidden="true">
+          <div class="trade-quote" id="trade-quote">
+            <span>Release reviews the KRON swap in this wallet.</span>
+          </div>
+          <p class="slide-hint" id="slide-hint">Drag the slider. Release to review. Nothing broadcasts until you approve.</p>
+          <div class="slide-eq" id="slide-eq">
+            <span>KAS <b id="slide-kas">0</b></span>
+            <span><em id="slide-tok-name">KKDAG</em> <b id="slide-tok">0</b></span>
+            <span>24h <b id="slide-chg-eq">—</b></span>
+          </div>
+          <p class="avail-line" id="trade-avail">Available — slide to size the order.</p>
         </div>
         <div id="trade-dca" class="hidden">
           <details class="at-help" open>
@@ -889,7 +917,7 @@
           <div class="trade-quote" id="dca-plan">Set budget and each buy. Example: 12 KAS budget ÷ 1 KAS = 12 buys.</div>
           <div class="glass dca-live hidden" id="dca-live"></div>
         </div>
-        <button class="btn btn-gold" id="trade-go" type="button" style="margin-top:auto;">Review buy</button>
+        <button class="btn btn-gold hidden" id="trade-go" type="button" style="margin-top:auto;">Review buy</button>
       </div>
 
       <div class="trade-screen hidden" id="now-screen" aria-hidden="true">
@@ -1067,7 +1095,7 @@
   <script type="module">
     import('./js/iframeVault.js?v=122').then(function (mod) {
       return (mod.restoreIframeVault ? mod.restoreIframeVault() : Promise.resolve()).then(function () {
-        return import('./js/app.js?v=295');
+        return import('./js/app.js?v=297');
       });
     }).catch(function (err) {
       console.error(err);

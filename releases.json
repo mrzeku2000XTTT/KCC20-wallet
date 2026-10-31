@@ -1,10 +1,30 @@
 {
-  "sdk": "180",
-  "build": "295",
+  "sdk": "181",
+  "build": "297",
   "wallet": "https://kcc-20-wallet.vercel.app",
-  "sdkUrl": "https://kcc-20-wallet.vercel.app/sdk.js?v=180",
+  "sdkUrl": "https://kcc-20-wallet.vercel.app/sdk.js?v=181",
   "rule": "Every SDK_VERSION bump gets an entry here the same day. Pin sdk.js?v=NNN and require window.kcc20.sdkVersion === that NNN.",
   "entries": [
+    {
+      "date": "2026-10-30",
+      "sdk": "181",
+      "build": "297",
+      "title": "Slide to trade on Home TRADE",
+      "breaking": false,
+      "notes": [
+        "Home TRADE opens the slide screen. Drag sizes a KRON buy from spendable KAS, or a sell from the token balance. Release, or a 25/50/75/MAX chip, opens the existing review. Approve still uses PIN or KasWare. The chart is KRON closes. DCA stays on the same screen. Nothing fills until the swap broadcasts."
+      ]
+    },
+    {
+      "date": "2026-10-27",
+      "sdk": "181",
+      "build": "296",
+      "title": "Session allowance for slide trades",
+      "breaking": false,
+      "notes": [
+        "requestSessionAllowance opens one Approve sheet. The user picks a native PIN chip, reviews the KAS budget, per-trade cap, expiry, and payee list, then enters the PIN once. autoBuy then pays only those addresses under the caps with no popup, while that Scorpion window stays open. The key stays in the window. It is not a session key the dApp can hold, and it is not written to localStorage. KasWare cannot headless-sign. Over cap, expired, revoked, or any other payee opens the normal Send sheet. revokeSession and Lock end it. signPskt and sendKas still require a review. Pin sdk.js?v=181."
+      ]
+    },
     {
       "date": "2026-10-22",
       "sdk": "180",

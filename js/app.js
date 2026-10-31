@@ -27,7 +27,7 @@ import {
   disconnectRpc, buildDcaDrips, sendKasMany, releaseDcaDrip, cancelDcaDrip, isMassError,
   signPsktJson
 } from './tx.js?v=239';
-import { bootDappConnect, pingTttDappFrame, pingKasdistroDappFrame, TTT_TREASURY, listConnectedSites, disconnectSite, disconnectAllSites, dappSourceOrigin } from './dappConnect.js?v=212';
+import { bootDappConnect, pingTttDappFrame, pingKasdistroDappFrame, TTT_TREASURY, listConnectedSites, disconnectSite, disconnectAllSites, dappSourceOrigin, clearDappTradeSession } from './dappConnect.js?v=213';
 import {
   changenowWidgetUrl, cnPayoutOk, bootNowStepper, KASPACOM_SWAP
 } from './changenow.js?v=182';
@@ -86,7 +86,7 @@ import { vprogCreate, vprogJoin, vprogTurn } from './vprogLane.js?v=1';
 import { bootWalletForge } from './walletForge.js?v=4';
 import { layoutLabel, isFinalLayout } from './kcc20Final.js?v=2';
 
-export const BUILD = '295';
+export const BUILD = '297';
 const DESK_ID_KEY = 'kcc20_desk_id_v1';
 const DESK_VAULT_KEY = 'kcc20_desk_vault_v1';
 
@@ -1136,6 +1136,7 @@ function lockNow() {
   hideTradeScreen();
   hideNowScreen();
   stopAgentLoop();
+  try { clearDappTradeSession(); } catch {}
   pinUnlockedFor = '';
   sessionUnlocked = false;
   clearPersistedSession();
@@ -9470,6 +9471,352 @@ function paintDcaHome() {
 function hideTradeScreen() {
   $('trade-screen')?.classList.add('hidden');
   $('trade-screen')?.setAttribute('aria-hidden', 'true');
+  clearInterval(slidePoll);
+  slidePoll = 0;
+  slideDrag = false;
+  slideBack = null;
+}
+
+let slideP = 0;
+let slideDrag = false;
+let slideBack = null;
+let slideRaf = 0;
+let slidePoll = 0;
+let slideFiring = false;
+let slideQuoteGen = 0;
+let slideSW = 0;
+let slidePts = [];
+let slideTickDrawn = '';
+
+function tradeSide() {
+  return $('trade-side')?.querySelector('.on')?.dataset.side || 'buy';
+}
+
+function slideSpendSompi() {
+  const feePad = 150_000_000n;
+  let sompi = 0n;
+  try { sompi = BigInt(balanceSompi || 0); } catch { sompi = 0n; }
+  return sompi > feePad ? sompi - feePad : 0n;
+}
+
+function slideAmountFor(pct) {
+  const p = Math.max(0, Math.min(1, Number(pct) || 0));
+  const bps = BigInt(Math.round(p * 10000));
+  if (tradeSide() === 'sell') {
+    const t = holdingForTick(($('trade-ticker')?.value || '').toUpperCase());
+    if (!t || t.native) return '0';
+    let raw = 0n;
+    try { raw = BigInt(t.balance || '0'); } catch { raw = 0n; }
+    return humanFromRaw(((raw * bps) / 10000n).toString(), t.decimals);
+  }
+  return humanFromRaw(((slideSpendSompi() * bps) / 10000n).toString(), 8);
+}
+
+function paintSlideRead() {
+  const tick = ($('trade-ticker')?.value || 'TOKEN').toUpperCase();
+  const side = tradeSide();
+  const amt = slideAmountFor(slideP);
+  const pc = Math.round(slideP * 100);
+  const read = $('slide-read');
+  if (read) {
+    read.innerHTML = side === 'sell'
+      ? `Sell <b>${esc(amt)}</b> ${esc(tick)} <span>· ${pc}%</span>`
+      : `Buy <span>${esc(amt)} KAS · ${pc}% →</span> <b>${esc(tick)}</b>`;
+  }
+  if ($('slide-kas')) $('slide-kas').textContent = formatAmount(balanceSompi);
+  const tok = holdingForTick(tick);
+  if ($('slide-tok')) $('slide-tok').textContent = tok && !tok.native ? formatTokenUnits(tok.balance, tok.decimals) : '0';
+  if ($('slide-tok-name')) $('slide-tok-name').textContent = tick;
+  if ($('slide-pair')) $('slide-pair').textContent = tick + ' / KAS';
+  if ($('slide-price')) $('slide-price').textContent = openTrade._px ? fmtPx(openTrade._px) : '—';
+  const chg = Number(openTrade._chg || 0);
+  const chgTxt = openTrade._px ? fmtChg(chg) : '—';
+  const chgEl = $('slide-chg');
+  if (chgEl) {
+    chgEl.textContent = chgTxt;
+    chgEl.style.color = chg > 0 ? 'var(--slide-up)' : (chg < 0 ? 'var(--slide-dn)' : '');
+  }
+  if ($('slide-chg-eq')) $('slide-chg-eq').textContent = chgTxt;
+  if ($('slide-src-txt')) $('slide-src-txt').textContent = 'KRON · ' + (openTrade._grad ? 'Pool' : 'Curve');
+  $('slide-th')?.classList.toggle('sell', side === 'sell');
+  $('slide-slider')?.classList.toggle('sell', side === 'sell');
+}
+
+function slideLayout() {
+  const sl = $('slide-slider');
+  const th = $('slide-th');
+  const fb = $('slide-fb');
+  const pct = $('slide-pct');
+  paintSlideRead();
+  if (!sl || !th || !fb || !pct) return;
+  const tw = th.offsetWidth || 104;
+  const x = slideP * Math.max(0, sl.clientWidth - tw);
+  th.style.transform = `translateX(${x}px)`;
+  fb.style.width = `${x + tw / 2}px`;
+  const pc = Math.round(slideP * 100);
+  pct.textContent = pc + '%';
+  th.setAttribute('aria-valuenow', String(pc));
+}
+
+function slideSetP(v) {
+  slideP = Math.max(0, Math.min(1, Number(v) || 0));
+  slideLayout();
+}
+
+function slideFromEvent(e) {
+  const sl = $('slide-slider');
+  const th = $('slide-th');
+  if (!sl) return 0;
+  const r = sl.getBoundingClientRect();
+  const tw = th?.offsetWidth || 104;
+  return (e.clientX - r.left - tw / 2) / Math.max(1, r.width - tw);
+}
+
+function queueSlideQuote() {
+  clearTimeout(openTrade._sq);
+  openTrade._sq = setTimeout(() => {
+    const amount = slideAmountFor(slideP);
+    if ($('trade-amount')) $('trade-amount').value = amount;
+    const n = Number(amount);
+    if (!(n > 0) || (tradeSide() !== 'sell' && n < 1)) return;
+    quoteTradePreview();
+  }, 380);
+}
+
+async function slideFire() {
+  clearTimeout(openTrade._sq);
+  if (slideFiring || tradeBusy) return;
+  const side = tradeSide();
+  if (side === 'dca') return;
+  if (slideP < 0.02) { slideSetP(0); return; }
+  const amount = slideAmountFor(slideP);
+  const n = Number(amount);
+  if (!Number.isFinite(n) || n <= 0) {
+    toast(side === 'sell' ? 'No tokens in this wallet to sell' : 'Need more than 1.5 KAS to buy');
+    slideBounce();
+    return;
+  }
+  if (side !== 'sell' && n < 1) {
+    toast('Slide further. KRON buys start around 1 KAS.');
+    slideBounce();
+    return;
+  }
+  if ($('trade-amount')) $('trade-amount').value = amount;
+  const th = $('slide-th');
+  if (th) {
+    th.classList.remove('fire');
+    void th.offsetWidth;
+    th.classList.add('fire');
+  }
+  slideFiring = true;
+  try { await reviewTrade(); }
+  finally {
+    slideFiring = false;
+    slideBounce();
+  }
+}
+
+function slideBounce() {
+  slideBack = { from: slideP, t0: performance.now() };
+  ensureSlideFrame();
+}
+
+function noteSlideFill(side, tick, txId) {
+  const box = $('slide-fills');
+  if (!box || !txId) return;
+  const d = document.createElement('div');
+  d.className = 'slide-fill';
+  d.innerHTML = `<b class="${side === 'sell' ? 'sell' : 'buy'}">${side === 'sell' ? 'Sold' : 'Bought'}</b> ${esc(tick)} <span>#${esc(String(txId).slice(0, 8))}</span>`;
+  box.appendChild(d);
+  while (box.children.length > 3) box.removeChild(box.firstChild);
+}
+
+function drawSlideChart() {
+  const cv = $('slide-chart');
+  const screen = $('trade-screen');
+  if (!cv || !screen) return;
+  const ctx = cv.getContext('2d');
+  if (!ctx) return;
+  const dpr = Math.min(window.devicePixelRatio || 1, 2);
+  const W = screen.clientWidth;
+  const H = screen.clientHeight;
+  if (!(W > 0) || !(H > 0)) return;
+  const pw = Math.floor(W * dpr);
+  const ph = Math.floor(H * dpr);
+  if (cv.width !== pw || cv.height !== ph) {
+    cv.width = pw;
+    cv.height = ph;
+  }
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  ctx.clearRect(0, 0, W, H);
+  const pts = slidePts.filter(n => n > 0);
+  if (pts.length < 2) return;
+  const style = getComputedStyle(screen);
+  const line = style.getPropertyValue('--slide-line').trim() || '#2b7fff';
+  const mute = style.getPropertyValue('--slide-mute').trim() || '#8d93ad';
+  const top = H * 0.18;
+  const bot = H * 0.50;
+  const headX = W * 0.78;
+  let lo = Infinity;
+  let hi = -Infinity;
+  for (const p of pts) {
+    if (p < lo) lo = p;
+    if (p > hi) hi = p;
+  }
+  if (!(hi > lo)) { hi = lo * 1.002 + 1e-12; lo = lo * 0.998; }
+  const pad = (hi - lo) * 0.35;
+  const ymin = lo - pad;
+  const ymax = hi + pad;
+  const Y = v => bot - ((v - ymin) / (ymax - ymin)) * (bot - top);
+  const vis = pts.map((p, i) => [(i / (pts.length - 1)) * headX, p]);
+  ctx.strokeStyle = mute;
+  ctx.globalAlpha = 0.12;
+  ctx.lineWidth = 1;
+  for (let g = 0; g < 5; g++) {
+    const gy = top + ((bot - top) * g) / 4;
+    ctx.beginPath();
+    ctx.moveTo(0, gy);
+    ctx.lineTo(W, gy);
+    ctx.stroke();
+  }
+  ctx.globalAlpha = 1;
+  const gr = ctx.createLinearGradient(0, top, 0, bot);
+  gr.addColorStop(0, 'rgba(43,127,255,0.28)');
+  gr.addColorStop(1, 'rgba(43,127,255,0)');
+  ctx.beginPath();
+  vis.forEach((pt, i) => { if (i) ctx.lineTo(pt[0], Y(pt[1])); else ctx.moveTo(pt[0], Y(pt[1])); });
+  ctx.lineTo(headX, bot);
+  ctx.lineTo(vis[0][0], bot);
+  ctx.closePath();
+  ctx.fillStyle = gr;
+  ctx.fill();
+  ctx.beginPath();
+  vis.forEach((pt, i) => { if (i) ctx.lineTo(pt[0], Y(pt[1])); else ctx.moveTo(pt[0], Y(pt[1])); });
+  ctx.strokeStyle = line;
+  ctx.lineWidth = 2.5;
+  ctx.lineJoin = 'round';
+  ctx.stroke();
+  const hy = Y(vis[vis.length - 1][1]);
+  ctx.setLineDash([3, 5]);
+  ctx.globalAlpha = 0.4;
+  ctx.beginPath();
+  ctx.moveTo(headX, hy);
+  ctx.lineTo(W, hy);
+  ctx.stroke();
+  ctx.setLineDash([]);
+  ctx.globalAlpha = 1;
+  const pu = 0.5 + 0.5 * Math.sin(performance.now() / 180);
+  ctx.globalAlpha = 0.25;
+  ctx.fillStyle = line;
+  ctx.beginPath();
+  ctx.arc(headX, hy, 7 + pu * 6, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.globalAlpha = 1;
+  ctx.beginPath();
+  ctx.arc(headX, hy, 4, 0, Math.PI * 2);
+  ctx.fill();
+}
+
+function slideFrame(now) {
+  const screen = $('trade-screen');
+  const open = screen && !screen.classList.contains('hidden');
+  if (!open) {
+    slideRaf = 0;
+    slideBack = null;
+    return;
+  }
+  if (slideBack) {
+    const k = Math.min(1, (now - slideBack.t0) / 450);
+    slideP = slideBack.from * (1 - (1 - Math.pow(1 - k, 3)));
+    slideLayout();
+    if (k >= 1) slideBack = null;
+  } else if (screen.classList.contains('slide-on')) {
+    const sw = $('slide-slider')?.clientWidth || 0;
+    if (sw && sw !== slideSW) {
+      slideSW = sw;
+      slideLayout();
+    }
+  }
+  if (screen.classList.contains('slide-on')) drawSlideChart();
+  if (open && (screen.classList.contains('slide-on') || slideBack)) slideRaf = requestAnimationFrame(slideFrame);
+  else slideRaf = 0;
+}
+
+function ensureSlideFrame() {
+  if (slideRaf) return;
+  slideRaf = requestAnimationFrame(slideFrame);
+}
+
+async function loadSlideSeries(tick) {
+  const want = String(tick || '').toUpperCase();
+  slideTickDrawn = want;
+  let rows = [];
+  try { rows = await kronCandles(want, 80); } catch { rows = []; }
+  if (slideTickDrawn !== want) return;
+  slidePts = rows.map(c => Number(c.c)).filter(n => n > 0);
+  const px = Number(openTrade._px || 0);
+  if (px > 0) {
+    if (!slidePts.length) slidePts = [px, px];
+    else slidePts.push(px);
+  }
+  ensureSlideFrame();
+}
+
+function armSlidePoll() {
+  clearInterval(slidePoll);
+  slidePoll = setInterval(() => {
+    const screen = $('trade-screen');
+    if (!screen || screen.classList.contains('hidden') || !screen.classList.contains('slide-on')) {
+      clearInterval(slidePoll);
+      slidePoll = 0;
+      return;
+    }
+    lookupTradeTicker({ quiet: true });
+  }, 20000);
+}
+
+function bindSlide() {
+  const sl = $('slide-slider');
+  if (!sl || sl.dataset.bound) return;
+  sl.dataset.bound = '1';
+  const th = $('slide-th');
+  sl.addEventListener('pointerdown', e => {
+    if (tradeSide() === 'dca') return;
+    slideBack = null;
+    slideDrag = true;
+    try { sl.setPointerCapture(e.pointerId); } catch {}
+    slideSetP(slideFromEvent(e));
+    queueSlideQuote();
+  });
+  sl.addEventListener('pointermove', e => {
+    if (!slideDrag) return;
+    slideSetP(slideFromEvent(e));
+    queueSlideQuote();
+  });
+  sl.addEventListener('pointerup', () => {
+    if (!slideDrag) return;
+    slideDrag = false;
+    slideFire();
+  });
+  sl.addEventListener('pointercancel', () => { slideDrag = false; });
+  th?.addEventListener('keydown', e => {
+    if (e.key === 'ArrowRight' || e.key === 'ArrowUp') { e.preventDefault(); slideSetP(slideP + 0.05); queueSlideQuote(); }
+    else if (e.key === 'ArrowLeft' || e.key === 'ArrowDown') { e.preventDefault(); slideSetP(slideP - 0.05); queueSlideQuote(); }
+    else if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); slideFire(); }
+  });
+  $('slide-presets')?.addEventListener('click', e => {
+    const b = e.target.closest('[data-pct]');
+    if (!b) return;
+    haptic();
+    slideBack = null;
+    slideSetP(Number(b.dataset.pct));
+    slideFire();
+  });
+  $('slide-pair')?.addEventListener('click', () => {
+    $('slide-ticker-wrap')?.classList.toggle('open');
+    if ($('slide-ticker-wrap')?.classList.contains('open')) $('trade-ticker')?.focus();
+  });
+  $('slide-markets')?.addEventListener('click', () => openKronBoard());
 }
 
 const CASHOUT_DEST_KEY = 'kcc20_cashout_dest_v1';
@@ -9651,44 +9998,70 @@ function openTrade(prefill = {}) {
     $('trade-go').disabled = false;
     $('trade-go').onclick = () => reviewTrade();
   }
+  $('slide-ticker-wrap')?.classList.remove('open');
+  slideSetP(0);
+  bindSlide();
   syncTradeLabel();
   lookupTradeTicker();
   paintDcaPlan();
+  if (side0 !== 'dca') {
+    ensureSlideFrame();
+    armSlidePoll();
+  }
   loadKaspaSdk().catch(() => {});
   pingPublicNode().catch(() => {});
 }
 
-async function lookupTradeTicker() {
+async function lookupTradeTicker(opts = {}) {
   const tick = ($('trade-ticker')?.value || '').trim().toUpperCase();
   const meta = $('trade-meta');
+  const quiet = !!opts.quiet;
   if (!tick) { meta?.classList.add('hidden'); return; }
   if ($('trade-ticker')) $('trade-ticker').value = tick;
-  if (meta) {
+  if (meta && !quiet) {
     meta.classList.remove('hidden');
     meta.innerHTML = `<div class="title">Looking up ${esc(tick)}…</div>`;
   }
   try {
     const info = await lookupKronTick(tick);
+    openTrade._px = Number(info.price) || 0;
+    openTrade._chg = Number(info.change24h) || 0;
+    openTrade._grad = !!info.graduated;
     if (meta) {
-      const chg = Number(info.change24h || 0);
-      const px = info.price ? Number(info.price).toPrecision(4) + ' KAS' : '—';
+      const px = info.price ? fmtPx(info.price) + ' KAS' : '—';
       meta.innerHTML = `
         <div class="title">${esc(info.tick)} · ${esc(info.name)}</div>
-        <div class="sub">${esc(info.graduated ? 'Locked AMM pool' : 'Bonding curve')} · ${esc(px)}${chg ? ' · ' + ((chg > 0 ? '+' : '') + (chg * 100).toFixed(1) + '%') : ''}</div>`;
+        <div class="sub">${esc(info.graduated ? 'Locked AMM pool' : 'Bonding curve')} · ${esc(px)} · ${esc(fmtChg(openTrade._chg))}</div>`;
     }
+    if (!quiet) $('slide-ticker-wrap')?.classList.remove('open');
     syncTradeLabel();
     quoteTradePreview();
+    const slideOn = $('trade-screen')?.classList.contains('slide-on');
+    if (slideOn && quiet && slideTickDrawn === tick && slidePts.length && openTrade._px > 0) {
+      slidePts[slidePts.length - 1] = openTrade._px;
+    } else if (slideOn) {
+      loadSlideSeries(tick);
+    }
   } catch (e) {
-    if (meta) meta.innerHTML = `<div class="title">${esc(tick)}</div><div class="sub" style="color:var(--red)">${esc(errText(e))}</div>`;
+    if (meta && !quiet) meta.innerHTML = `<div class="title">${esc(tick)}</div><div class="sub" style="color:var(--red)">${esc(errText(e))}</div>`;
   }
 }
 
 function syncTradeLabel() {
-  const side = $('trade-side')?.querySelector('.on')?.dataset.side || 'buy';
+  const side = tradeSide();
   const tick = ($('trade-ticker')?.value || 'TOKEN').toUpperCase();
   const dca = side === 'dca';
+  $('trade-screen')?.classList.toggle('slide-on', !dca);
   $('trade-spot')?.classList.toggle('hidden', dca);
   $('trade-dca')?.classList.toggle('hidden', !dca);
+  $('trade-go')?.classList.toggle('hidden', !dca);
+  if (dca) {
+    clearInterval(slidePoll);
+    slidePoll = 0;
+    slideDrag = false;
+  } else if ($('trade-screen') && !$('trade-screen').classList.contains('hidden')) {
+    ensureSlideFrame();
+  }
   const lab = $('trade-amt-label');
   if (lab) lab.textContent = side === 'sell' ? `Amount (${tick})` : 'Pay (KAS)';
   const job = loadDcaJob();
@@ -9698,6 +10071,7 @@ function syncTradeLabel() {
     else $('trade-go').textContent = side === 'sell' ? 'Review sell' : 'Review buy';
   }
   if (dca) paintDcaPlan();
+  slideLayout();
   const avail = $('trade-avail');
   const inp = $('trade-amount');
   if (side === 'sell') {
@@ -9705,27 +10079,39 @@ function syncTradeLabel() {
     const max = t ? maxFillForAsset(t) : '0';
     if (avail) {
       avail.textContent = t
-        ? `Available ${formatTokenUnits(t.balance, t.decimals)} ${tick} — Max sells all of it.`
+        ? `Available ${formatTokenUnits(t.balance, t.decimals)} ${tick}. Slide to sell part of it.`
         : `No ${tick} in this wallet to sell.`;
     }
     if (inp && !inp.value) inp.placeholder = max === '0' ? '0' : max;
   } else {
     const kasAsset = { native: true, protocol: 'kas', ticker: 'KAS', decimals: 8, balance: String(balanceSompi) };
     const max = maxFillForAsset(kasAsset);
-    if (avail) avail.textContent = `Available ${formatAmount(balanceSompi)} KAS — Max leaves ~1.5 KAS for the cell and fees.`;
+    if (avail) avail.textContent = `Available ${formatAmount(balanceSompi)} KAS. The slider leaves ~1.5 KAS for the cell and fees.`;
     if (inp && !inp.value) inp.placeholder = max;
   }
 }
 
 async function quoteTradePreview() {
+  const gen = ++slideQuoteGen;
   const box = $('trade-quote');
   const amount = $('trade-amount')?.value.trim();
   const tick = ($('trade-ticker')?.value || 'KKDAG').toUpperCase();
   const side = $('trade-side')?.querySelector('.on')?.dataset.side || 'buy';
   if (!box || !amount) return;
-  box.innerHTML = `<p class="muted" style="text-align:left;padding:0;">Quoting…</p>`;
+  const slideOn = $('trade-screen')?.classList.contains('slide-on');
+  box.innerHTML = slideOn
+    ? `<span>Quoting…</span>`
+    : `<p class="muted" style="text-align:left;padding:0;">Quoting…</p>`;
   try {
     const q = await quoteKronTrade({ tick, side, amount });
+    if (gen !== slideQuoteGen) return;
+    if (slideOn) {
+      const phase = openTrade._grad ? 'POOL' : 'CURVE';
+      box.innerHTML = q.side === 'buy'
+        ? `<span class="slide-badge">${phase}</span><span>You get <b>${esc(formatTokenUnits(q.tokenOut, q.decimals))}</b> ${esc(q.tick)}</span><span class="slide-badge fee">Fees ${esc(formatKasSompi(q.fee))} KAS</span>`
+        : `<span class="slide-badge">SELL</span><span>You receive <b>${esc(formatKasSompi(q.net))}</b> KAS</span><span class="slide-badge fee">Fees ${esc(formatKasSompi(q.fee))} KAS</span>`;
+      return;
+    }
     if (q.side === 'buy') {
       box.innerHTML = `
         <div class="kv"><span class="k">Into market</span><span class="v">${esc(formatKasSompi(q.kasIn))} KAS</span></div>
@@ -9743,7 +10129,8 @@ async function quoteTradePreview() {
         <p class="muted" style="text-align:left;padding:8px 0 0;">Network fee is extra. Small sells can fail if padded fees exceed proceeds.</p>`;
     }
   } catch (e) {
-    box.innerHTML = `<p class="muted" style="text-align:left;padding:0;color:var(--red);">${esc(errText(e))}</p>`;
+    if (gen !== slideQuoteGen) return;
+    box.innerHTML = `<span style="color:var(--red)">${esc(errText(e))}</span>`;
   }
 }
 
@@ -9852,7 +10239,13 @@ async function runTrade({ tick, side, amount, quote, forceKasware = false }) {
       new Promise((_, rej) => setTimeout(() => rej(new Error('Buy timed out. Tap Review buy again.')), 40000))
     ]);
     if ($('trade-amount')) $('trade-amount').value = '';
-    if ($('trade-quote')) $('trade-quote').innerHTML = '';
+    if (result?.txId) noteSlideFill(side, tick, result.txId);
+    paintSlideRead();
+    if ($('trade-quote')) {
+      $('trade-quote').innerHTML = result?.txId && $('trade-screen')?.classList.contains('slide-on')
+        ? `<span class="slide-badge">SENT</span><span>#${esc(String(result.txId).slice(0, 8))}</span>`
+        : '';
+    }
     if ($('trade-go')) $('trade-go').disabled = false;
     const q = result.quote || quote;
     noteKronFill(q);
@@ -9936,6 +10329,7 @@ async function runTrade({ tick, side, amount, quote, forceKasware = false }) {
         }
       })();
     }
+    paintSlideRead();
     openSheet('Swap sent', `
       <div class="kv"><span class="k">Market</span><span class="v">${esc(tick)}</span></div>
       <div class="kv"><span class="k">Side</span><span class="v">${esc(side)}</span></div>
@@ -12586,6 +12980,7 @@ function bind() {
     openTrade({ tick: row.dataset.kronBuy, side: 'buy' });
   });
   click('trade-close', hideTradeScreen);
+  bindSlide();
   click('trade-lookup', lookupTradeTicker);
   click('trade-go', () => reviewTrade());
   $('trade-ticker')?.addEventListener('keydown', e => { if (e.key === 'Enter') lookupTradeTicker(); });

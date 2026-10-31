@@ -12,7 +12,8 @@ const HOST_METHODS = [
   'getTokenBalance', 'getHoldings', 'getState', 'sendToken', 'sendKcc20', 'payToken', 'payKcc20', 'fundCredits',
   'quoteKron', 'quoteToken', 'buyKron', 'buyToken', 'sellKron', 'sellToken', 'tradeKron', 'tradeToken',
   'compileVault', 'lockVault', 'compileVaults', 'lockVaults', 'sendKas', 'sendKaspa', 'openWallet',
-  'getActivityLog', 'activityLog', 'veyra', 'getVeyra', 'getIdentity', 'dotk', 'getDotk'
+  'getActivityLog', 'activityLog', 'veyra', 'getVeyra', 'getIdentity', 'dotk', 'getDotk',
+  'requestSessionAllowance', 'autoBuy', 'revokeSession', 'getSessionAllowance'
 ];
 
 let hooks = null;
@@ -20,6 +21,8 @@ let booted = false;
 let queue = Promise.resolve();
 let sourceWin = null;
 let sourceOrigin = '';
+let tradeSession = null;
+let sessionAudio = null;
 
 function $(id) { return document.getElementById(id); }
 
@@ -209,6 +212,8 @@ function maybeCloseDappPopup(method) {
       compileVault: 1, lockVault: 1, compileVaults: 1, lockVaults: 1, sendKas: 1, sendKaspa: 1
     };
     // openWallet must keep the popup visible (TTT Send / app-store unlock).
+    // requestSessionAllowance / autoBuy stay open on purpose: the allowance
+    // and the unlocked native key live only in this window. Closing it ends headless trades.
     if (!closeAfter[String(method || '')]) return;
     setTimeout(() => closeDappPopupKeepOpener(), 50);
   } catch {}
@@ -1114,6 +1119,318 @@ async function handleOpenWallet(req) {
   return { ok: true, screen, address: w?.address || '', to };
 }
 
+function kasAmount(v) {
+  const n = Number(String(v ?? '').replace(/,/g, '').trim());
+  if (!Number.isFinite(n) || n <= 0) return 0;
+  return Math.round(n * 1e8) / 1e8;
+}
+
+function newSessionId() {
+  const bytes = new Uint8Array(16);
+  crypto.getRandomValues(bytes);
+  return Array.from(bytes, (b) => b.toString(16).padStart(2, '0')).join('');
+}
+
+function normalizeCovenant(raw) {
+  const dest = cleanKaspaDest(raw);
+  if (!dest) return '';
+  const parsed = validateKaspaAddress(dest, networkId());
+  if (!parsed.isValid) return '';
+  return dest;
+}
+
+function addrIsP2sh(addr) {
+  return /:(p)/i.test(String(addr || ''));
+}
+
+function publicSession(s) {
+  const spent = Number(s.spentKas) || 0;
+  const remainingKas = Math.max(0, Math.round((s.maxTotalKas - spent) * 1e8) / 1e8);
+  return {
+    sessionId: s.sessionId,
+    approvedUntil: s.approvedUntil,
+    maxTotalKas: s.maxTotalKas,
+    maxPerTrade: s.maxPerTrade,
+    spentKas: spent,
+    remainingKas,
+    allowedCovenants: s.allowedCovenants.slice(),
+    payer: s.payer,
+    origin: s.origin,
+    live: true
+  };
+}
+
+function sessionDeadReason(s, origin) {
+  if (!s) return 'No session allowance. Approve one first.';
+  if (origin && s.origin !== origin) return 'This session belongs to another site.';
+  if (s.revoked) return 'Session allowance was revoked.';
+  if (Date.now() >= s.approvedUntil) return 'Session allowance expired.';
+  return '';
+}
+
+function covenantAllowed(s, raw) {
+  const norm = normalizeCovenant(raw);
+  if (!norm || !s) return '';
+  for (const a of s.allowedCovenants) {
+    if (a === norm) return norm;
+    try {
+      if (sameAddrPayload(a, norm)) return norm;
+    } catch {}
+  }
+  return '';
+}
+
+function nativeSessionChip(w) {
+  if (!w) return false;
+  if (walletIsKaswareChip(w) || kaswareSigning(w)) return false;
+  if (typeof hooks?.hydrateNativeKey === 'function') hooks.hydrateNativeKey(w);
+  return !!hexKey(w.privKey);
+}
+
+function armSessionAudio() {
+  try {
+    const Ctx = window.AudioContext || window.webkitAudioContext;
+    if (!Ctx) return;
+    if (!sessionAudio) sessionAudio = new Ctx();
+    if (sessionAudio.state === 'suspended') sessionAudio.resume();
+  } catch {}
+}
+
+function playAutoChime(amount, remain, tick) {
+  try {
+    const ctx = sessionAudio;
+    if (ctx) {
+      if (ctx.state === 'suspended') ctx.resume();
+      const o = ctx.createOscillator();
+      const g = ctx.createGain();
+      o.type = 'sine';
+      o.frequency.value = 880;
+      g.gain.setValueAtTime(0.0001, ctx.currentTime);
+      g.gain.exponentialRampToValueAtTime(0.05, ctx.currentTime + 0.02);
+      g.gain.exponentialRampToValueAtTime(0.0001, ctx.currentTime + 0.16);
+      o.connect(g);
+      g.connect(ctx.destination);
+      o.start();
+      o.stop(ctx.currentTime + 0.17);
+    }
+  } catch {}
+  try {
+    if (typeof Notification === 'undefined' || Notification.permission !== 'granted') return;
+    const what = tick ? (tick + ' · ' + amount + ' KAS') : (amount + ' KAS');
+    const n = new Notification('Scorpion auto-buy', {
+      body: what + ' sent to an allowlisted payee. ' + remain + ' KAS left in this session.',
+      silent: false
+    });
+    setTimeout(() => { try { n.close(); } catch {} }, 3500);
+  } catch {}
+}
+
+function refuseKeyMaterial(params) {
+  const p = params || {};
+  if (p.privKey || p.privateKey || p.seed || p.mnemonic || p.secretKey) {
+    throw new Error('Refusing key material from the dApp');
+  }
+}
+
+async function handleRequestSessionAllowance(req) {
+  refuseKeyMaterial(req.params);
+  const expected = expectedPayerOf(req.params);
+  let w = await bindExpectedPayer(expected);
+  w = await ensureUnlocked();
+  const origin = req.origin;
+  if (!originAllowed(origin)) await handleConnect(req);
+  if (expected) w = await bindExpectedPayer(expected);
+
+  const maxTotalKas = kasAmount(req.params?.maxTotalKas ?? req.params?.maxTotal);
+  const maxPerTrade = kasAmount(req.params?.maxPerTrade ?? req.params?.maxTrade);
+  const expirySeconds = Math.floor(Number(req.params?.expirySeconds));
+  const rawList = req.params?.allowedCovenants || req.params?.covenants || [];
+  if (!(maxTotalKas > 0) || maxTotalKas > 1000000) throw new Error('maxTotalKas must be greater than 0 and at most 1,000,000');
+  if (!(maxPerTrade > 0) || maxPerTrade > maxTotalKas + 1e-9) throw new Error('maxPerTrade must be greater than 0 and at most maxTotalKas');
+  if (!Number.isFinite(expirySeconds) || expirySeconds < 60 || expirySeconds > 86400) {
+    throw new Error('expirySeconds must be between 60 and 86400');
+  }
+  const allowed = [];
+  (Array.isArray(rawList) ? rawList : [rawList]).forEach((raw) => {
+    const dest = normalizeCovenant(raw);
+    if (dest && !allowed.includes(dest)) allowed.push(dest);
+  });
+  if (!allowed.length || allowed.length > 8) {
+    throw new Error('allowedCovenants needs 1 to 8 valid addresses on this network');
+  }
+
+  const mins = Math.max(1, Math.round(expirySeconds / 60));
+  const covHtml = allowed.map((a) => '<div class="kv kv-stack"><span class="k">PAYEE</span><span class="v">' + esc(a) + '</span></div>').join('');
+  const body = () => {
+    const live = hooks.getWallet?.() || w;
+    const kw = !!(walletIsKaswareChip(live) || kaswareSigning(live));
+    const payerLine = (typeof hooks.payerLabel === 'function' && hooks.payerLabel())
+      || ((live?.name || 'Wallet') + ' · ' + (live?.address || ''));
+    return '<p class="muted" style="text-align:left;padding:0 0 8px;"><b>One approval for slide trades.</b> Until the cap, the clock, or Revoke, Scorpion signs KAS sends only to the payees below. No popup. The key stays in this window. Closing this window ends it. This does not allow signPskt, or a send to any other address.</p>'
+      + '<div class="kv kv-stack"><span class="k">WALLET</span><span class="v">' + esc(payerLine) + (kw ? ' · KasWare' : '') + '</span></div>'
+      + '<div class="kv"><span class="k">Budget</span><span class="v">' + esc(String(maxTotalKas)) + ' KAS</span></div>'
+      + '<div class="kv"><span class="k">Per trade</span><span class="v">' + esc(String(maxPerTrade)) + ' KAS</span></div>'
+      + '<div class="kv"><span class="k">Expires</span><span class="v">' + esc(String(mins)) + ' min</span></div>'
+      + covHtml
+      + (kw
+        ? '<p class="muted" style="text-align:left;padding:8px 0 0;">KasWare keeps the key in the extension and must approve every spend. Switch to a native PIN chip for a headless session.</p>'
+        : '<p class="muted" style="text-align:left;padding:8px 0 0;">Network fee is extra and small. A trade outside these bounds opens the normal review sheet.</p>');
+  };
+  await showOverlay({
+    title: 'Session allowance',
+    origin,
+    approveLabel: 'Allow session',
+    body: body(),
+    lockPayer: !!expected,
+    onWalletChange: () => { if ($('dapp-body')) $('dapp-body').innerHTML = body(); }
+  });
+  armSessionAudio();
+  try {
+    if (typeof Notification !== 'undefined' && Notification.permission === 'default') {
+      Notification.requestPermission().catch(() => {});
+    }
+  } catch {}
+  w = assertExpectedPayer(expected) || hooks.getWallet?.() || w;
+  if (!nativeSessionChip(w)) {
+    throw new Error('Headless session needs a native PIN chip with an in-app key. KasWare must approve every spend in the extension.');
+  }
+  if (typeof hooks.requirePin === 'function') {
+    await hooks.requirePin('Allow session up to ' + maxTotalKas + ' KAS');
+  }
+  if (typeof hooks.sessionOpen === 'function' && !hooks.sessionOpen()) {
+    throw new Error('Unlock this wallet before starting a session');
+  }
+  const now = Date.now();
+  tradeSession = {
+    sessionId: newSessionId(),
+    origin,
+    payer: w.address,
+    payerId: w.id || '',
+    maxTotalKas,
+    maxPerTrade,
+    spentKas: 0,
+    approvedUntil: now + expirySeconds * 1000,
+    allowedCovenants: allowed,
+    revoked: false
+  };
+  try { hooks?.toast?.('Session live for ' + mins + ' min. Keep this window open.'); } catch {}
+  try { if (window.opener && !window.opener.closed) window.opener.focus(); } catch {}
+  return publicSession(tradeSession);
+}
+
+function manualSendReq(req, dest, amount) {
+  return {
+    ...req,
+    method: 'sendKas',
+    params: {
+      ...(req.params || {}),
+      dest,
+      to: dest,
+      amount: String(amount),
+      amountKas: String(amount),
+      exact: addrIsP2sh(dest) || req.params?.exact === true
+    }
+  };
+}
+
+async function handleAutoBuy(req) {
+  refuseKeyMaterial(req.params);
+  const origin = req.origin;
+  const amount = kasAmount(req.params?.amount ?? req.params?.amountKas ?? req.params?.kas);
+  const tick = String(req.params?.tick || req.params?.ticker || '').trim().toUpperCase();
+  const wantId = String(req.params?.sessionId || '').trim();
+  const destRaw = req.params?.covenant || req.params?.dest || req.params?.to || '';
+  if (!(amount > 0)) throw new Error('Enter an amount of KAS greater than 0');
+  if (tick && !/^[A-Z0-9]{2,12}$/.test(tick)) throw new Error('Bad ticker');
+  const dest = normalizeCovenant(destRaw);
+  if (!dest) throw new Error('autoBuy needs a covenant address that is valid on this network');
+
+  const s = tradeSession;
+  const dead = sessionDeadReason(s, origin);
+  if (s && (s.revoked || Date.now() >= s.approvedUntil)) clearDappTradeSession();
+  const unlocked = typeof hooks?.sessionOpen !== 'function' || hooks.sessionOpen();
+  if (s && !unlocked) clearDappTradeSession();
+  let w = hooks?.getWallet?.();
+  const idOk = !!(s && wantId && wantId === s.sessionId);
+  const payerOk = !!(s && w && (payerMatches(w, s.payer) || (s.payerId && w.id === s.payerId)));
+  const underPer = !!(s && amount <= s.maxPerTrade + 1e-9);
+  const underTotal = !!(s && (s.spentKas + amount) <= s.maxTotalKas + 1e-9);
+  const listed = covenantAllowed(s, dest);
+  const nativeOk = nativeSessionChip(w);
+  const silent = !dead && idOk && payerOk && underPer && underTotal && listed && nativeOk && unlocked && originAllowed(origin);
+
+  const reviewSend = async () => {
+    try { window.focus(); } catch {}
+    const reviewed = await handleSendKas(manualSendReq(req, dest, amount));
+    const remain = (s && tradeSession === s)
+      ? Math.max(0, Math.round((s.maxTotalKas - s.spentKas) * 1e8) / 1e8)
+      : null;
+    return Object.assign({
+      status: reviewed?.txId ? 'broadcast' : 'review',
+      sessionId: (tradeSession && tradeSession.sessionId) || '',
+      remainingKas: remain,
+      tick
+    }, reviewed);
+  };
+
+  if (!silent) return reviewSend();
+
+  w = hooks.getWallet?.();
+  if (typeof hooks.hydrateNativeKey === 'function') hooks.hydrateNativeKey(w);
+  if (!nativeSessionChip(w) || !payerMatches(w, s.payer)) return reviewSend();
+  const result = await hooks.sendKas({
+    dest,
+    amount: String(amount),
+    amountKas: String(amount),
+    skipPin: true,
+    exact: addrIsP2sh(dest) || req.params?.exact === true,
+    bindCovenant: false
+  });
+  if (!result?.txId) throw new Error('Broadcast did not return a txId');
+  s.spentKas = Math.round((s.spentKas + amount) * 1e8) / 1e8;
+  const remainingKas = Math.max(0, Math.round((s.maxTotalKas - s.spentKas) * 1e8) / 1e8);
+  playAutoChime(amount, remainingKas, tick);
+  try {
+    hooks?.toast?.('Auto-buy ' + amount + ' KAS' + (tick ? ' · ' + tick : '') + ' · ' + remainingKas + ' left');
+  } catch {}
+  return {
+    txId: result.txId,
+    status: 'broadcast',
+    remainingKas,
+    spentKas: s.spentKas,
+    sessionId: s.sessionId,
+    tick,
+    amount,
+    covenant: dest,
+    from: w.address,
+    feeKas: result.feeKas,
+    explorer: result.explorer || ('https://kas.fyi/transaction/' + result.txId)
+  };
+}
+
+async function handleRevokeSession(req) {
+  const id = String(req.params?.sessionId || '').trim();
+  if (!tradeSession) return { revoked: true, sessionId: id };
+  if (req.origin && tradeSession.origin !== req.origin) throw new Error('This session belongs to another site.');
+  if (id && id !== tradeSession.sessionId) throw new Error('Unknown session');
+  const sessionId = tradeSession.sessionId;
+  clearDappTradeSession();
+  try { hooks?.toast?.('Session allowance revoked'); } catch {}
+  return { revoked: true, sessionId };
+}
+
+async function handleGetSessionAllowance(req) {
+  const id = String(req.params?.sessionId || '').trim();
+  const why = sessionDeadReason(tradeSession, req.origin);
+  if (why || (id && tradeSession && id !== tradeSession.sessionId)) {
+    return { live: false, reason: why || 'Unknown session' };
+  }
+  if (typeof hooks?.sessionOpen === 'function' && !hooks.sessionOpen()) {
+    return { live: false, reason: 'Wallet is locked' };
+  }
+  return publicSession(tradeSession);
+}
+
 async function dispatch(req) {
   const method = String(req.method || '');
   if (method === 'connect' || method === 'requestAccounts') return handleConnect(req);
@@ -1130,6 +1447,7 @@ async function dispatch(req) {
     return w.pubKey || '';
   }
   if (method === 'disconnect') {
+    if (tradeSession && tradeSession.origin === req.origin) clearDappTradeSession();
     forgetOrigin(req.origin);
     try { hooks?.rememberDappAccount?.(''); } catch {}
     return true;
@@ -1152,6 +1470,10 @@ async function dispatch(req) {
   if (method === 'compileVault' || method === 'lockVault') return handleCompileVault(req);
   if (method === 'compileVaults' || method === 'lockVaults') return handleCompileVaults(req);
   if (method === 'sendKas' || method === 'sendKaspa') return handleSendKas(req);
+  if (method === 'requestSessionAllowance') return handleRequestSessionAllowance(req);
+  if (method === 'autoBuy') return handleAutoBuy(req);
+  if (method === 'revokeSession') return handleRevokeSession(req);
+  if (method === 'getSessionAllowance') return handleGetSessionAllowance(req);
   if (method === 'openWallet') return handleOpenWallet(req);
   if (method === 'getActivityLog' || method === 'activityLog') return handleGetActivityLog(req);
   if (method === 'getIdentity' || method === 'dotk' || method === 'getDotk') {
@@ -1265,6 +1587,10 @@ export function pingKasdistroDappFrame(frame) {
 
 export function pingKasoddsDappFrame(frame) {
   pingDappFrame(frame, KASODDS_ORIGINS);
+}
+
+export function clearDappTradeSession() {
+  tradeSession = null;
 }
 
 export function bootDappConnect(opts) {

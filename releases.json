@@ -1,10 +1,20 @@
 {
   "sdk": "181",
-  "build": "298",
+  "build": "299",
   "wallet": "https://kcc-20-wallet.vercel.app",
   "sdkUrl": "https://kcc-20-wallet.vercel.app/sdk.js?v=181",
   "rule": "Every SDK_VERSION bump gets an entry here the same day. Pin sdk.js?v=NNN and require window.kcc20.sdkVersion === that NNN.",
   "entries": [
+    {
+      "date": "2026-11-05",
+      "sdk": "181",
+      "build": "299",
+      "title": "KCC20 24h board across KRON, Rocket, KasSeal, KForge",
+      "breaking": false,
+      "notes": [
+        "Home KCC20 24h lists launched curve and pool tokens from KRON, KaspaRocket.fun, KasSeal, and KForge.xyz. Tap a row to open TRADE with that venue. KRON swaps sign as before. KaspaRocket swaps use the official @kasparocket/sdk planTrade. KasSeal and KForge are listed and quoted from their live APIs. Pin sdk.js?v=181."
+      ]
+    },
     {
       "date": "2026-11-05",
       "sdk": "181",

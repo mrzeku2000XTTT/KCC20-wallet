@@ -11,7 +11,7 @@ import {
   fetchKcc20Portfolio, fetchKrc20Portfolio, fetchKcc20PortfolioMany, fetchKrc20PortfolioMany,
   fetchKronAddrTrades, fetchKronTokenUtxos, fetchKronAddrHoldings, KRON_IDX,
   krc20Logo, toTokenRaw, setVaultOwner, kcc20Identicon, VAULT_GROUPS, LIFE_KINDS, lifeKindMeta
-} from './kcc20.js?v=131';
+} from './kcc20.js?v=132';
 import { parseIntent, describeIntent, askFor, parseDurationField, interpretVaultChat, normalizeChat, normalizeVaultType, collectKasAmount } from './intent.js?v=127';
 import { parse as parseSilArtifact, redeemHex as silRedeemHex, matchSilverIntent } from './silverscript.js?v=189';
 import { payloadFromAddress } from './script.js?v=91';
@@ -26,13 +26,14 @@ import {
   spendSilverVault, isSilverScriptVault,
   disconnectRpc, buildDcaDrips, sendKasMany, releaseDcaDrip, cancelDcaDrip, isMassError,
   signPsktJson
-} from './tx.js?v=239';
+} from './tx.js?v=240';
 import { bootDappConnect, pingTttDappFrame, pingKasdistroDappFrame, TTT_TREASURY, listConnectedSites, disconnectSite, disconnectAllSites, dappSourceOrigin, clearDappTradeSession } from './dappConnect.js?v=213';
 import {
   changenowWidgetUrl, cnPayoutOk, bootNowStepper, KASPACOM_SWAP
 } from './changenow.js?v=182';
 import { schedulePersistIframeVault, bootIframeVaultWatch } from './iframeVault.js?v=122';
 import { kronMarkets, quoteKronTrade, executeKronTrade, formatKasSompi, lookupKronTick, liveQuote, tradeCostLines, attachKronLogos, kronCandles, kronLogoFor, quoteKcc20Bridge, executeKcc20Bridge, formatTokenRaw } from './kronTrade.js?v=235';
+import { kcc20Markets, lookupKcc20Market, quoteKcc20Trade, executeKcc20Trade, venueName, canExecuteVenue } from './kcc20Markets.js?v=1';
 import {
   BET_AGENT_ADDR, TTT_TICK, WINDOW_MS, windowBounds, fmtRemain,
   kkdagsHeld, isKcc20Pass, hireCost, maxHireHours,
@@ -86,7 +87,7 @@ import { vprogCreate, vprogJoin, vprogTurn } from './vprogLane.js?v=1';
 import { bootWalletForge } from './walletForge.js?v=4';
 import { layoutLabel, isFinalLayout } from './kcc20Final.js?v=2';
 
-export const BUILD = '298';
+export const BUILD = '299';
 const DESK_ID_KEY = 'kcc20_desk_id_v1';
 const DESK_VAULT_KEY = 'kcc20_desk_vault_v1';
 
@@ -6047,6 +6048,16 @@ function holdingForTick(tick) {
   const t = String(tick || '').toUpperCase();
   if (!t) return null;
   if (t === 'KAS') return { native: true, protocol: 'kas', ticker: 'KAS', decimals: 8, balance: String(balanceSompi) };
+  const tokenId = String(openTrade._tokenId || '').replace(/^0x/i, '').toLowerCase();
+  if (tokenId) {
+    const byId = (kccHoldings || []).find(x => String(x.tokenId || x.covenantId || '').replace(/^0x/i, '').toLowerCase() === tokenId);
+    if (byId) return byId;
+  }
+  const venue = String(openTrade._venue || '').toLowerCase();
+  if (venue) {
+    const byVenue = (kccHoldings || []).find(x => String(x.ticker || '').toUpperCase() === t && String(x.venue || '').toLowerCase() === venue);
+    if (byVenue) return byVenue;
+  }
   return (kccHoldings || []).find(x => String(x.ticker || '').toUpperCase() === t)
     || (krcHoldings || []).find(x => String(x.ticker || '').toUpperCase() === t)
     || null;
@@ -6096,7 +6107,8 @@ function openTokenSheet(token) {
   const logoSrc = token.image || (token.native ? 'assets/kas.svg' : (token.protocol === 'krc20' ? krc20Logo(token.ticker) : kcc20Identicon(token.ticker)));
   const assetKey = `${token.protocol}:${token.ticker}`;
   const kcc = token.protocol === 'kcc20';
-  const kronTrade = kcc && !isFinalLayout(token);
+  const tradeVenue = token.venue === 'kasparocket' || token.venue === 'kasseal' || token.venue === 'kforge' || token.standard === 'kasparocket' || token.standard === 'kasseal';
+  const kronTrade = kcc && (!isFinalLayout(token) || tradeVenue);
   const ddSweep = kcc && String(token.ticker).toUpperCase() === 'KKDAG' && isTttTreasuryWallet();
   const acts = [
     tkAct('tk-recv', 'Receive', ICO_RECV),
@@ -6121,14 +6133,14 @@ function openTokenSheet(token) {
   $('tk-recv')?.addEventListener('click', () => { closeSheet(); openReceive({ token }); });
   $('tk-send')?.addEventListener('click', () => { closeSheet(); openSend({ token, assetKey }); });
   $('tk-dd-sweep')?.addEventListener('click', () => { closeSheet(); openTreasurySweep().catch(e => toast(errText(e))); });
-  $('tk-buy')?.addEventListener('click', () => { closeSheet(); openTrade({ tick: token.ticker, side: 'buy' }); });
-  $('tk-dca')?.addEventListener('click', () => { closeSheet(); openTrade({ tick: token.ticker, side: 'dca' }); });
-  $('tk-sell')?.addEventListener('click', () => { closeSheet(); openTrade({ tick: token.ticker, side: 'sell' }); });
+  $('tk-buy')?.addEventListener('click', () => { closeSheet(); openTrade({ tick: token.ticker, side: 'buy', venue: token.venue, tokenId: token.tokenId }); });
+  $('tk-dca')?.addEventListener('click', () => { closeSheet(); openTrade({ tick: token.ticker, side: 'dca', venue: token.venue, tokenId: token.tokenId }); });
+  $('tk-sell')?.addEventListener('click', () => { closeSheet(); openTrade({ tick: token.ticker, side: 'sell', venue: token.venue, tokenId: token.tokenId }); });
   $('tk-freeze')?.addEventListener('click', () => { closeSheet(); openProduct('kcc20freeze', { tick: token.ticker }); });
 }
 
 function validTick(t) {
-  return /^[A-Z0-9]{2,12}$/.test(String(t || '').toUpperCase());
+  return /^[A-Z0-9]{2,16}$/.test(String(t || '').toUpperCase());
 }
 
 function fmtPx(n) {
@@ -6158,6 +6170,9 @@ function fmtChg(chg) {
 function venueLabel(v) {
   if (v === 'cook') return 'K.COM';
   if (v === 'scorpion') return 'Scorpion';
+  if (v === 'kasparocket') return 'Rocket';
+  if (v === 'kasseal') return 'KasSeal';
+  if (v === 'kforge') return 'KForge';
   return 'KRON';
 }
 
@@ -9936,32 +9951,36 @@ function paintKronBoard(err) {
     rows = rows.filter(m =>
       String(m.tick || '').toUpperCase().includes(q)
       || String(m.name || '').toUpperCase().includes(q)
+      || String(m.venueLabel || m.venue || '').toUpperCase().includes(q)
     );
   }
-  rows = rows.slice(0, 80);
+  rows = rows.slice(0, 120);
   box.innerHTML = rows.map(m => {
     const chg = Number(m.change24h || 0);
     const chgCls = chg > 0 ? 'up' : (chg < 0 ? 'down' : '');
     const px = m.price ? fmtPx(m.price) + ' KAS' : (m.graduated ? 'Pool' : 'Curve');
+    const venue = m.venueLabel || venueName(m.venue);
+    const phase = m.phase || (m.graduated ? 'Pool' : 'Curve');
+    const id = String(m.tokenId || m.covenantId || '');
     return `
-      <button class="row token-row" type="button" data-kron-buy="${esc(m.tick)}">
+      <button class="row token-row" type="button" data-kron-buy="${esc(m.tick)}" data-venue="${esc(m.venue || 'kron')}" data-token-id="${esc(id)}">
         ${tokenDot({ ticker: m.tick, protocol: 'kcc20', image: m.logo })}
         <div>
           <div class="title">${esc(m.tick)}</div>
-          <div class="sub">${esc(m.graduated ? 'Pool' : 'Curve')} · 24h vol ${esc(fmtVol(m.volume24h))} KAS</div>
+          <div class="sub">${esc(venue)} · ${esc(phase)} · 24h vol ${esc(fmtVol(m.volume24h))} KAS</div>
         </div>
         <div class="amt">
           <b>${esc(px)}</b>
           <em class="mkt-chg ${chgCls}">${esc(fmtChg(chg))}</em>
         </div>
       </button>`;
-  }).join('') || `<div class="empty">${q ? 'No KRON ticker matches that search.' : 'No KRON markets.'}</div>`;
+  }).join('') || `<div class="empty">${q ? 'No KCC20 ticker matches that search.' : 'No KCC20 markets.'}</div>`;
 }
 
 async function openKronBoard() {
   hideNowScreen();
   if (isTestnet()) {
-    toast('KRON 24h is mainnet. Switch Network off TN10.');
+    toast('KCC20 24h is mainnet. Switch Network off TN10.');
     return;
   }
   haptic();
@@ -9970,19 +9989,31 @@ async function openKronBoard() {
   el.classList.remove('hidden');
   el.setAttribute('aria-hidden', 'false');
   if ($('kron-board-q')) $('kron-board-q').value = '';
-  paintKronBoard('Loading KRON 24h…');
+  paintKronBoard('Loading KCC20 24h…');
   try {
-    kronBoardCache = (await kronMarkets()).filter(m => validTick(m.tick) && !String(m.tick).includes('?'));
+    kronBoardCache = await kcc20Markets();
     paintKronBoard();
   } catch (e) {
     paintKronBoard(errText(e));
   }
 }
 
+function setTradeMarket(m) {
+  openTrade._market = m || null;
+  openTrade._venue = m?.venue || 'kron';
+  openTrade._tokenId = m?.tokenId || m?.covenantId || '';
+  openTrade._lpCovenantId = m?.lpCovenantId || '';
+  openTrade._lotSize = m?.lotSize || 0;
+  openTrade._nextLotPrice = m?.nextLotPrice || 0;
+  openTrade._px = Number(m?.price) || 0;
+  openTrade._chg = Number(m?.change24h) || 0;
+  openTrade._grad = !!m?.graduated;
+}
+
 function openTrade(prefill = {}) {
   hideNowScreen();
   if (isTestnet()) {
-    toast('Home Trade is mainnet KRON. Use COOK on TN10.');
+    toast('Home Trade is mainnet KCC20. Use COOK on TN10.');
     showPage('tokens');
     setAtPane('book');
     return;
@@ -9995,6 +10026,10 @@ function openTrade(prefill = {}) {
   screen.setAttribute('aria-hidden', 'false');
   const tick0 = String(prefill.tick || 'KKDAG').toUpperCase();
   const side0 = prefill.side === 'sell' ? 'sell' : (prefill.side === 'dca' ? 'dca' : 'buy');
+  openTrade._venue = String(prefill.venue || openTrade._venue || 'kron').toLowerCase();
+  openTrade._tokenId = String(prefill.tokenId || prefill.covenantId || openTrade._tokenId || '').replace(/^0x/i, '').toLowerCase();
+  openTrade._lpCovenantId = prefill.lpCovenantId || openTrade._lpCovenantId || '';
+  openTrade._market = prefill.market || openTrade._market || null;
   if ($('trade-ticker')) $('trade-ticker').value = tick0;
   if ($('trade-amount')) $('trade-amount').value = prefill.amount || '';
   $('trade-side')?.querySelectorAll('button').forEach(b => b.classList.toggle('on', b.dataset.side === side0));
@@ -10027,23 +10062,33 @@ async function lookupTradeTicker(opts = {}) {
     meta.innerHTML = `<div class="title">Looking up ${esc(tick)}…</div>`;
   }
   try {
-    const info = await lookupKronTick(tick);
-    openTrade._px = Number(info.price) || 0;
-    openTrade._chg = Number(info.change24h) || 0;
-    openTrade._grad = !!info.graduated;
+    const typed = ($('trade-ticker')?.dataset?.lastTick || '');
+    if (!quiet && typed && typed !== tick) {
+      openTrade._tokenId = '';
+      openTrade._venue = '';
+      openTrade._market = null;
+    }
+    if ($('trade-ticker')) $('trade-ticker').dataset.lastTick = tick;
+    const info = await lookupKcc20Market(tick, {
+      venue: openTrade._venue,
+      tokenId: openTrade._tokenId
+    });
+    setTradeMarket(info);
     if (meta) {
       const px = info.price ? fmtPx(info.price) + ' KAS' : '—';
+      const venue = info.venueLabel || venueName(info.venue);
+      const phase = info.phase || (info.graduated ? 'Locked AMM pool' : 'Bonding curve');
       meta.innerHTML = `
         <div class="title">${esc(info.tick)} · ${esc(info.name)}</div>
-        <div class="sub">${esc(info.graduated ? 'Locked AMM pool' : 'Bonding curve')} · ${esc(px)} · ${esc(fmtChg(openTrade._chg))}</div>`;
+        <div class="sub">${esc(venue)} · ${esc(phase)} · ${esc(px)} · ${esc(fmtChg(openTrade._chg))}</div>`;
     }
     if (!quiet) $('slide-ticker-wrap')?.classList.remove('open');
     syncTradeLabel();
     quoteTradePreview();
     const slideOn = $('trade-screen')?.classList.contains('slide-on');
-    if (slideOn && quiet && slideTickDrawn === tick && slidePts.length && openTrade._px > 0) {
+    if (info.venue === 'kron' && slideOn && quiet && slideTickDrawn === tick && slidePts.length && openTrade._px > 0) {
       slidePts[slidePts.length - 1] = openTrade._px;
-    } else if (slideOn) {
+    } else if (slideOn && info.venue === 'kron') {
       loadSlideSeries(tick);
     }
   } catch (e) {
@@ -10111,7 +10156,14 @@ async function quoteTradePreview() {
     ? `<span>Quoting…</span>`
     : `<p class="muted" style="text-align:left;padding:0;">Quoting…</p>`;
   try {
-    const q = await quoteKronTrade({ tick, side, amount });
+    const q = await quoteKcc20Trade({
+      tick, side, amount,
+      venue: openTrade._venue,
+      tokenId: openTrade._tokenId,
+      lpCovenantId: openTrade._lpCovenantId,
+      lotSize: openTrade._lotSize,
+      nextLotPrice: openTrade._nextLotPrice
+    });
     if (gen !== slideQuoteGen) return;
     if (slideOn) {
       const phase = openTrade._grad ? 'POOL' : 'CURVE';
@@ -10148,6 +10200,10 @@ async function reviewTrade() {
   const tick = ($('trade-ticker')?.value || 'KKDAG').toUpperCase();
   const side = $('trade-side')?.querySelector('.on')?.dataset.side || 'buy';
   if (side === 'dca') {
+    if (openTrade._venue && openTrade._venue !== 'kron') {
+      toast('DCA is KRON. Buy or sell this ticker, or pick a KRON name.');
+      return;
+    }
     const job = loadDcaJob();
     if (job?.on || (job?.vaults || []).some(d => !d.swept)) {
       stopDca();
@@ -10185,8 +10241,16 @@ async function reviewTrade() {
   if (!amount || !(Number(String(amount).replace(',', '.')) > 0)) { toast('Enter an amount'); return; }
   if (go) go.disabled = true;
   let q;
-  try { q = await quoteKronTrade({ tick, side, amount }); }
-  catch (e) { if (go) go.disabled = false; toast(errText(e)); return; }
+  try {
+    q = await quoteKcc20Trade({
+      tick, side, amount,
+      venue: openTrade._venue,
+      tokenId: openTrade._tokenId,
+      lpCovenantId: openTrade._lpCovenantId,
+      lotSize: openTrade._lotSize,
+      nextLotPrice: openTrade._nextLotPrice
+    });
+  } catch (e) { if (go) go.disabled = false; toast(errText(e)); return; }
   if (go) go.disabled = false;
   const buyBits = q.side === 'buy' ? `
     <div class="kv"><span class="k">Into ${esc(q.tick)}</span><span class="v">${esc(formatKasSompi(q.kasIn))} KAS</span></div>
@@ -10195,12 +10259,21 @@ async function reviewTrade() {
     <div class="kv"><span class="k">Cell stays yours</span><span class="v">0.50 KAS</span></div>
     <div class="kv"><span class="k">Network (est.)</span><span class="v">~0.40 KAS</span></div>
     <div class="kv"><span class="k">Native KAS leaving</span><span class="v">~${esc(formatKasSompi(q.nativeLeave))} KAS</span></div>
-    <p class="muted" style="text-align:left;padding-top:8px;">${esc(tradeCostLines(q))} Protocol fees go to KRON and the token creator on-chain (the covenant requires it). The 0.5 KAS cell and the tokens land in this wallet. This app tags the trade so integrator volume can be paid.</p>`
+    <p class="muted" style="text-align:left;padding-top:8px;">${esc(tradeCostLines(q) || '')} Protocol fees go to ${esc(venueName(openTrade._venue || q.venue || 'kron'))} and the token creator on-chain. The cell and the tokens land in this wallet.</p>`
     : `<div class="kv"><span class="k">Sell</span><span class="v">${esc(formatTokenUnits(q.tokenIn, q.decimals))} ${esc(q.tick)}</span></div>
        <div class="kv"><span class="k">You receive</span><span class="v">${esc(formatKasSompi(q.net))} KAS</span></div>
        <div class="kv"><span class="k">Protocol fees</span><span class="v">${esc(formatKasSompi(q.fee))} KAS</span></div>`;
   hydrateNativeKey(wallet);
   const kw = kaswareSigning(wallet);
+  const venue = openTrade._venue || q.venue || 'kron';
+  if (!canExecuteVenue(venue)) {
+    openSheet('Review ' + q.tick + ' ' + q.side, buyBits +
+      `<p class="muted" style="text-align:left;padding-top:8px;">${esc(venueName(venue))} quote is live in this wallet. Pay signs KRON and KaspaRocket swaps here. ${esc(venueName(venue))} still builds its covenant on their SDK.</p>`, {
+      confirm: false,
+      cancelLabel: 'Close'
+    });
+    return;
+  }
   openSheet('Review ' + q.tick + ' ' + q.side, buyBits, {
     confirm: payWithSignerLabel(wallet),
     gold: true,
@@ -10231,16 +10304,19 @@ async function runTrade({ tick, side, amount, quote, forceKasware = false }) {
   if (tradeBusy) { toast('Swap already running'); return; }
   tradeBusy = true;
   const kw = !!(forceKasware || kaswareSigning(wallet));
-  toast(kw ? 'Building KCC20 swap for KasWare…' : 'Building KRON swap…');
+  toast(kw ? 'Building KCC20 swap for KasWare…' : 'Building KCC20 swap…');
   try {
     if (!kw) hydrateNativeKey(wallet);
     await loadKaspaSdk();
     const result = await Promise.race([
-      executeKronTrade({
+      executeKcc20Trade({
         wallet,
         tick,
         side,
         amount,
+        venue: openTrade._venue,
+        tokenId: openTrade._tokenId,
+        lpCovenantId: openTrade._lpCovenantId,
         forceKasware: kw,
         onStatus: (m) => { toast(m); setSheetStatus(m); }
       }),
@@ -12988,7 +13064,12 @@ function bind() {
     const row = e.target.closest('[data-kron-buy]');
     if (!row?.dataset.kronBuy) return;
     hideKronBoard();
-    openTrade({ tick: row.dataset.kronBuy, side: 'buy' });
+    openTrade({
+      tick: row.dataset.kronBuy,
+      side: 'buy',
+      venue: row.dataset.venue || 'kron',
+      tokenId: row.dataset.tokenId || ''
+    });
   });
   click('trade-close', hideTradeScreen);
   bindSlide();

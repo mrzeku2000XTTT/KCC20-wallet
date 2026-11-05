@@ -136,7 +136,7 @@
           </button>
           <div class="section-label hold-lab">
             <span>Holdings · live P&amp;L</span>
-            <button type="button" class="kron-24h-btn" id="btn-kron-board">KRON 24h</button>
+            <button type="button" class="kron-24h-btn" id="btn-kron-board">KCC20 24h</button>
           </div>
           <div class="holdings-pills" id="holdings"></div>
         </section>
@@ -972,13 +972,13 @@
       <div class="trade-screen hidden" id="kron-board" aria-hidden="true">
         <div class="trade-head">
           <button type="button" class="trade-x" id="kron-board-close">Close</button>
-          <h2>KRON 24h</h2>
+          <h2>KCC20 24h</h2>
           <span class="trade-head-space"></span>
         </div>
         <div class="field"><label>Search</label>
-          <input id="kron-board-q" placeholder="KKDAG, KRON, KDIST…" maxlength="16" spellcheck="false" autocomplete="off">
+          <input id="kron-board-q" placeholder="KKDAG, KRON, KASUSD…" maxlength="24" spellcheck="false" autocomplete="off">
         </div>
-        <p class="avail-line">Last 24 hours by volume. Tap a ticker to buy.</p>
+        <p class="avail-line">Last 24 hours by volume across KRON, KaspaRocket, KasSeal, and KForge. Tap a ticker to buy.</p>
         <div class="kron-board-list" id="kron-board-list"></div>
       </div>
 
@@ -1095,7 +1095,7 @@
   <script type="module">
     import('./js/iframeVault.js?v=122').then(function (mod) {
       return (mod.restoreIframeVault ? mod.restoreIframeVault() : Promise.resolve()).then(function () {
-        return import('./js/app.js?v=298');
+        return import('./js/app.js?v=299');
       });
     }).catch(function (err) {
       console.error(err);

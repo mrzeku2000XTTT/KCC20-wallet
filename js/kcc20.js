@@ -1,6 +1,7 @@
 /* KCC20 token watchlist + covenant catalog for this repo. */
 
-import { fetchKaspaRocketHoldings, fetchKaspaRocketCatalogue } from './kaspaRocket.js?v=2';
+import { fetchKaspaRocketHoldings, fetchKaspaRocketCatalogue } from './kaspaRocket.js?v=3';
+import { fetchKasSealHoldings } from './kasSeal.js?v=1';
 
 export const NATIVE_KAS = {
   ticker: 'KAS',
@@ -587,6 +588,9 @@ export async function fetchKcc20Portfolio(address, pubKey) {
   const rocketP = address
     ? fetchKaspaRocketHoldings(address).then(list => ({ list, err: null })).catch(e => ({ list: [], err: e }))
     : Promise.resolve({ list: [], err: null });
+  const sealP = address
+    ? fetchKasSealHoldings(address).then(list => ({ list, err: null })).catch(e => ({ list: [], err: e }))
+    : Promise.resolve({ list: [], err: null });
   const catP = fetchKaspaRocketCatalogue().catch(() => new Map());
   let kron = [];
   let kronOk = false;
@@ -613,10 +617,12 @@ export async function fetchKcc20Portfolio(address, pubKey) {
   const rocketBag = await withTimeout(rocketP, 3500, { list: [], err: null });
   const rocket = rocketBag?.list || [];
   if (rocketBag?.err) lastErr = rocketBag.err;
+  const sealBag = await withTimeout(sealP, 2500, { list: [], err: null });
+  const seal = sealBag?.list || [];
   const cat = await withTimeout(catP, 2500, new Map());
 
-  if (kron.length || info.length || kascov.length || rocket.length) {
-    return stampRocketCatalogue(mergeHoldings(kron, info, kascov, rocket, kronOk), cat);
+  if (kron.length || info.length || kascov.length || rocket.length || seal.length) {
+    return stampRocketCatalogue(mergeHoldings(kron, info, kascov, rocket.concat(seal), kronOk), cat);
   }
 
   if (lastErr) throw lastErr;

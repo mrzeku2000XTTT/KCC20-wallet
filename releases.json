@@ -1,10 +1,20 @@
 {
   "sdk": "181",
-  "build": "297",
+  "build": "298",
   "wallet": "https://kcc-20-wallet.vercel.app",
   "sdkUrl": "https://kcc-20-wallet.vercel.app/sdk.js?v=181",
   "rule": "Every SDK_VERSION bump gets an entry here the same day. Pin sdk.js?v=NNN and require window.kcc20.sdkVersion === that NNN.",
   "entries": [
+    {
+      "date": "2026-11-05",
+      "sdk": "181",
+      "build": "298",
+      "title": "TRADE sells bags split across cells",
+      "breaking": false,
+      "notes": [
+        "Home TRADE sell of a KRON bag (KKDAG on the curve) was refusing MAX when the tokens sat in more than three cells. A curve/pool swap can spend three seller cells plus inventory. Pay now merges the extra cells in the same PIN session, then sells. Slider at 0% no longer quotes a fake fee error. TRADE stays KRON."
+      ]
+    },
     {
       "date": "2026-10-30",
       "sdk": "181",

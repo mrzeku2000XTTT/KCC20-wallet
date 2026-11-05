@@ -970,25 +970,33 @@ async function connectTradeNode(k) {
   return connectPublicNode();
 }
 
-async function loadUserTokens(tick, address, { limit = 4, withKas = true } = {}) {
+async function loadUserTokens(tick, address, { limit = 64, withKas = true } = {}) {
   const utxos = (await idx(`/token/${encodeURIComponent(tick)}/address/${encodeURIComponent(address)}/utxos`)) || [];
-  const rows = (Array.isArray(utxos) ? utxos : []).filter(u => u?.redeemScriptHex).slice(0, limit);
-  const out = await Promise.all(rows.map(async u => {
-    const decoded = kron.kcc20.decodeKcc20Redeem(hexBytes(u.redeemScriptHex));
-    const txid = u.outpoint.transactionId;
-    const index = Number(u.outpoint.index);
+  const rows = (Array.isArray(utxos) ? utxos : []).filter(u => u?.redeemScriptHex || u?.redeem);
+  const cap = Math.max(1, Math.min(64, Number(limit) || 64));
+  const out = [];
+  for (const u of rows) {
+    if (out.length >= cap) break;
+    const redeemHex = u.redeemScriptHex || u.redeem;
+    let decoded;
+    try { decoded = kron.kcc20.decodeKcc20Redeem(hexBytes(redeemHex)); } catch { continue; }
+    if (decoded?.state?.identifierType === 1) continue;
+    if (!(decoded?.state?.amount > 0n)) continue;
+    const txid = u.outpoint?.transactionId;
+    const index = Number(u.outpoint?.index);
+    if (!txid) continue;
     let value = DUST;
     if (withKas) {
       try { value = await cellKas(txid, index); } catch {}
     }
-    return {
+    out.push({
       transactionId: txid,
       index,
       value,
       state: decoded.state,
       template: decoded.template
-    };
-  }));
+    });
+  }
   return out.sort((a, b) => (a.state.amount < b.state.amount ? 1 : -1));
 }
 
@@ -996,7 +1004,35 @@ async function cellKas(txid, index) {
   return txOutValue(await kaspaTx(txid), index);
 }
 
-function pickTokens(pieces, need, maxN) {
+function pieceKey(p) {
+  return normTxId(p?.transactionId) + ':' + Number(p?.index ?? -1);
+}
+
+function maxTokenIns(tokenTpl) {
+  return Math.max(2, Math.min(4, Number(tokenTpl?.maxIns || 4) || 4));
+}
+
+function maxSellerIns(tokenTpl) {
+  return Math.max(1, maxTokenIns(tokenTpl) - 1);
+}
+
+function coverAmount(pieces, maxN) {
+  let n = 0n;
+  let i = 0;
+  for (const p of pieces || []) {
+    n += p.state?.amount || 0n;
+    i += 1;
+    if (i >= maxN) break;
+  }
+  return n;
+}
+
+function covidHex(v) {
+  if (v instanceof Uint8Array) return Array.from(v, b => b.toString(16).padStart(2, '0')).join('');
+  return String(v || '').replace(/^0x/i, '').toLowerCase();
+}
+
+function pickTokens(pieces, need, maxN, tick) {
   const picked = [];
   let covered = 0n;
   for (const p of pieces) {
@@ -1005,8 +1041,160 @@ function pickTokens(pieces, need, maxN) {
     if (covered >= need) break;
     if (picked.length >= maxN) break;
   }
-  if (covered < need) throw new Error('Not enough tokens in this wallet');
+  if (covered < need) {
+    const total = (pieces || []).reduce((s, p) => s + (p.state?.amount || 0n), 0n);
+    const name = String(tick || 'tokens').toUpperCase();
+    if (total >= need && (pieces || []).length > maxN) {
+      throw new Error(`${name} is split across ${pieces.length} cells. This swap can spend ${maxN} of them (${covered}). Tap Pay again so we merge cells first.`);
+    }
+    throw new Error('Not enough tokens in this wallet');
+  }
   return picked;
+}
+
+async function waitTxVisible(rpc, address, txId, ms = 40000) {
+  const want = normTxId(txId);
+  if (!want) throw new Error('Missing tx id after merge');
+  const start = Date.now();
+  while (Date.now() - start < ms) {
+    const rows = await utxosOnNode(rpc, address);
+    for (const e of rows || []) {
+      const id = normTxId(e.outpoint?.transactionId || e.outpoint?.transaction_id);
+      if (id === want) return e;
+    }
+    await sleep(700);
+  }
+  throw new Error('Merged cell did not land yet. Tap Pay again to sell.');
+}
+
+async function signBroadcastKron({
+  k, spend, wallet, rpc, needGuess, useKw, canPin, nativeHex, onStatus
+}) {
+  const fundingAll = await liveFunding(rpc, wallet.address, needGuess, useKw);
+  const funding = [];
+  let sum = 0n;
+  for (const e of fundingAll) {
+    funding.push(e);
+    sum += e.amount;
+    if (sum >= needGuess) break;
+  }
+  if (sum < needGuess) {
+    throw new Error(`Need about ${Number(needGuess) / 1e8} KAS UTXO in this wallet for this transaction (cell + network fee).`);
+  }
+  let asm = assembleSpend(k, spend, funding, wallet.address, 10_000n);
+  const fee = kron.spend.estimateNativeFee(k, 'mainnet', asm, 100);
+  asm = assembleSpend(k, spend, funding, wallet.address, fee);
+  const external = !!useKw;
+  if (external) {
+    onStatus?.('Approve in KasWare…');
+    let plan;
+    try {
+      plan = kronPsktPlan(asm);
+      plan.txJsonString = attachKronPsktUtxos(plan.txJsonString);
+    } catch (e) {
+      throw new Error('Could not export this KCC20 swap for KasWare: ' + errText(e));
+    }
+    if (!plan?.txJsonString) throw new Error('Could not export this KCC20 swap for KasWare');
+    let signedJson;
+    try {
+      signedJson = await signPsktWithKasware(plan.txJsonString, plan.signInputs);
+    } catch (e) {
+      const msg = errText(e);
+      if (/trailing comma|processing JSON/i.test(msg)) {
+        throw new Error('KasWare could not read this KRON swap JSON. Hard-refresh, reject leftover popups, tap Pay again.');
+      }
+      throw e;
+    }
+    let signedTx;
+    try {
+      signedTx = k.Transaction.deserializeFromSafeJSON(repairSafeJson(signedJson));
+    } catch (e) {
+      const msg = errText(e);
+      if (/trailing comma|processing JSON/i.test(msg)) {
+        throw new Error('KasWare JSON for this KRON swap was unreadable. Hard-refresh, reject leftover popups, tap Pay again.');
+      }
+      throw new Error('KasWare returned a tx this app could not read: ' + msg);
+    }
+    mergeFundingSignatures(asm.transaction, signedTx, asm.fundingInputIndexes);
+  } else {
+    const hex = String(wallet.privKey || nativeHex || '').replace(/^0x/i, '').trim();
+    if (!/^[0-9a-fA-F]{64}$/.test(hex)) {
+      throw new Error('No in-app key on this wallet. Import the 64-hex key to sign natively, or turn KasWare on in Settings.');
+    }
+    wallet.privKey = hex;
+    const priv = new k.PrivateKey(wallet.privKey);
+    signFundingP2pk(k, asm.transaction, priv, asm.fundingInputIndexes);
+  }
+  onStatus?.('Broadcasting…');
+  let txId;
+  try {
+    txId = await submitKronSigned(rpc, asm.transaction);
+  } catch (e) {
+    if (external && canPin && (isFalseStack(e) || /signature did not verify/i.test(errText(e)))) {
+      onStatus?.('KasWare sig failed — signing with this wallet’s key…');
+      wallet.privKey = nativeHex;
+      const priv = new k.PrivateKey(nativeHex);
+      signFundingP2pk(k, asm.transaction, priv, asm.fundingInputIndexes);
+      txId = await submitKronSigned(rpc, asm.transaction);
+    } else {
+      throw e;
+    }
+  }
+  return { txId, fee, asm };
+}
+
+async function consolidateOnce(tokens, ctx) {
+  const { k, rpc, wallet, tokenTpl, tokenCovid, useKw, canPin, nativeHex, onStatus } = ctx;
+  if (!tokens || tokens.length < 2) throw new Error('Need at least two cells to merge');
+  const presence = tokens.length;
+  const spend = kron.curveCp.buildConsolidate(k, tokenTpl, tokens, presence, { tokenCovid });
+  onStatus?.('Signing cell merge…');
+  const { txId } = await signBroadcastKron({
+    k, spend, wallet, rpc, needGuess: 80_000_000n, useKw, canPin, nativeHex,
+    onStatus: (m) => onStatus?.(m === 'Approve in KasWare…' ? 'Approve cell merge in KasWare…' : m)
+  });
+  onStatus?.('Waiting for merged cell…');
+  await waitTxVisible(rpc, wallet.address, txId, 40000);
+  const mergedAmt = tokens.reduce((s, t) => s + t.state.amount, 0n);
+  const dust = spend.outputs?.find(o => o.role === 'merged')?.value || DUST;
+  return {
+    transactionId: txId,
+    index: 0,
+    value: dust,
+    state: {
+      ownerIdentifier: tokens[0].state.ownerIdentifier,
+      identifierType: 3,
+      amount: mergedAmt,
+      isMinter: false
+    },
+    template: tokenTpl
+  };
+}
+
+async function ensureSellPieces(held, need, tokenTpl, ctx) {
+  const maxSeller = maxSellerIns(tokenTpl);
+  const maxIns = maxTokenIns(tokenTpl);
+  let pieces = (held || []).filter(p => p?.state?.amount > 0n)
+    .sort((a, b) => (a.state.amount < b.state.amount ? 1 : -1));
+  const total = pieces.reduce((s, p) => s + p.state.amount, 0n);
+  if (total < need) throw new Error('Not enough tokens in this wallet');
+  let guard = 0;
+  while (guard++ < 8) {
+    if (coverAmount(pieces, maxSeller) >= need) return pieces;
+    if (pieces.length < 2) break;
+    const nMerge = Math.min(maxIns, pieces.length);
+    const smallest = [...pieces].sort((a, b) => (a.state.amount < b.state.amount ? -1 : 1));
+    const group = smallest.slice(0, nMerge);
+    if (group.length < 2) break;
+    ctx.onStatus?.(`Merging ${group.length} ${ctx.tick} cells…`);
+    const merged = await consolidateOnce(group, ctx);
+    const keys = new Set(group.map(pieceKey));
+    pieces = pieces.filter(p => !keys.has(pieceKey(p)));
+    pieces.push(merged);
+    pieces.sort((a, b) => (a.state.amount < b.state.amount ? 1 : -1));
+  }
+  if (coverAmount(pieces, maxSeller) >= need) return pieces;
+  throw new Error(`${ctx.tick} is split across ${(held || []).length} cells. This swap can spend ${maxSeller} of them. Tap Pay again to finish merging.`);
 }
 
 export async function executeKronTrade({ wallet, tick, side, amount, utxos, onStatus, forceKasware = false }) {
@@ -1021,6 +1209,22 @@ export async function executeKronTrade({ wallet, tick, side, amount, utxos, onSt
   const buyer = xOnly(wallet);
   onStatus?.('Quoting on KRON…');
   const quoted = await quoteKronTrade({ tick, side, amount });
+
+  onStatus?.('Connecting to Kaspa…');
+  let rpc = null;
+  let landed = false;
+  try {
+  const conn = await connectTradeNode(k);
+  rpc = conn.rpc;
+  const nativeHex = String(wallet.privKey || '').replace(/^0x/i, '').trim();
+  const canPin = /^[0-9a-fA-F]{64}$/.test(nativeHex);
+  const useKw = !!(forceKasware || kaswareSigning(wallet));
+  const tokenCovid = covidHex(entry.covenantId || token.covenantId);
+  const sellCtx = {
+    k, rpc, wallet, tokenTpl, tokenCovid,
+    tick: String(tick).toUpperCase(),
+    useKw, canPin, nativeHex, onStatus
+  };
 
   let spend;
   let merge = [];
@@ -1043,11 +1247,10 @@ export async function executeKronTrade({ wallet, tick, side, amount, utxos, onSt
     );
   } else if (quoted.side === 'sell' && quoted.graduated) {
     onStatus?.('Loading pool…');
-    const [live, held] = await Promise.all([
-      poolHead(tick, entry.covenantId, entry.extensions.poolCovenantId),
-      loadUserTokens(tick, wallet.address, { limit: 4, withKas: true })
-    ]);
-    const picked = pickTokens(held, quoted.tokenIn, 3);
+    let held = await loadUserTokens(tick, wallet.address, { limit: 64, withKas: true });
+    held = await ensureSellPieces(held, quoted.tokenIn, tokenTpl, sellCtx);
+    const live = await poolHead(tick, entry.covenantId, entry.extensions.poolCovenantId);
+    const picked = pickTokens(held, quoted.tokenIn, maxSellerIns(tokenTpl), tick);
     const sellPresence = 2 + picked.length;
     spend = kron.poolCpV3.buildPoolV3SwapTokenForKas(
       k, tpls.pool, tokenTpl, poolParams(entry), live.utxo, live.poolCovid, buyer, picked, quoted.raw, sellPresence
@@ -1067,108 +1270,30 @@ export async function executeKronTrade({ wallet, tick, side, amount, utxos, onSt
     );
   } else {
     onStatus?.('Loading curve…');
-    const [head, held] = await Promise.all([
-      curveHead(tick, token, entry),
-      loadUserTokens(tick, wallet.address, { limit: 4, withKas: true })
-    ]);
+    let held = await loadUserTokens(tick, wallet.address, { limit: 64, withKas: true });
+    held = await ensureSellPieces(held, quoted.tokenIn, tokenTpl, sellCtx);
+    const head = await curveHead(tick, token, entry);
     const qLive = kron.curve.quoteCpSell(curveStateFromHead(head, entry), quoted.tokenIn);
     if (!qLive) throw new Error('Amount too small to sell — fees would exceed proceeds');
     quoted.kasOut = qLive.kasOut;
     quoted.net = qLive.net;
     quoted.fee = qLive.fee;
     quoted.raw = qLive;
-    const picked = pickTokens(held, qLive.tokenIn, 3);
+    const picked = pickTokens(held, qLive.tokenIn, maxSellerIns(tokenTpl), tick);
     const sellPresence = 2 + picked.length;
     spend = kron.curveCp.buildCpSell(
       k, tpls.curve, tokenTpl, head.utxo, picked, head.inventory, head.curveCovid, buyer, qLive.tokenIn, qLive.kasOut, sellPresence
     );
   }
 
-  onStatus?.('Connecting to Kaspa…');
-  let rpc = null;
-  let landed = false;
-  try {
-  const conn = await connectTradeNode(k);
-  rpc = conn.rpc;
-
   onStatus?.('Selecting KAS UTXOs…');
-  const nativeHex = String(wallet.privKey || '').replace(/^0x/i, '').trim();
-  const canPin = /^[0-9a-fA-F]{64}$/.test(nativeHex);
-  const useKw = !!(forceKasware || kaswareSigning(wallet));
   const needGuess = (quoted.total || quoted.fee || 0n) + (merge.length ? 0n : DUST) + 80_000_000n;
-  const fundingAll = await liveFunding(rpc, wallet.address, needGuess, useKw);
-  const funding = [];
-  let sum = 0n;
-  for (const e of fundingAll) {
-    funding.push(e);
-    sum += e.amount;
-    if (sum >= needGuess) break;
-  }
-  if (sum < needGuess) {
-    throw new Error(`Need about ${Number(needGuess) / 1e8} KAS UTXO in this wallet for the swap (trade + 0.5 KAS cell + network fee).`);
-  }
-
-  let asm = assembleSpend(k, spend, funding, wallet.address, 10_000n);
-  const fee = kron.spend.estimateNativeFee(k, 'mainnet', asm, 100);
-  asm = assembleSpend(k, spend, funding, wallet.address, fee);
-  const external = useKw;
-  if (external) {
-    onStatus?.('Approve in KasWare…');
-    let plan;
-    try {
-      plan = kronPsktPlan(asm);
-      plan.txJsonString = attachKronPsktUtxos(plan.txJsonString);
-    } catch (e) {
-      throw new Error('Could not export this KCC20 swap for KasWare: ' + errText(e));
-    }
-    if (!plan?.txJsonString) throw new Error('Could not export this KCC20 swap for KasWare');
-    let signedJson;
-    try {
-      signedJson = await signPsktWithKasware(plan.txJsonString, plan.signInputs);
-    } catch (e) {
-      const msg = errText(e);
-      if (/trailing comma|processing JSON/i.test(msg)) {
-        throw new Error('KasWare could not read this KRON swap JSON. Hard-refresh, reject leftover popups, tap Buy again.');
-      }
-      throw e;
-    }
-    let signedTx;
-    try {
-      signedTx = k.Transaction.deserializeFromSafeJSON(repairSafeJson(signedJson));
-    } catch (e) {
-      const msg = errText(e);
-      if (/trailing comma|processing JSON/i.test(msg)) {
-        throw new Error('KasWare JSON for this KRON swap was unreadable. Hard-refresh, reject leftover popups, tap Buy again.');
-      }
-      throw new Error('KasWare returned a tx this app could not read: ' + msg);
-    }
-    mergeFundingSignatures(asm.transaction, signedTx, asm.fundingInputIndexes);
-  } else {
-    const hex = String(wallet.privKey || '').replace(/^0x/i, '').trim();
-    if (!/^[0-9a-fA-F]{64}$/.test(hex)) {
-      throw new Error('No in-app key on this wallet. Import the 64-hex key to sign natively, or turn KasWare on in Settings.');
-    }
-    wallet.privKey = hex;
-    const priv = new k.PrivateKey(wallet.privKey);
-    signFundingP2pk(k, asm.transaction, priv, asm.fundingInputIndexes);
-  }
-  onStatus?.('Broadcasting KRON trade…');
-  let txId;
-  try {
-    txId = await submitKronSigned(rpc, asm.transaction);
-  } catch (e) {
-    if (external && canPin && (isFalseStack(e) || /signature did not verify/i.test(errText(e)))) {
-      onStatus?.('KasWare sig failed — signing with this wallet’s key…');
-      wallet.privKey = nativeHex;
-      const priv = new k.PrivateKey(nativeHex);
-      signFundingP2pk(k, asm.transaction, priv, asm.fundingInputIndexes);
-      txId = await submitKronSigned(rpc, asm.transaction);
-    } else {
-      throw e;
-    }
-  }
+  const { txId, fee } = await signBroadcastKron({
+    k, spend, wallet, rpc, needGuess, useKw, canPin, nativeHex,
+    onStatus: (m) => onStatus?.(m === 'Broadcasting…' ? 'Broadcasting KRON trade…' : m)
+  });
   landed = true;
-  return { txId, fee, quote: quoted, signer: external ? 'kasware' : 'local' };
+  return { txId, fee, quote: quoted, signer: useKw ? 'kasware' : 'local' };
   } finally {
     if (!landed) {
       try { await disconnectRpc(); } catch {}

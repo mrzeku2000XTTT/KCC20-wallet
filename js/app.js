@@ -32,7 +32,7 @@ import {
   changenowWidgetUrl, cnPayoutOk, bootNowStepper, KASPACOM_SWAP
 } from './changenow.js?v=182';
 import { schedulePersistIframeVault, bootIframeVaultWatch } from './iframeVault.js?v=122';
-import { kronMarkets, quoteKronTrade, executeKronTrade, formatKasSompi, lookupKronTick, liveQuote, tradeCostLines, attachKronLogos, kronCandles, kronLogoFor, quoteKcc20Bridge, executeKcc20Bridge, formatTokenRaw } from './kronTrade.js?v=234';
+import { kronMarkets, quoteKronTrade, executeKronTrade, formatKasSompi, lookupKronTick, liveQuote, tradeCostLines, attachKronLogos, kronCandles, kronLogoFor, quoteKcc20Bridge, executeKcc20Bridge, formatTokenRaw } from './kronTrade.js?v=235';
 import {
   BET_AGENT_ADDR, TTT_TICK, WINDOW_MS, windowBounds, fmtRemain,
   kkdagsHeld, isKcc20Pass, hireCost, maxHireHours,
@@ -86,7 +86,7 @@ import { vprogCreate, vprogJoin, vprogTurn } from './vprogLane.js?v=1';
 import { bootWalletForge } from './walletForge.js?v=4';
 import { layoutLabel, isFinalLayout } from './kcc20Final.js?v=2';
 
-export const BUILD = '297';
+export const BUILD = '298';
 const DESK_ID_KEY = 'kcc20_desk_id_v1';
 const DESK_VAULT_KEY = 'kcc20_desk_vault_v1';
 
@@ -9578,7 +9578,11 @@ function queueSlideQuote() {
     const amount = slideAmountFor(slideP);
     if ($('trade-amount')) $('trade-amount').value = amount;
     const n = Number(amount);
-    if (!(n > 0) || (tradeSide() !== 'sell' && n < 1)) return;
+    if (!(n > 0) || (tradeSide() !== 'sell' && n < 1)) {
+      const box = $('trade-quote');
+      if (box) box.innerHTML = '';
+      return;
+    }
     quoteTradePreview();
   }, 380);
 }
@@ -10097,7 +10101,11 @@ async function quoteTradePreview() {
   const amount = $('trade-amount')?.value.trim();
   const tick = ($('trade-ticker')?.value || 'KKDAG').toUpperCase();
   const side = $('trade-side')?.querySelector('.on')?.dataset.side || 'buy';
-  if (!box || !amount) return;
+  if (!box) return;
+  if (!amount || !(Number(String(amount).replace(',', '.')) > 0)) {
+    box.innerHTML = '';
+    return;
+  }
   const slideOn = $('trade-screen')?.classList.contains('slide-on');
   box.innerHTML = slideOn
     ? `<span>Quoting…</span>`
@@ -10174,7 +10182,7 @@ async function reviewTrade() {
     });
     return;
   }
-  if (!amount) { toast('Enter an amount'); return; }
+  if (!amount || !(Number(String(amount).replace(',', '.')) > 0)) { toast('Enter an amount'); return; }
   if (go) go.disabled = true;
   let q;
   try { q = await quoteKronTrade({ tick, side, amount }); }
@@ -10236,7 +10244,10 @@ async function runTrade({ tick, side, amount, quote, forceKasware = false }) {
         forceKasware: kw,
         onStatus: (m) => { toast(m); setSheetStatus(m); }
       }),
-      new Promise((_, rej) => setTimeout(() => rej(new Error('Buy timed out. Tap Review buy again.')), 40000))
+      new Promise((_, rej) => setTimeout(
+        () => rej(new Error(side === 'sell' ? 'Sell timed out. Tap Pay again.' : 'Buy timed out. Tap Review buy again.')),
+        side === 'sell' ? 120000 : 40000
+      ))
     ]);
     if ($('trade-amount')) $('trade-amount').value = '';
     if (result?.txId) noteSlideFill(side, tick, result.txId);

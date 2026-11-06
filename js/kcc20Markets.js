@@ -2,7 +2,7 @@
    Rows carry venue + covenant/token id so lookalike tickers never mix. */
 
 import { kronMarkets, quoteKronTrade, executeKronTrade, kronCandles } from './kronTrade.js?v=235';
-import { fetchKaspaRocketFeed, quoteRocketTrade, executeRocketTrade, rocketPoolCovenant, fetchRocketCandles } from './kaspaRocket.js?v=4';
+import { fetchKaspaRocketFeed, quoteRocketTrade, executeRocketTrade, rocketPoolCovenant, fetchRocketCandles } from './kaspaRocket.js?v=5';
 import { fetchKasSealTokens, quoteKasSealTrade, fetchKasSealCandles } from './kasSeal.js?v=2';
 import { fetchKforgeTokens, quoteKforgeTrade, fetchKforgeCandles } from './kforge.js?v=2';
 

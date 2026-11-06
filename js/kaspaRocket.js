@@ -235,7 +235,7 @@ export async function fetchRocketCandles(tokenId, lpCovenantId, limit = 80) {
       h: rocketPxKas(c.high ?? c.h) || close,
       l: rocketPxKas(c.low ?? c.l) || close,
       c: close,
-      v: Number(c.volume ?? c.v || 0)
+      v: Number(c.volume ?? c.v ?? 0)
     };
   }).filter(x => x.c > 0 && x.t > 0).sort((a, b) => a.t - b.t).slice(-limit);
 }
@@ -297,7 +297,7 @@ async function signRocketPlan(wallet, plan, { forceKasware = false, onStatus } =
   if (useKw && !canPin) {
     throw new Error('KaspaRocket swaps sign the plan digest on this device. Import the 64-hex key, or turn KasWare off for this chip.');
   }
-  const { loadKaspaSdk } = await import('./tx.js?v=241');
+  const { loadKaspaSdk } = await import('./tx.js?v=242');
   const k = await loadKaspaSdk();
   const priv = new k.PrivateKey(nativeHex);
   const signer = {

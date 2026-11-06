@@ -1,10 +1,20 @@
 {
   "sdk": "181",
-  "build": "300",
+  "build": "301",
   "wallet": "https://kcc-20-wallet.vercel.app",
   "sdkUrl": "https://kcc-20-wallet.vercel.app/sdk.js?v=181",
   "rule": "Every SDK_VERSION bump gets an entry here the same day. Pin sdk.js?v=NNN and require window.kcc20.sdkVersion === that NNN.",
   "entries": [
+    {
+      "date": "2026-11-05",
+      "sdk": "181",
+      "build": "301",
+      "title": "Wallet JS load: Rocket candle syntax",
+      "breaking": false,
+      "notes": [
+        "BUILD 300 mixed ?? and || in KaspaRocket candle volume, which browsers parse as missing ) after argument list and the lock screen showed Wallet JS failed. TRADE charts stay for every KCC20 venue. Pin sdk.js?v=181."
+      ]
+    },
     {
       "date": "2026-11-05",
       "sdk": "181",

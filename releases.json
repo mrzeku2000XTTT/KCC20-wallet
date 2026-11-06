@@ -1,10 +1,20 @@
 {
   "sdk": "181",
-  "build": "299",
+  "build": "300",
   "wallet": "https://kcc-20-wallet.vercel.app",
   "sdkUrl": "https://kcc-20-wallet.vercel.app/sdk.js?v=181",
   "rule": "Every SDK_VERSION bump gets an entry here the same day. Pin sdk.js?v=NNN and require window.kcc20.sdkVersion === that NNN.",
   "entries": [
+    {
+      "date": "2026-11-05",
+      "sdk": "181",
+      "build": "300",
+      "title": "TRADE charts for every KCC20 venue",
+      "breaking": false,
+      "notes": [
+        "Home TRADE draws the 24h line for KRON, KaspaRocket, KasSeal, and KForge. KDOLLAR and other Rocket bags were hitting the KRON candle route and rendering a blank chart. The venue pill shows Rocket / KasSeal / KForge / KRON plus Curve or Pool. Pin sdk.js?v=181."
+      ]
+    },
     {
       "date": "2026-11-05",
       "sdk": "181",

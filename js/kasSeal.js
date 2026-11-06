@@ -99,6 +99,37 @@ export async function fetchKasSealTokens() {
   return rows;
 }
 
+function sealPxKas(n, lotSize) {
+  const x = Number(n);
+  if (!(x > 0) || !Number.isFinite(x)) return 0;
+  const lot = Number(lotSize || 1000) || 1000;
+  return x / lot / 1e8;
+}
+
+export async function fetchKasSealCandles(tokenId, lotSize = 1000, limit = 80) {
+  const id = String(tokenId || '').replace(/^0x/i, '').toLowerCase();
+  if (!id) return [];
+  let body = {};
+  try { body = await sealGet('/tokens/' + encodeURIComponent(id) + '/candles'); }
+  catch { return []; }
+  const list = Array.isArray(body?.candles) ? body.candles : (Array.isArray(body) ? body : []);
+  const rows = list.map(c => {
+    const t = Number(c.startMs || c.time || c.t || 0);
+    const close = sealPxKas(c.close ?? c.c, lotSize);
+    return {
+      t: t > 1e12 ? t : t * 1000,
+      o: sealPxKas(c.open ?? c.o, lotSize) || close,
+      h: sealPxKas(c.high ?? c.h, lotSize) || close,
+      l: sealPxKas(c.low ?? c.l, lotSize) || close,
+      c: close,
+      v: sompiNum(c.volumeSompi ?? c.volume ?? c.v) / 1e8
+    };
+  }).filter(x => x.c > 0 && x.t > 0).sort((a, b) => a.t - b.t).slice(-limit);
+  const open24 = sealPxKas(body?.open24h, lotSize);
+  if (open24 > 0 && rows.length) rows[0]._open24h = open24;
+  return rows;
+}
+
 export async function quoteKasSealTrade({ tokenId, side, amount, lotSize = 1000 }) {
   const id = String(tokenId || '').replace(/^0x/i, '').toLowerCase();
   if (!id) throw new Error('KasSeal token id missing');

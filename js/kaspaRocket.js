@@ -203,6 +203,43 @@ export async function rocketPoolCovenant(tokenId) {
   }
 }
 
+function rocketPxKas(n) {
+  const x = Number(n);
+  if (!(x > 0) || !Number.isFinite(x)) return 0;
+  try {
+    return Number(tokenPriceSompi(BigInt(Math.round(x)))) / 1e8;
+  } catch {
+    return (x * (10 ** TOKEN_DECIMALS)) / 1e8;
+  }
+}
+
+export async function fetchRocketCandles(tokenId, lpCovenantId, limit = 80) {
+  const id = String(tokenId || '').replace(/^0x/i, '').toLowerCase();
+  if (!id) return [];
+  let lp = lpCovenantId;
+  try { lp = lp || await rocketPoolCovenant(id); } catch { lp = ''; }
+  if (!lp) return [];
+  let list = [];
+  try {
+    const body = await kaspaRocket().candles(lp, id, { timeframe: '15m', limit });
+    list = Array.isArray(body?.candles) ? body.candles : (Array.isArray(body) ? body : []);
+  } catch {
+    list = [];
+  }
+  return list.map(c => {
+    const t = Number(c.time || c.t || 0);
+    const close = rocketPxKas(c.close ?? c.c);
+    return {
+      t: t > 1e12 ? t : t * 1000,
+      o: rocketPxKas(c.open ?? c.o) || close,
+      h: rocketPxKas(c.high ?? c.h) || close,
+      l: rocketPxKas(c.low ?? c.l) || close,
+      c: close,
+      v: Number(c.volume ?? c.v || 0)
+    };
+  }).filter(x => x.c > 0 && x.t > 0).sort((a, b) => a.t - b.t).slice(-limit);
+}
+
 export async function quoteRocketTrade({ tokenId, lpCovenantId, side, amount, address }) {
   const id = String(tokenId || '').replace(/^0x/i, '').toLowerCase();
   if (!id) throw new Error('KaspaRocket token id missing');
@@ -260,7 +297,7 @@ async function signRocketPlan(wallet, plan, { forceKasware = false, onStatus } =
   if (useKw && !canPin) {
     throw new Error('KaspaRocket swaps sign the plan digest on this device. Import the 64-hex key, or turn KasWare off for this chip.');
   }
-  const { loadKaspaSdk } = await import('./tx.js?v=240');
+  const { loadKaspaSdk } = await import('./tx.js?v=241');
   const k = await loadKaspaSdk();
   const priv = new k.PrivateKey(nativeHex);
   const signer = {

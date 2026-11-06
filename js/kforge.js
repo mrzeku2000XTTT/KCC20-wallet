@@ -91,6 +91,48 @@ export async function fetchKforgeTokens() {
   return rows;
 }
 
+function kforgePxKas(n, lotSize) {
+  const x = Number(n);
+  if (!(x > 0) || !Number.isFinite(x)) return 0;
+  const lot = Number(lotSize || Number(LOT)) || Number(LOT);
+  return x / lot / 1e8;
+}
+
+export async function fetchKforgeCandles(tokenId, lotSize = Number(LOT), limit = 80) {
+  const id = String(tokenId || '').replace(/^0x/i, '').toLowerCase();
+  if (!id) return [];
+  let list = [];
+  try {
+    const body = await kforgeGet('/v6/tokens/' + encodeURIComponent(id) + '/candles');
+    list = Array.isArray(body) ? body : (body?.candles || []);
+  } catch {
+    list = [];
+  }
+  if (!list.length) {
+    try {
+      const trades = await kforgeGet('/v6/tokens/' + encodeURIComponent(id) + '/trades');
+      const arr = Array.isArray(trades) ? trades : [];
+      list = arr.map(tr => ({
+        t: tr.ts || tr.t,
+        o: tr.price, h: tr.price, l: tr.price, c: tr.price,
+        v: tr.kas || tr.v
+      }));
+    } catch { list = []; }
+  }
+  return list.map(c => {
+    const t = Number(c.t || c.time || c.ts || 0);
+    const close = kforgePxKas(c.c ?? c.close ?? c.price, lotSize);
+    return {
+      t: t > 1e12 ? t : t * 1000,
+      o: kforgePxKas(c.o ?? c.open ?? c.price, lotSize) || close,
+      h: kforgePxKas(c.h ?? c.high ?? c.price, lotSize) || close,
+      l: kforgePxKas(c.l ?? c.low ?? c.price, lotSize) || close,
+      c: close,
+      v: num(c.v ?? c.volume ?? c.kas) / 1e8
+    };
+  }).filter(x => x.c > 0 && x.t > 0).sort((a, b) => a.t - b.t).slice(-limit);
+}
+
 export async function quoteKforgeTrade({ tokenId, side, amount, nextLotPrice, lotSize = Number(LOT) }) {
   const buy = String(side || 'buy') !== 'sell';
   const n = Number(String(amount || '').replace(',', '.'));

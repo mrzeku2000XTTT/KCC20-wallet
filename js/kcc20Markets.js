@@ -1,10 +1,10 @@
 /* Unified KCC20 24h board: KRON + KaspaRocket + KasSeal + KForge.
    Rows carry venue + covenant/token id so lookalike tickers never mix. */
 
-import { kronMarkets, quoteKronTrade, executeKronTrade } from './kronTrade.js?v=235';
-import { fetchKaspaRocketFeed, quoteRocketTrade, executeRocketTrade } from './kaspaRocket.js?v=3';
-import { fetchKasSealTokens, quoteKasSealTrade } from './kasSeal.js?v=1';
-import { fetchKforgeTokens, quoteKforgeTrade } from './kforge.js?v=1';
+import { kronMarkets, quoteKronTrade, executeKronTrade, kronCandles } from './kronTrade.js?v=235';
+import { fetchKaspaRocketFeed, quoteRocketTrade, executeRocketTrade, rocketPoolCovenant, fetchRocketCandles } from './kaspaRocket.js?v=4';
+import { fetchKasSealTokens, quoteKasSealTrade, fetchKasSealCandles } from './kasSeal.js?v=2';
+import { fetchKforgeTokens, quoteKforgeTrade, fetchKforgeCandles } from './kforge.js?v=2';
 
 export const VENUE_LABEL = {
   kron: 'KRON',
@@ -82,17 +82,34 @@ export async function lookupKcc20Market(tick, opts = {}) {
   const venue = String(opts.venue || '').toLowerCase();
   const tokenId = String(opts.tokenId || opts.covenantId || '').replace(/^0x/i, '').toLowerCase();
   const list = await kcc20Markets();
-  if (tokenId) {
-    const hit = list.find(m => m.tokenId === tokenId && (!venue || m.venue === venue));
-    if (hit) return hit;
+  let hit = null;
+  if (tokenId) hit = list.find(m => m.tokenId === tokenId && (!venue || m.venue === venue)) || null;
+  if (!hit) {
+    const matches = list.filter(m => m.tick === t && (!venue || m.venue === venue));
+    hit = matches[0] || null;
   }
-  const matches = list.filter(m => m.tick === t && (!venue || m.venue === venue));
-  if (matches.length) return matches[0];
-  if (venue === 'kron' || !venue) {
-    const kron = list.find(m => m.venue === 'kron' && m.tick === t);
-    if (kron) return kron;
+  if (!hit && (venue === 'kron' || !venue)) {
+    hit = list.find(m => m.venue === 'kron' && m.tick === t) || null;
   }
-  throw new Error(t + ' is not a launched KCC20 on KRON, KaspaRocket, KasSeal, or KForge');
+  if (!hit) throw new Error(t + ' is not a launched KCC20 on KRON, KaspaRocket, KasSeal, or KForge');
+  if (hit.venue === 'kasparocket' && !hit.lpCovenantId && hit.tokenId) {
+    const lp = await rocketPoolCovenant(hit.tokenId);
+    hit = { ...hit, lpCovenantId: lp || '', graduated: !!lp, phase: lp ? 'Pool' : 'Curve' };
+  }
+  return hit;
+}
+
+export async function kcc20Candles(m, limit = 80) {
+  const v = String(m?.venue || 'kron').toLowerCase();
+  const id = String(m?.tokenId || m?.covenantId || '').replace(/^0x/i, '').toLowerCase();
+  try {
+    if (v === 'kasparocket') return await fetchRocketCandles(id, m?.lpCovenantId, limit);
+    if (v === 'kasseal') return await fetchKasSealCandles(id, m?.lotSize || 1000, limit);
+    if (v === 'kforge') return await fetchKforgeCandles(id, m?.lotSize, limit);
+    return await kronCandles(m?.tick, limit);
+  } catch {
+    return [];
+  }
 }
 
 export function canExecuteVenue(venue) {

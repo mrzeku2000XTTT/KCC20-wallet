@@ -11,7 +11,7 @@ import {
   fetchKcc20Portfolio, fetchKrc20Portfolio, fetchKcc20PortfolioMany, fetchKrc20PortfolioMany,
   fetchKronAddrTrades, fetchKronTokenUtxos, fetchKronAddrHoldings, KRON_IDX,
   krc20Logo, toTokenRaw, setVaultOwner, kcc20Identicon, VAULT_GROUPS, LIFE_KINDS, lifeKindMeta
-} from './kcc20.js?v=132';
+} from './kcc20.js?v=133';
 import { parseIntent, describeIntent, askFor, parseDurationField, interpretVaultChat, normalizeChat, normalizeVaultType, collectKasAmount } from './intent.js?v=127';
 import { parse as parseSilArtifact, redeemHex as silRedeemHex, matchSilverIntent } from './silverscript.js?v=189';
 import { payloadFromAddress } from './script.js?v=91';
@@ -26,14 +26,14 @@ import {
   spendSilverVault, isSilverScriptVault,
   disconnectRpc, buildDcaDrips, sendKasMany, releaseDcaDrip, cancelDcaDrip, isMassError,
   signPsktJson
-} from './tx.js?v=240';
+} from './tx.js?v=241';
 import { bootDappConnect, pingTttDappFrame, pingKasdistroDappFrame, TTT_TREASURY, listConnectedSites, disconnectSite, disconnectAllSites, dappSourceOrigin, clearDappTradeSession } from './dappConnect.js?v=213';
 import {
   changenowWidgetUrl, cnPayoutOk, bootNowStepper, KASPACOM_SWAP
 } from './changenow.js?v=182';
 import { schedulePersistIframeVault, bootIframeVaultWatch } from './iframeVault.js?v=122';
 import { kronMarkets, quoteKronTrade, executeKronTrade, formatKasSompi, lookupKronTick, liveQuote, tradeCostLines, attachKronLogos, kronCandles, kronLogoFor, quoteKcc20Bridge, executeKcc20Bridge, formatTokenRaw } from './kronTrade.js?v=235';
-import { kcc20Markets, lookupKcc20Market, quoteKcc20Trade, executeKcc20Trade, venueName, canExecuteVenue } from './kcc20Markets.js?v=1';
+import { kcc20Markets, lookupKcc20Market, quoteKcc20Trade, executeKcc20Trade, venueName, canExecuteVenue, kcc20Candles } from './kcc20Markets.js?v=2';
 import {
   BET_AGENT_ADDR, TTT_TICK, WINDOW_MS, windowBounds, fmtRemain,
   kkdagsHeld, isKcc20Pass, hireCost, maxHireHours,
@@ -87,7 +87,7 @@ import { vprogCreate, vprogJoin, vprogTurn } from './vprogLane.js?v=1';
 import { bootWalletForge } from './walletForge.js?v=4';
 import { layoutLabel, isFinalLayout } from './kcc20Final.js?v=2';
 
-export const BUILD = '299';
+export const BUILD = '300';
 const DESK_ID_KEY = 'kcc20_desk_id_v1';
 const DESK_VAULT_KEY = 'kcc20_desk_vault_v1';
 
@@ -9552,7 +9552,11 @@ function paintSlideRead() {
     chgEl.style.color = chg > 0 ? 'var(--slide-up)' : (chg < 0 ? 'var(--slide-dn)' : '');
   }
   if ($('slide-chg-eq')) $('slide-chg-eq').textContent = chgTxt;
-  if ($('slide-src-txt')) $('slide-src-txt').textContent = 'KRON · ' + (openTrade._grad ? 'Pool' : 'Curve');
+  if ($('slide-src-txt')) {
+    const venue = venueName(openTrade._venue || openTrade._market?.venue || 'kron');
+    const phase = openTrade._market?.phase || (openTrade._grad ? 'Pool' : 'Curve');
+    $('slide-src-txt').textContent = venue + ' · ' + phase;
+  }
   $('slide-th')?.classList.toggle('sell', side === 'sell');
   $('slide-slider')?.classList.toggle('sell', side === 'sell');
 }
@@ -9768,16 +9772,36 @@ function ensureSlideFrame() {
 
 async function loadSlideSeries(tick) {
   const want = String(tick || '').toUpperCase();
-  slideTickDrawn = want;
+  const key = String(openTrade._venue || '') + ':' + String(openTrade._tokenId || want);
+  slideTickDrawn = key;
   let rows = [];
-  try { rows = await kronCandles(want, 80); } catch { rows = []; }
-  if (slideTickDrawn !== want) return;
+  try {
+    rows = await kcc20Candles({
+      venue: openTrade._venue || 'kron',
+      tick: want,
+      tokenId: openTrade._tokenId,
+      lpCovenantId: openTrade._lpCovenantId,
+      lotSize: openTrade._lotSize
+    }, 80);
+  } catch { rows = []; }
+  if (slideTickDrawn !== key) return;
   slidePts = rows.map(c => Number(c.c)).filter(n => n > 0);
+  const last = slidePts.length ? slidePts[slidePts.length - 1] : 0;
+  if (last > 0 && !(Number(openTrade._px) > 0)) openTrade._px = last;
+  if (rows.length >= 2) {
+    const a = Number(rows[0].c);
+    const b = Number(rows[rows.length - 1].c);
+    if (a > 0 && !(Number(openTrade._chg))) openTrade._chg = (b - a) / a;
+  }
   const px = Number(openTrade._px || 0);
   if (px > 0) {
     if (!slidePts.length) slidePts = [px, px];
+    else if (slidePts.length === 1) slidePts = [slidePts[0], px];
     else slidePts.push(px);
+  } else if (slidePts.length === 1) {
+    slidePts = [slidePts[0], slidePts[0]];
   }
+  paintSlideRead();
   ensureSlideFrame();
 }
 
@@ -10086,9 +10110,10 @@ async function lookupTradeTicker(opts = {}) {
     syncTradeLabel();
     quoteTradePreview();
     const slideOn = $('trade-screen')?.classList.contains('slide-on');
-    if (info.venue === 'kron' && slideOn && quiet && slideTickDrawn === tick && slidePts.length && openTrade._px > 0) {
+    const seriesKey = String(openTrade._venue || '') + ':' + String(openTrade._tokenId || tick);
+    if (slideOn && quiet && slideTickDrawn === seriesKey && slidePts.length && openTrade._px > 0) {
       slidePts[slidePts.length - 1] = openTrade._px;
-    } else if (slideOn && info.venue === 'kron') {
+    } else if (slideOn) {
       loadSlideSeries(tick);
     }
   } catch (e) {
